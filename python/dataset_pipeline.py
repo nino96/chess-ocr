@@ -636,19 +636,28 @@ def status():
         counts = dict(db.execute("SELECT state,COUNT(*) FROM jobs GROUP BY state"))
         samples = db.execute("SELECT COUNT(*),COALESCE(SUM(accepted),0) FROM samples WHERE source NOT IN (SELECT source FROM exclusions)").fetchone()
         accounting = cumulative_accounting(db)
-        duplicates = db.execute("SELECT COUNT(*) FROM duplicates d JOIN samples a ON d.a=a.id JOIN samples b ON d.b=b.id WHERE d.decision IS NULL AND a.source NOT IN (SELECT source FROM exclusions) AND b.source NOT IN (SELECT source FROM exclusions)").fetchone()[0]
+        duplicate_counts = db.execute("""SELECT
+              SUM(CASE WHEN d.decision IS NULL AND json_extract(sa.body, '$.split') = json_extract(sb.body, '$.split') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN d.decision IS NULL AND json_extract(sa.body, '$.split') != json_extract(sb.body, '$.split') THEN 1 ELSE 0 END)
+            FROM duplicates d
+            JOIN samples a ON d.a=a.id JOIN sources sa ON a.source=sa.id
+            JOIN samples b ON d.b=b.id JOIN sources sb ON b.source=sb.id
+            WHERE a.source NOT IN (SELECT source FROM exclusions)
+              AND b.source NOT IN (SELECT source FROM exclusions)""").fetchone()
+        same_split_candidates, cross_split_blockers = (int(value or 0) for value in duplicate_counts)
         sources = db.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
         return {"schema": SCHEMA, "worker": worker, "jobs": counts, "pages": samples[0],
                 "sources": sources,
                 "excluded_sources": db.execute("SELECT COUNT(*) FROM exclusions").fetchone()[0],
                 "accepted_pages": samples[1], "review_queue": samples[0] - samples[1],
-                "unresolved_duplicate_pairs": duplicates, "review_decisions": accounting["review_decisions"],
+                "unresolved_duplicate_pairs": cross_split_blockers,
+                "same_split_duplicate_candidates": same_split_candidates, "review_decisions": accounting["review_decisions"],
                 "review_seconds": accounting["review_seconds"], "budget": meta(db, "budget"),
                 "reserved_download_bytes": accounting["reserved_download_bytes"], "reserved_compute_seconds": accounting["reserved_compute_seconds"],
                 "attempts": accounting["attempts"], "storage_bytes": size_on_disk(),
                 "next_action": ("set authorized budget; ingest inbox or add reviewed public manifests" if not sources
                                 else "inspect queue and repair quarantined jobs" if counts.get("quarantined")
-                                else "resolve duplicate queue" if duplicates
+                                else "resolve cross-split duplicate queue" if cross_split_blockers
                                 else "review pages; validate before export"),
                 "recognition_qualified": False}
 
@@ -846,6 +855,24 @@ def duplicate_exclusions(db, excluded_sources):
             if sample_sources[r["a"]] not in excluded_sources and sample_sources[r["b"]] not in excluded_sources}
 
 
+def same_split_duplicate_audit(db, excluded_sources, included_splits=None):
+    """Record unresolved same-split candidates without changing annotations or membership."""
+    pairs = []
+    for pair in db.execute("""SELECT d.a,d.b,d.reason,json_extract(sa.body, '$.split') AS split
+                            FROM duplicates d
+                            JOIN samples a ON d.a=a.id JOIN sources sa ON a.source=sa.id
+                            JOIN samples b ON d.b=b.id JOIN sources sb ON b.source=sb.id
+                            WHERE d.decision IS NULL AND json_extract(sa.body, '$.split')=json_extract(sb.body, '$.split')
+                              AND a.source NOT IN (SELECT source FROM exclusions)
+                              AND b.source NOT IN (SELECT source FROM exclusions)
+                            ORDER BY d.a,d.b"""):
+        if included_splits is None or pair["split"] in included_splits:
+            pairs.append({"pair": [pair["a"], pair["b"]], "reason": pair["reason"], "split": pair["split"]})
+    return {"schema": SCHEMA, "policy": "retained-unresolved-same-split-candidates",
+            "limitation": "Candidates may repeat pages or boards; they are retained without a distinct or duplicate determination and can increase within-split multiplicity.",
+            "pairs": pairs}
+
+
 def validate(db):
     errors = []
     coverage = {}
@@ -872,9 +899,10 @@ def validate(db):
     for pair in db.execute("SELECT * FROM duplicates"):
         if samples[pair["a"]]["source"] in excluded_sources or samples[pair["b"]]["source"] in excluded_sources:
             continue
-        if pair["decision"] is None:
+        same_split = sources[samples[pair["a"]]["source"]]["split"] == sources[samples[pair["b"]]["source"]]["split"]
+        if pair["decision"] is None and not same_split:
             errors.append("unresolved-duplicate")
-        elif pair["decision"] == "duplicate" and sources[samples[pair["a"]]["source"]]["split"] != sources[samples[pair["b"]]["source"]]["split"]:
+        elif pair["decision"] == "duplicate" and not same_split:
             errors.append("cross-split-duplicate")
     excluded = duplicate_exclusions(db, excluded_sources)
     for sample in samples.values():
@@ -922,6 +950,7 @@ def validate(db):
             "unreviewed_pages": sum(not r["accepted"] for r in samples.values()),
             "excluded_duplicates": len(excluded), "recognition_qualified": False,
             "excluded_sources": len(excluded_sources),
+            "same_split_duplicate_audit": same_split_duplicate_audit(db, excluded_sources),
             "unverified_lineage_sources": sum(not s["lineage_reviewed"] for s in sources.values()),
             "dataset_delivery_ready": False,
             "qualification_exported": False}
@@ -980,10 +1009,12 @@ def build_export(clear_stop=True):
         excluded = duplicate_exclusions(db, excluded_sources)
         selected = [r for r in selected if json.loads(r["body"])["split"] in {"train", "dev"} and r["id"] not in excluded and r["source"] not in excluded_sources]
         require(selected, "no accepted train/dev pages")
+        duplicate_audit = same_split_duplicate_audit(db, excluded_sources, {"train", "dev"})
         recipe = {"schema": SCHEMA, "pipeline_sha256": digest(__file__), "pillow": "11.1.0", "grid": 768,
                   "tile": 96, "tensor": "64x3x96x96 float32 little-endian ImageNet normalized",
                   "order": "image-relative row-major", "classes": list(LABELS),
                   "production_parity": "pending issue #3; candidate preprocessing only",
+                  "same_split_duplicate_audit": duplicate_audit,
                   "sources": {r["source"]: identity(json.loads(r["body"])) for r in selected},
                   "samples": [[r["id"], r["sha"], r["revision"], identity(json.loads(r["annotation"]))] for r in selected]}
         export_id = identity(recipe)
@@ -1041,6 +1072,7 @@ def build_export(clear_stop=True):
         write_json(staging / "records.json", {"schema": SCHEMA, "records": records, "pages": pages})
         write_json(staging / "recipe.json", recipe)
         write_json(staging / "coverage.json", report)
+        write_json(staging / "same-split-duplicate-audit.json", duplicate_audit)
         write_json(staging / "hashes.json", {p.name: digest(p) for p in sorted(staging.iterdir()) if p.name != "hashes.json"})
         os.replace(staging, output)
     return {"state": "exported", "export": export_id, "boards": len(records), "qualification_exported": False}

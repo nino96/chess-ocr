@@ -187,10 +187,12 @@
         <iframe id="editor" title="Page annotation editor"></iframe>
       </section>
       <details class="panel" id="duplicates-panel">
-        <summary>Possible duplicates</summary>
+        <summary>Cross-split leakage candidates</summary>
         <p>
-          Inspect both full pages before deciding. Exact byte matches cannot be
-          marked distinct.
+          Same-split similarities are retained automatically and do not need
+          owner adjudication. Investigate cross-split candidates before export;
+          do not use an arbitrary “distinct” decision to clear a leakage issue.
+          Exact byte matches cannot be marked distinct.
         </p>
         <div id="duplicates"></div>
       </details>

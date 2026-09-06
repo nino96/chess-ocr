@@ -94,8 +94,13 @@ def queue():
                 CASE WHEN d.sample IS NULL THEN 0 ELSE 1 END AS draft
                 FROM samples s LEFT JOIN web_drafts d ON s.id=d.sample AND s.revision=d.revision
                 WHERE s.source NOT IN (SELECT source FROM exclusions) ORDER BY s.source,s.page""")]
-        duplicates = [dict(r) for r in db.execute("""SELECT d.* FROM duplicates d JOIN samples a ON a.id=d.a JOIN samples b ON b.id=d.b
-            WHERE d.decision IS NULL AND a.source NOT IN (SELECT source FROM exclusions)
+        # Same-split candidates are retained and reported by pipeline status/audits.
+        # The dashboard queue is reserved for cross-split leakage investigation.
+        duplicates = [dict(r) for r in db.execute("""SELECT d.* FROM duplicates d
+            JOIN samples a ON a.id=d.a JOIN sources sa ON a.source=sa.id
+            JOIN samples b ON b.id=d.b JOIN sources sb ON b.source=sb.id
+            WHERE d.decision IS NULL AND json_extract(sa.body, '$.split') != json_extract(sb.body, '$.split')
+            AND a.source NOT IN (SELECT source FROM exclusions)
             AND b.source NOT IN (SELECT source FROM exclusions)""")]
     return {"schema": "chess-ocr-dataset-app/1", "sources": sources, "pages": pages,
             "duplicates": duplicates, "status": p.status()}

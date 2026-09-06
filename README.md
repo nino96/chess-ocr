@@ -120,6 +120,13 @@ of this baseline.
 
 ## Dataset collection (issue #2)
 
+The current [synthetic-first kickoff](docs/dataset-kickoff.md) starts asset
+collection and an audited synthetic seed alongside real-source acquisition.
+It replaces bulk manual labeling as the collection strategy; generation and
+annotation assistance remain explicitly planned until their checks are delivered.
+Same-split duplicate candidates are retained with an export audit, not a required
+human task. Cross-split leakage remains blocking.
+
 Start with the [operator workflow](docs/operator-workflow.md) for the sequence
 from feasibility collection to larger-budget approval and planned model training,
 including your review/approval checkpoints and the agent's responsibilities.

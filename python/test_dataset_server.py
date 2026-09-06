@@ -64,6 +64,24 @@ class DatasetServerTests(unittest.TestCase):
                        ("test-1", "test", 1, "pages/test-1.png", p.digest(page), 160, 160, "0" * 16))
         return "test-1"
 
+    def make_second_sample(self, source_id, split):
+        image = p.pillow().new("RGB", (160, 160), "white")
+        original = p.local_path(f"originals/{source_id}.png")
+        image.save(original)
+        evidence = p.local_path(f"rights/{source_id}.evidence")
+        p.atomic(evidence, b"second original synthetic evidence")
+        with p.connect() as db:
+            source = json.loads(db.execute("SELECT body FROM sources WHERE id='test'").fetchone()[0])
+            source.update(id=source_id, split=split, sha256=p.digest(original))
+            source["lineage"] = {key: [f"{source_id}-design"] for key in source["lineage"]}
+            source["rights"]["evidence_sha256"] = p.digest(evidence)
+            page = p.local_path(f"pages/{source_id}-1.png")
+            image.save(page)
+            db.execute("INSERT INTO sources VALUES (?,?,?)", (source_id, p.canonical(source), p.identity(source)))
+            db.execute("INSERT INTO samples(id,source,page,image,sha,width,height,phash) VALUES (?,?,?,?,?,?,?,?)",
+                       (f"{source_id}-1", source_id, 1, f"pages/{source_id}-1.png", p.digest(page), 160, 160, "0" * 16))
+        return f"{source_id}-1"
+
     def request(self, method, path, body=None, headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
         try:
@@ -113,6 +131,20 @@ class DatasetServerTests(unittest.TestCase):
         headers["Sec-Fetch-Site"] = "cross-site"
         status, _, _ = self.post("/api/action", {"action": "validate"}, headers)
         self.assertEqual(status, 409)
+
+    def test_queue_exposes_only_cross_split_duplicate_candidates(self):
+        same_split = self.make_second_sample("same", "train")
+        cross_split = self.make_second_sample("cross", "dev")
+        with p.connect() as db:
+            db.execute("INSERT INTO duplicates VALUES (?,?,'perceptual',NULL)", tuple(sorted((self.sample, same_split))))
+            db.execute("INSERT INTO duplicates VALUES (?,?,'perceptual',NULL)", tuple(sorted((self.sample, cross_split))))
+        cookie = self.handshake()
+        status, _, body = self.request("GET", "/api/queue", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        duplicates = json.loads(body)["duplicates"]
+        self.assertEqual([(pair["a"], pair["b"]) for pair in duplicates], [tuple(sorted((self.sample, cross_split)))])
+        with p.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM duplicates").fetchone()[0], 2)
 
     def test_size_and_path_integrity_rejections(self):
         cookie = self.handshake()

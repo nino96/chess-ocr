@@ -178,6 +178,35 @@ class PipelineTests(unittest.TestCase):
         with p.connect() as db:
             self.assertIn("page-integrity", p.validate(db)["errors"])
 
+    def test_unresolved_same_split_duplicates_are_retained_and_audited_in_export(self):
+        first = self.sample()
+        second = self.sample("other", "train", "other-art")
+        self.accept(first)
+        self.accept(second)
+        with p.connect() as db:
+            db.execute("INSERT OR REPLACE INTO duplicates VALUES (?,?,'exact',NULL)", tuple(sorted((first, second))))
+            report = p.validate(db)
+            self.assertEqual(report["errors"], [])
+            self.assertEqual(report["same_split_duplicate_audit"]["pairs"], [{
+                "pair": sorted((first, second)), "reason": "exact", "split": "train"}])
+        result = p.export_dataset()
+        path = p.local_path("exports/" + result["export"])
+        self.assertEqual(len(p.read_json(path / "records.json")["records"]), 2)
+        audit = p.read_json(path / "same-split-duplicate-audit.json")
+        self.assertIn("within-split multiplicity", audit["limitation"])
+        self.assertEqual(audit["pairs"][0]["pair"], sorted((first, second)))
+
+    def test_unresolved_cross_split_duplicates_continue_to_block_export(self):
+        first = self.sample()
+        second = self.sample("other", "dev", "other-art")
+        self.accept(first)
+        self.accept(second)
+        with p.connect() as db:
+            db.execute("INSERT OR REPLACE INTO duplicates VALUES (?,?,'perceptual',NULL)", tuple(sorted((first, second))))
+            self.assertIn("unresolved-duplicate", p.validate(db)["errors"])
+        with self.assertRaises(p.Invalid):
+            p.export_dataset()
+
     def test_excluding_cross_split_duplicate_preserves_remaining_data(self):
         first = self.sample()
         second = self.sample("other", "dev", "other-art")

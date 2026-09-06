@@ -37,7 +37,8 @@ The 300–500-board first-learning target and larger reference targets in PLAN
 remain targets, not guarantees. Native YOLOX and ImageNet checkpoints are starting
 hypotheses; qualification must measure the complete path on unseen real books.
 
-Synthetic data is a later supplement to measured gaps. It must not replace real
+The [synthetic-first kickoff](dataset-kickoff.md) now permits an early synthetic
+bootstrap before the large real tranche. It must not replace real
 training pages, copy held-out artwork, or count as new independent sources. Bulk
 synthesis and degradation are deliberately not implemented before renderer/design
 fidelity and real-condition reviews. The current pipeline does not infer labels,
@@ -61,29 +62,28 @@ pnpm run dataset init
 installs dependencies or downloads runtime assets automatically. `init` is
 idempotent and starts with zero acquisition/compute/storage allocation.
 
-The owner approved the following first-tranche allocation on 2026-09-06, and it
+The owner approved the following bounded kickoff allocation on 2026-09-07, and it
 is configured in the current workspace. Apply it explicitly on a fresh workspace:
 
 ```sh
-pnpm run dataset budget --sources 12 --pages 2000 --download-bytes 2147483648 --storage-bytes 8589934592 --cpu-seconds 14400 --review-limit 20
+pnpm run dataset budget --sources 64 --pages 2000 --download-bytes 10737418240 --storage-bytes 68719476736 --cpu-seconds 720000 --review-limit 2000
 ```
 
 This caps admitted sources and rendered pages, downloaded bytes, total local
-workspace storage, conservatively reserved compute time, and the first 20 review
+workspace storage, conservatively reserved compute time, and up to 2,000 review
 **decisions**. One human decision accepts a matching page; corrections are further
 decisions. Failed/interrupted attempts retain full reservations. Inspect measured
-review time and corrections/ambiguities before raising the review batch limit. No
-GPU training, paid services or permission outreach is
-included. The shared project ledger is [budget.md](budget.md); per-attempt records
+review time and corrections/ambiguities; this is capacity, not assigned human work.
+No paid services or permission outreach is included. The shared project ledger
+separately bounds conditional #3 GPU bootstrap; it is not launched by this command.
+The shared project ledger is [budget.md](budget.md); per-attempt records
 and actual ceilings are persisted locally in SQLite.
 
-These are feasibility-stage limits, not a complete training-tranche budget.
-Twenty review decisions permit at most twenty unchanged accepted pages. Current
-accounting
-charges 90 seconds per rendered page even when an attempt finishes faster, so
-four compute hours permit fewer than 160 pages after other charges, not 2,000.
-The source ceiling does not represent twelve selected or rights-cleared books.
-See the [budget feasibility limits](budget.md) before planning a larger collection.
+The former 20-decision/four-hour feasibility limits are superseded. Accounting
+still charges 90 seconds per rendered page even when an attempt finishes faster;
+the new compute ceiling covers retries and subsequent preparation. A source ceiling
+does not represent that many selected or rights-cleared books. Begin with the
+smaller increments in the [budget ledger](budget.md), not all capacity at once.
 
 ## Paste PDFs and ingest
 
@@ -247,8 +247,12 @@ pnpm run dataset duplicate SAMPLE_A SAMPLE_B distinct
 # Or: pnpm run dataset duplicate SAMPLE_A SAMPLE_B duplicate
 ```
 
-Exact duplicate pixels cannot be declared distinct. Unresolved pairs and detected
-cross-split duplicates block export. Same-split duplicate decisions conservatively
+Exact duplicate pixels cannot be declared distinct. Unresolved cross-split pairs
+and detected cross-split duplicates block export. Same-split candidates need no
+human decision: they remain retained, not declared distinct, and are recorded in
+`same-split-duplicate-audit.json` with a within-split multiplicity warning. The
+dashboard only lists cross-split candidates as actionable. Existing explicit
+same-split duplicate decisions conservatively
 exclude one entire page, even if only a board was repeated; this can discard useful
 additional boards and is reported. Hash screening cannot certify all artwork is
 disjoint. Manual lineage review is necessary, particularly across scan degradation.
@@ -321,7 +325,7 @@ No downloaded originals, their metadata, or research source lists are test fixtu
 ## Repository workflows
 
 The operational sequence is setup/budget → inbox ingestion → background rendering
-→ page annotation and independent review → duplicate/lineage resolution → validation
+→ page annotation and independent review → cross-split leakage checks → validation
 → immutable train/dev export. Use `status` and `queue` between stages; `stop`,
 `start`, `retry --after-repair` and `exclude-source` cover the recovery paths above.
 

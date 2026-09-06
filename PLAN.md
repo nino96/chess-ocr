@@ -367,10 +367,10 @@ not implemented capabilities or approval for more acquisition/compute/reviews:
   dataset/code hashes and untested conditions; use original synthetic fixtures
   for tooling load tests and authorized real reviews for human-throughput evidence.
 
-Use the initial manual reviews to estimate annotation effort and propose a concrete
-follow-up collection/review allocation. The current 20-review-decision ceiling
-remains enforced until explicitly changed; reset/archive deletion cannot replenish
-it. Deliver these usability/scale checks before claiming readiness for hundreds of
+Use the initial manual reviews to estimate annotation effort. The owner approved
+the larger bounded [kickoff allocation](docs/budget.md#issue-2-synthetic-first-kickoff--2026-09-07);
+reset/archive deletion cannot replenish it. Deliver these usability/scale checks
+before claiming readiness for hundreds of
 boards. This roadmap does not complete issue #2's real dataset outcome.
 
 ## Decision: automatic annotation proposals after feasibility
@@ -406,3 +406,25 @@ not an already implemented feature. No board detector has been selected.
 Handoff gate: report the selected method, measured review-time benefit and failure
 coverage, or the specific reason neither method advances. The operator workflow
 must reflect the implemented behavior before the larger annotation phase begins.
+
+## Owner decision: synthetic-first kickoff — 2026-09-07
+
+Follow [the concrete kickoff plan](docs/dataset-kickoff.md) and its bounded local
+resource ledger. Preserve existing human labels as-is; same-split duplicate
+candidates stay in candidate exports with a multiplicity audit, not mandatory
+human decisions. Cross-split leakage still blocks export and is the agent's
+investigation task. Do not silently mark candidates distinct or alter labels.
+
+Begin rights-reviewed asset acquisition and deterministic synthetic rendering
+before the large real tranche. After per-design renderer fidelity and training
+gates, #3 may run a synthetic-only bootstrap to improve proposal assistance before
+the 300–500-real-board tranche exists. This prospectively supersedes the earlier
+real-tranche-first learning sequence, not real-data delivery or qualification.
+The later real adaptation mix remains a separately frozen hypothesis. Acquire
+diverse real pages in parallel without requiring immediate manual annotation.
+
+The owner should review short confirmation/correction batches, not manufacture
+the bulk labels or adjudicate same-split similarity. Qualification still needs
+one human pixel check and real source separation; synthetic counts do not replace
+those gates. No training accuracy or five-minute total review guarantee is implied.
+Use existing issues #2/#3 and the dataset branch; no independent workstream was added.

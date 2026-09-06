@@ -1,5 +1,13 @@
 # Operator workflow: feasibility, collection and model training
 
+**Current direction (2026-09-07):** follow the
+[synthetic-first kickoff](dataset-kickoff.md). The initial manual feasibility stage
+has served its purpose. The owner approved the bounded larger allocation in
+[the ledger](budget.md); the agent starts asset/real-source acquisition and
+implements audited generation and assisted review. The owner is not expected to
+manually create bulk labels or resolve same-split duplicates. Historical
+feasibility steps below remain command reference, not a request to repeat them.
+
 Use this guide to see what happens next and where your input is needed. The
 [command reference](dataset-pipeline.md) explains each implemented command and
 its limits. Run commands from the repository root on the Linux collection host.
@@ -43,7 +51,8 @@ split. The local inbox defaults to train and does not admit qualification direct
 Reserve distinct candidate families for later evaluation before tuning models on
 them; merely leaving pages unlabelled does not prove they are independent.
 
-The initial 20 review decisions permit at most twenty unchanged accepted pages.
+The historical 20-decision feasibility limit has been replaced by the kickoff
+allocation; review capacity is not a request for more manual labeling.
 There is no automatic label-proposal system yet: annotation is a real human task.
 One human pixel review, independent of any model/agent proposal, accepts the page.
 A second reviewer is optional and never mandatory. An agent review cannot accept
@@ -120,7 +129,7 @@ pnpm run dataset stop
 | `budget-blocked` | Ask for a usage/yield report; approve a justified follow-up allocation if needed |
 | `needs-repair` / quarantined jobs | Ask the agent to diagnose the local cause; after repair use `retry JOB_ID --after-repair` and `start` |
 | `stopped` / interrupted heartbeat | Inspect the reason, then use `start` when ready; a live writer prevents overlap |
-| Unresolved duplicate pairs | Inspect both pages/artwork before choosing distinct, duplicate or source exclusion |
+| Cross-split duplicate candidates | Ask the agent to investigate leakage; same-split similarities are retained with an audit and need no action |
 | `export-interrupted` | Ask for the cause, then rerun export within the remaining budget |
 
 Do not delete the database, reset reservations, change hashes to accept corruption,
@@ -211,7 +220,8 @@ You approve the concrete follow-up allocation; the agent can then apply it with
 `dataset budget`. That command sets **total cumulative ceilings**, not additional
 allowances, and requires every budget field. Existing reservations/review decisions
 remain counted. Do not copy an arbitrary larger number into configuration merely
-to unblock a run. The approved initial budget has not been increased by this guide.
+to unblock a run. The 2026-09-07 kickoff approval supersedes that initial allocation;
+use the current ledger rather than repeating the feasibility-budget command.
 
 ## 6. Build and export the first useful learning tranche
 
