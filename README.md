@@ -42,6 +42,12 @@ None is claimed to meet chess accuracy, GB10 compatibility or browser latency
 requirements before measurement. No arbitrary 2 MB weight limit; usable offline
 latency/memory and preservation of working cases decide.
 
+ChessQueries (ViT encoder with 64 square queries and a DETR-style decoder) is
+also an owner-added GB10 evaluation candidate in [issue #4](https://github.com/nino96/chess-ocr/issues/4).
+That issue includes a proposed isolated Python/CUDA inference recipe, pinned
+source/weight identities and bounded screening gates. Setup and printed-diagram
+quality are not yet validated; its inclusion does not select it for delivery.
+
 ## Environment preparation
 
 Baseline prerequisites: Git, **Node.js 24 LTS**, **Python 3.12**, and optionally
