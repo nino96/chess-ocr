@@ -311,3 +311,35 @@ Artwork independence remains a reviewed property, not a count of downloaded file
 The first real tranche, verified coverage/lineage, measured human audit, approved
 synthetic fidelity, and downstream #3 preprocessing parity remain undelivered.
 Pipeline mechanics do not establish the dataset or recognition outcome.
+
+## Decision: automatic annotation proposals after feasibility
+
+Owner direction, 2026-09-06; owned by issue #2. After the initial manual feasibility
+batch, implement automatic board proposals and piece-label prefilling before
+scaling annotation to the larger collection. This is committed follow-up scope,
+not an already implemented feature. No board detector has been selected.
+
+- Use the feasibility batch's reviewed pages and measured manual-review effort
+  to define one bounded comparison of a classical multi-board grid detector and
+  the existing FENShot detection path. Preserve full-page negatives, missed boards,
+  small/multiple boards and difficult geometry; do not select only successes.
+- Choose localization separately from square-label proposals. The unchanged
+  chess-trained FENShot classifier is an initial label-prefilling candidate,
+  not a mandated detector or teacher. The unadapted YOLOX/ImageNet checkpoints
+  are not assumed to provide useful chess annotations.
+- Select the proposal workflow by total human annotation time, missed and false
+  board proposals, grid corrections and piece corrections on identical pages.
+  Record a measured advance/defer/reject decision rather than assuming either
+  approach wins. Qualification inputs remain untouched.
+- Implement bounded resumable proposal jobs, source/model/preprocessing identity,
+  editable candidate outlines and labels, and preservation of human corrections
+  across retries, geometry edits and late results. Provide executable tests and
+  documented start/status/stop/review commands before larger-scale use.
+- Predictions remain proposals: confidence cannot replace independent human
+  verification or admit labels automatically. Keep all input-specific evidence
+  and generated metadata local. Freeze the comparison limits within an approved
+  allocation; this decision does not increase the current collection/GPU budget.
+
+Handoff gate: report the selected method, measured review-time benefit and failure
+coverage, or the specific reason neither method advances. The operator workflow
+must reflect the implemented behavior before the larger annotation phase begins.

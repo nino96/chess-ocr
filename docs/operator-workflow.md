@@ -150,6 +150,14 @@ the feasibility report. A zero-error tiny batch is not a quality guarantee.
 
 ## 5. Decide the larger collection budget
 
+Automatic board proposals and piece-label prefilling are committed follow-up work
+after this feasibility batch and before larger-scale annotation. The
+[recorded decision](../PLAN.md#decision-automatic-annotation-proposals-after-feasibility)
+requires a bounded comparison based on manual-review effort; no detector has been
+selected. The agent owns implementation and tests. Your role is to review the
+measured benefit/failure report and approve any additional resource allocation.
+This feature remains unimplemented until that work passes its handoff gate.
+
 After the first review batch, the agent should bring you a concrete proposal with:
 
 - Actual rendered and reviewed pages, boards per page and diagram yield by family.
