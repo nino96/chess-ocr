@@ -175,8 +175,10 @@ source page/crop/grid and a board freshly rendered from proposed labels together
 Review actual geometry, orientation and all 64 squares, preserve accepted edits,
 and quarantine conflicts. Independent checks must cover each new glyph design,
 all uncertainty and a stratified sample of accepted training data. Qualification
-truth requires independent human checking. Time the first 20 reviews and report
-disagreement rates and review cost; model agreement/legality are not ground truth.
+truth requires a human check independent of model/agent proposals; one such human
+review accepts a page. Time the first 20 reviews and report review cost and
+observed corrections/ambiguities honestly; do not report a disagreement rate from
+one reviewer. Model agreement/legality are not ground truth.
 
 Synthetic position specifications supply intended labels, not proof that a
 renderer drew them correctly. Verify every renderer/design against an independent
@@ -305,12 +307,32 @@ artifacts stay in ignored local storage. No source-specific records are publishe
 
 The [implemented pipeline](docs/dataset-pipeline.md) provides a local PDF inbox,
 explicit local-use ingestion, bounded background rendering/acquisition, status,
-stop/resume, hash/revision checks, independent review and candidate train/dev
+stop/resume, hash/revision checks, one-human acceptance independent of model
+proposals, and candidate train/dev
 exports. Complete-page targets preserve negatives and exclude unsupported cases.
 Artwork independence remains a reviewed property, not a count of downloaded files.
 The first real tranche, verified coverage/lineage, measured human audit, approved
 synthetic fidelity, and downstream #3 preprocessing parity remain undelivered.
 Pipeline mechanics do not establish the dataset or recognition outcome.
+
+## Owner decision: review dashboard and managed reset — 2026-09-06
+
+The loopback dashboard is the primary dataset-review workflow: it presents the
+local queue/page thumbnails, retains server-side drafts, submits human reviews and
+advances the queue. One human pixel review independent of any model/agent proposal
+accepts a matching annotation; a second review is optional for every split,
+including qualification. This does not relax the frozen #3 recognition metrics or
+the requirement that qualification truth be independently human checked.
+
+The confirmation-required **Start over** action archives managed state under
+ignored `work/dataset/archives/<timestamp-id>/`, retains the inbox and approved
+budget, and carries cumulative acquisition/review use forward. An archive remains
+storage usage; reset is not a budget refund and has no automated restore command.
+The **Archives** panel lists dated sizes and supports explicitly confirmed permanent
+deletion of one unchanged archive. Deletion reclaims storage without changing
+active data, inbox files or cumulative usage; unsafe paths and links are rejected.
+These are local workflow controls, not a real collection, qualification result or
+browser-test claim.
 
 ## Decision: automatic annotation proposals after feasibility
 
@@ -336,7 +358,9 @@ not an already implemented feature. No board detector has been selected.
   across retries, geometry edits and late results. Provide executable tests and
   documented start/status/stop/review commands before larger-scale use.
 - Predictions remain proposals: confidence cannot replace independent human
-  verification or admit labels automatically. Keep all input-specific evidence
+  verification or admit labels automatically. One human pixel review, independent
+  of the proposal/model, accepts a matching annotation; a second review is
+  optional, never mandatory. Keep all input-specific evidence
   and generated metadata local. Freeze the comparison limits within an approved
   allocation; this decision does not increase the current collection/GPU budget.
 

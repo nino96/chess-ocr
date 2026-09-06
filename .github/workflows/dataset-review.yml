@@ -1,14 +1,34 @@
-name: Offline dataset review UI
+name: Dataset review UI
 on:
   push:
     paths:
       - "python/dataset_pipeline.py"
+      - "python/dataset_server.py"
+      - "python/dataset_reset.py"
+      - "python/dataset_app.html"
+      - "src/dataset-app.ts"
+      - "scripts/dataset.mjs"
+      - "tsconfig.dataset-app.json"
+      - "package.json"
+      - "python/requirements-dataset-linux-cp312.txt"
+      - "python/test_dataset_pipeline.py"
+      - "tests/dataset-app.browser.mjs"
       - "python/dataset_review.html"
       - "tests/dataset-review.browser.mjs"
       - ".github/workflows/dataset-review.yml"
   pull_request:
     paths:
       - "python/dataset_pipeline.py"
+      - "python/dataset_server.py"
+      - "python/dataset_reset.py"
+      - "python/dataset_app.html"
+      - "src/dataset-app.ts"
+      - "scripts/dataset.mjs"
+      - "tsconfig.dataset-app.json"
+      - "package.json"
+      - "python/requirements-dataset-linux-cp312.txt"
+      - "python/test_dataset_pipeline.py"
+      - "tests/dataset-app.browser.mjs"
       - "python/dataset_review.html"
       - "tests/dataset-review.browser.mjs"
       - ".github/workflows/dataset-review.yml"
@@ -28,4 +48,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m venv work/dataset-venv
+      - run: work/dataset-venv/bin/python -m pip install --require-hashes -r python/requirements-dataset-linux-cp312.txt
       - run: pnpm run test:dataset-review

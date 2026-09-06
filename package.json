@@ -15,12 +15,12 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:browser": "playwright test",
     "setup": "node scripts/assets.mjs",
-    "lint": "prettier --check src tests scripts index.html python/dataset_review.html *.json *.ts pnpm-workspace.yaml .github/workflows && node scripts/lint.mjs",
+    "lint": "prettier --check src tests scripts index.html python/dataset_review.html python/dataset_app.html *.json *.ts pnpm-workspace.yaml .github/workflows && node scripts/lint.mjs",
     "eval": "node scripts/evaluate.mjs benchmark",
     "test:parity": "node scripts/evaluate.mjs parity",
     "test:smoke": "playwright test --project=chromium --grep \"manual selection, actual WASM\"",
     "dataset": "node scripts/dataset.mjs",
-    "test:dataset-review": "node --test tests/dataset-review.browser.mjs"
+    "test:dataset-review": "node --test tests/dataset-review.browser.mjs tests/dataset-app.browser.mjs"
   },
   "dependencies": {
     "@scoriiu/fenshot": "0.1.4",

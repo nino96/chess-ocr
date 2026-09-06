@@ -6,9 +6,25 @@ if (!existsSync(python) && !process.env.DATASET_PYTHON) {
     "Dataset environment missing: follow docs/dataset-pipeline.md setup.",
   );
 }
+const serving = process.argv[2] === "serve";
+if (serving) {
+  const build = spawnSync(
+    process.execPath,
+    [
+      "node_modules/typescript/bin/tsc",
+      "--project",
+      "tsconfig.dataset-app.json",
+    ],
+    { stdio: "inherit" },
+  );
+  if (build.status !== 0) process.exit(build.status ?? 1);
+}
 const result = spawnSync(
   python,
-  ["python/dataset_pipeline.py", ...process.argv.slice(2)],
+  [
+    serving ? "python/dataset_server.py" : "python/dataset_pipeline.py",
+    ...process.argv.slice(serving ? 3 : 2),
+  ],
   {
     stdio: "inherit",
   },

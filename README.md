@@ -127,8 +127,18 @@ including your review/approval checkpoints and the agent's responsibilities.
 The [local dataset pipeline](docs/dataset-pipeline.md) accepts PDFs placed in
 ignored `work/dataset/inbox/`, uses explicit resource limits, and runs resumable
 background acquisition/rendering with `pnpm run dataset start`, `status` and
-`stop`. `ingest` records explicit local-use authorization and a conservative
-source/artwork group. Offline review pages preserve corrections and require
-independent human confirmation. Validation and hashed train/dev exports are
+`stop`. For review, start the primary local dashboard with:
+
+```sh
+pnpm run dataset serve --port 8766
+```
+
+It binds to loopback only. In VS Code use **Ports** → **Forward a Port** → `8766`
+→ **Open Browser**. The dashboard keeps server-side drafts, presents the queue and
+page thumbnails, and accepts a page after one human pixel review; model or agent
+proposals cannot accept it. `ingest` records explicit local-use authorization and
+a conservative source/artwork group. Validation and hashed train/dev exports are
 implemented; no real collection or recognition qualification is claimed.
+Use **Archives** to see dated archive sizes and permanently delete an old recovery
+copy after confirmation. Active data, inbox PDFs and cumulative usage are retained.
 All dataset source information and metadata remain local, alongside the data.

@@ -135,8 +135,9 @@ own constraints. Surface conflicts before changing either.
 - Notation, PDF glyph placements, legality and model agreement propose/check
   labels; they do not prove them. Compare actual pixels with rendered labels,
   inspect every new glyph family, audit accepted labels independently, preserve
-  edits, and quarantine ambiguity. Qualification truth needs independent human
-  checking; describe agent-only verification honestly.
+  edits, and quarantine ambiguity. Qualification truth needs one human pixel check
+  independent of model/agent proposals; a second human review is optional, never
+  mandatory for acceptance. Describe agent-only verification honestly.
 - Verify render fidelity BEFORE bulk synthesis. Transform geometry with whole
   pages; crop jitter and degradation must preserve labels or be quarantined.
   Evaluate real-only reference sets; report synthetic stress tests separately.

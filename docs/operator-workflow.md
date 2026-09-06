@@ -13,7 +13,7 @@ setup and budget commands in the reference.
 | --- | --- | --- | --- |
 | Choose feasibility inputs | Supply authorized PDFs if desired; confirm their intended local use | Research public candidates, inspect rights and propose related artwork groups and initial splits | Small, explicit source/page selection |
 | Acquire and render | Optionally run ingest/start yourself | Register reviewed public manifests or ingest supplied PDFs; run the bounded background worker | Pages ready for review, or a specific repair/budget blocker |
-| Review feasibility pages | Annotate pixels and arrange a second independent human reviewer | Generate offline review pages; import decisions; validate revisions, geometry and duplicates | Timed review batch and honest coverage/yield assessment |
+| Review feasibility pages | Annotate pixels as a human reviewer | Generate review pages; import decisions; validate revisions, geometry and duplicates | Timed review batch and honest coverage/yield assessment |
 | Approve larger collection | Approve a concrete follow-up resource and human-review allocation | Estimate costs from the pilot, identify missing designs and implement missing collection features | Approved plan for a useful real training tranche |
 | Build larger collection | Review assigned batches and ambiguous cases | Repeat bounded acquisition, review imports and leakage/coverage checks | Accepted train/dev data and independently reserved qualification membership |
 | Train and compare models | Approve a separate training budget and review the experiment proposal | Implement #3 training/evaluation jobs, run the frozen schedule, save resumable state and compare against FENShot | Measured advance/defer/reject decision |
@@ -26,8 +26,8 @@ implementation sends no notifications and does not schedule its own human review
 
 ## 1. Choose a small feasibility batch
 
-Your immediate decisions are which optional local books to contribute and who can
-perform the second human review. Public-source discovery can be done by the agent;
+Your immediate decisions are which optional local books to contribute and who will
+perform the human pixel review. Public-source discovery can be done by the agent;
 you do not have to find or upload books. The current source ceiling is twelve
 admitted documents, not a list of twelve selected titles and not twelve proven
 independent artwork groups. Source lists and rights evidence remain local.
@@ -43,12 +43,11 @@ split. The local inbox defaults to train and does not admit qualification direct
 Reserve distinct candidate families for later evaluation before tuning models on
 them; merely leaving pages unlabelled does not prove they are independent.
 
-The initial 20 review decisions permit at most ten accepted pages. There is no
-automatic label-proposal system yet: annotation is a real human task. The current
-tool requires two independent matching human reviews of every accepted page.
-If a second reviewer is unavailable, we can render pages and prepare proposals,
-but those pages remain unaccepted. Repeating your own review under another name
-or having an agent check it does not satisfy that gate.
+The initial 20 review decisions permit at most twenty unchanged accepted pages.
+There is no automatic label-proposal system yet: annotation is a real human task.
+One human pixel review, independent of any model/agent proposal, accepts the page.
+A second reviewer is optional and never mandatory. An agent review cannot accept
+or overwrite a human-accepted annotation.
 
 ## 2. Ingest and start rendering
 
@@ -105,38 +104,45 @@ or relabel a duplicate as distinct simply to make a gate pass. Excluding a bad
 source preserves its history and excludes its known related component. The command
 reference describes the explicit repair and exclusion commands.
 
-## 4. Review pages and import decisions
+## 4. Review pages in the dashboard
 
-The agent can select the first batch and generate the review files, or you can:
-
-```sh
-pnpm run dataset queue
-pnpm run dataset review SAMPLE_ID
-```
-
-Open the printed local HTML file in a browser. On each page:
-
-1. Inspect the whole page and add every complete board. Mark negative, partial
-   or unsupported pages accurately; mixed unsupported pages need explicit handling
-   rather than missing detector targets.
-2. Position the four inner-grid corners, excluding labels and decorative borders.
-   Check the grid overlay and source square crops.
-3. Enter all 64 image-relative labels. Uppercase means white, lowercase black,
-   and `.` empty. Preserve the printed pieces even for an illegal teaching position.
-4. Supply your reviewer identity, mark the human and complete-page declarations,
-   and export the proposal JSON. Save it under `work/dataset/`.
-5. Import it, then regenerate the review file for the new revision:
+Start the loopback dashboard:
 
 ```sh
-pnpm run dataset import-review work/dataset/first-review.json
-pnpm run dataset review SAMPLE_ID
+pnpm run dataset serve --port 8766
 ```
 
-A second independent human checks the actual pixels and exports their own decision.
-Import that file using the same command. Matching reviews accept the page;
-corrections create a new revision needing independent confirmation. Old exported
-proposals fail the stale-revision check. The HTML is an editable review aid, not
-an automatically trusted annotation result.
+In VS Code use **Ports** → **Forward a Port** → `8766` → **Open Browser**. Work
+through the queue and thumbnails: inspect the complete page, add each complete
+board or choose **No board** explicitly, set inner-grid corners, then enter all
+64 image-relative labels. Uppercase means white, lowercase black and `.` empty;
+preserve printed pieces even for illegal teaching positions. Mark partial or
+unsupported pages accurately rather than creating a false negative.
+
+The dashboard autosaves drafts on the local server. Complete the reviewer, human
+and complete-page declarations, then choose **Submit review & next**. One human
+pixel review independent of model/agent proposals accepts a matching annotation;
+corrections create a new revision needing a human review. A second review is
+optional evidence, never an acceptance gate. Old revision/hash submissions fail
+without overwriting accepted edits.
+
+The dashboard exposes existing start/stop, validation, candidate export, inbox
+ingestion with its explicit authorization checkbox, and duplicate decisions. It
+does not upload PDFs: place intended files in `work/dataset/inbox/` through VS
+Code/the local workspace, then ingest that existing inbox. No automatic proposal
+feature exists yet. Use **Stop job** for the separate worker; `Ctrl+C` stops only
+the web app. Rendering uses the same writer lock as draft saves, so stop the job
+and choose **Retry saving draft** if a save is temporarily blocked.
+
+**Start over** is a deliberate reset, not routine cleanup: it requires typing
+`START OVER`, archives managed state under ignored `work/dataset/archives/`, keeps
+the inbox and approved budget, and carries acquisition/review charges forward.
+It is never a budget refund, archives still use storage, and recovery is an
+operator-led local procedure rather than an automated restore command.
+
+The self-contained exported HTML is an optional offline fallback; import its JSON
+with `pnpm run dataset import-review REVIEW_FILE.json` under the same stale/hash
+and one-human safeguards.
 
 On a separate laptop, transfer only the intended self-contained review HTML using
 a private method you choose, then return the exported JSON to the collection host.
@@ -144,9 +150,10 @@ The HTML embeds the source image and is sensitive data. This workflow requires
 no remote server or public sharing. Dataset ingestion itself is currently tested
 on Linux; laptop review is separate from the still-pending physical runtime tests.
 
-The first batch establishes review effort and disagreements. The CLI records
-per-decision timing; the agent still needs to analyze the local records to produce
-the feasibility report. A zero-error tiny batch is not a quality guarantee.
+The first batch establishes review effort and corrections/ambiguities. The CLI
+records per-decision timing; the agent still needs to analyze the local records to
+produce the feasibility report. A disagreement rate requires a separately planned
+comparison review; a zero-error tiny batch is not a quality guarantee.
 
 ## 5. Decide the larger collection budget
 
@@ -162,7 +169,7 @@ After the first review batch, the agent should bring you a concrete proposal wit
 
 - Actual rendered and reviewed pages, boards per page and diagram yield by family.
 - Observed artwork independence, small-glyph readability, class/condition gaps,
-  duplicates and label disagreements.
+  duplicates and label corrections/ambiguities.
 - Measured human review time, remaining review work and who will perform it.
 - Storage used and projected original/page/tensor storage, plus failed attempts.
 - Sources/groups and page selections for the next increment, with explicit

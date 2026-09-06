@@ -70,14 +70,16 @@ pnpm run dataset budget --sources 12 --pages 2000 --download-bytes 2147483648 --
 
 This caps admitted sources and rendered pages, downloaded bytes, total local
 workspace storage, conservatively reserved compute time, and the first 20 review
-**decisions** (two reviews per accepted page). Failed/interrupted attempts retain
-full reservations. Inspect measured review times and disagreements before raising
-the review batch limit. No GPU training, paid services or permission outreach is
+**decisions**. One human decision accepts a matching page; corrections are further
+decisions. Failed/interrupted attempts retain full reservations. Inspect measured
+review time and corrections/ambiguities before raising the review batch limit. No
+GPU training, paid services or permission outreach is
 included. The shared project ledger is [budget.md](budget.md); per-attempt records
 and actual ceilings are persisted locally in SQLite.
 
 These are feasibility-stage limits, not a complete training-tranche budget.
-Twenty review decisions permit at most ten accepted pages. Current accounting
+Twenty review decisions permit at most twenty unchanged accepted pages. Current
+accounting
 charges 90 seconds per rendered page even when an attempt finishes faster, so
 four compute hours permit fewer than 160 pages after other charges, not 2,000.
 The source ceiling does not represent twelve selected or rights-cleared books.
@@ -152,7 +154,36 @@ The worker exits at review, source, repair or budget boundaries. No AI process
 needs to stay alive or poll it. A command returning successfully does not mean
 a dataset is reviewed or recognition is qualified.
 
-## Annotation and independent review
+## Dashboard review (primary workflow)
+
+Start the local dashboard after the dataset environment is prepared:
+
+```sh
+pnpm run dataset serve --port 8766
+```
+
+It binds only to `127.0.0.1`. In VS Code, open **Ports**, choose **Forward a
+Port**, enter `8766`, then choose **Open Browser**. Forwarding is a local-editor
+convenience, not permission to expose the service publicly; keep the forwarded
+port private.
+
+Use the dashboard queue and page thumbnails to open the next review. It autosaves
+server-side drafts, lets you mark **No board** explicitly, and submits **Submit
+review & next** only after the human declarations are complete. One human pixel
+review, independent of any model/agent proposal, accepts a matching annotation;
+corrections create a new revision requiring a human review. The dashboard provides
+the existing start/stop, validation, candidate export, inbox ingestion (with its
+explicit local-use checkbox), and duplicate inspection/resolution actions. It
+does not upload PDFs: add new intended PDFs to `work/dataset/inbox/` through VS
+Code/the local workspace, then ingest that existing inbox. There are no automatic
+board or label proposals.
+
+Use **Stop job** for the separate acquisition/export worker; `Ctrl+C` stops only
+the web app. The app and worker share one writer lock, so active rendering can
+temporarily block a draft save. Stop the job, then choose **Retry saving draft**;
+your browser draft remains available for that retry.
+
+## Optional standalone HTML fallback
 
 ```sh
 pnpm run dataset queue
@@ -160,18 +191,17 @@ pnpm run dataset review SAMPLE_ID
 # Open the printed local HTML path; annotate and export a proposal JSON.
 # Save the exported JSON inside work/dataset/, not the repository source tree.
 pnpm run dataset import-review work/dataset/REVIEW_FILE.json
-pnpm run dataset review SAMPLE_ID
-# A second independent human reviews the new revision and exports their decision.
-pnpm run dataset import-review work/dataset/SECOND_REVIEW_FILE.json
 ```
 
 The self-contained HTML uses no server, external fonts, telemetry or network
 requests. It displays the whole source page, selected grid and editable 64-square
 labels alongside Unicode label rendering. Unicode is a review aid with explicit
-font limitations, not a certified synthetic renderer. Corrections require a new
-matching independent review. Reviewer identities and human declarations are
-self-attested; the tool cannot prove two identities represent independent people.
-Do not claim agent-generated or repeated self-review is independent human truth.
+font limitations, not a certified synthetic renderer. One self-attested human
+review of the pixels accepts a matching annotation. Corrections create a new
+revision and need a human review of that revision. A second human review is
+optional and never a page-acceptance prerequisite. Do not claim agent-generated
+or model-generated output is human truth; “independent” here means independent of
+the proposal/model, not necessarily a second reviewer.
 
 All labels are image-relative row-major; `.` is empty, uppercase white, lowercase
 black. Orientation may remain unknown. Page kind and complete-page review are
@@ -181,9 +211,32 @@ unlabelled negative. No missing side-to-move or other FEN fields are fabricated.
 
 Imports check the original image hash and current revision. Late/stale reviews
 are rejected, accepted edits are never overwritten, and all imported decisions
-are retained. The current conservative gate requires two matching independent
-human reviews for every accepted page. It does not yet provide a weaker sampled
-training audit or automatic model-assisted label proposals.
+are retained. Validation requires at least one matching human decision. Repeated
+submission of the same reviewer decision is idempotent and does not consume another
+review decision. Old pending records with a matching human review are promoted
+without new review time or budget. The pipeline does not yet provide automatic
+model-assisted label proposals.
+
+### Confirmed Start over
+
+The confirmation-required **Start over** action archives managed state under
+ignored `work/dataset/archives/<timestamp-id>/`. It retains the inbox and approved
+budget, while carrying cumulative acquisition reservations and review decision/time
+use into the new ledger. Reset is not a budget refund: the archive still counts
+against storage. No current real dataset has been reset, and there is no automated
+restore command; recover an archive only through an operator-led local procedure.
+
+Open **Archives** in the dashboard to see each archive's UTC date and size.
+Choose **Delete archive…**, type `DELETE`, then choose **Permanently delete
+archive**. This removes only that archive's recovery copy. It reclaims storage,
+but does not refund cumulative download, compute or review usage, or touch the
+active dataset and inbox. Cancel leaves the archive intact.
+
+Deletion rejects changed selections, symlinks and paths outside the archive
+directory, and cannot run while another dataset writer or reset recovery is
+active. If deletion is interrupted or reaches its time limit, refresh the archive
+list and confirm deletion of the remaining files. No automatic retry or restore
+is performed. Uninspectable entries are disabled and need local operator cleanup.
 
 Exact page hashes and perceptual page/rectified-board hashes propose duplicate
 pairs. Perceptual similarity is not proof of duplication: inspect both local
@@ -254,7 +307,7 @@ not an aggregate tile score or source count alone.
 ## Checks
 
 ```sh
-work/dataset-venv/bin/python -m unittest python/test_dataset_pipeline.py
+work/dataset-venv/bin/python -m unittest python/test_dataset_pipeline.py python/test_dataset_reset.py python/test_dataset_server.py
 pnpm run check
 pnpm test
 pnpm run build

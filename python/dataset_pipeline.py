@@ -99,6 +99,14 @@ def write_json(path, value):
 
 
 def connect():
+    # A reset may have been interrupted after its durable marker was written.
+    # Finish it before any caller can observe or mutate a mixed generation.
+    if (ROOT / "reset.pending.json").exists():
+        try:
+            from dataset_reset import recover_reset
+        except ModuleNotFoundError:
+            from python.dataset_reset import recover_reset
+        recover_reset()
     local_path("state.sqlite3")
     require((ROOT / "state.sqlite3").exists(), "run init first")
     db = sqlite3.connect(ROOT / "state.sqlite3", timeout=10)
@@ -108,13 +116,27 @@ def connect():
 
 
 @contextlib.contextmanager
-def writer():
+def _writer_lock():
     ROOT.mkdir(parents=True, exist_ok=True)
     with local_path("writer.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Invalid("another writer is active; status and stop remain available") from None
+        yield lock
+
+
+@contextlib.contextmanager
+def writer():
+    # Recovery must finish before a normal writer obtains the lock; this avoids
+    # a connection observing the generation between payload move and DB clear.
+    if (ROOT / "reset.pending.json").exists():
+        try:
+            from dataset_reset import recover_reset
+        except ModuleNotFoundError:
+            from python.dataset_reset import recover_reset
+        recover_reset()
+    with _writer_lock() as lock:
         yield lock
 
 
@@ -151,10 +173,13 @@ def initialize():
             db.execute("ALTER TABLE jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3")
         defaults = {"budget": {"sources": 0, "pages": 0, "download_bytes": 0,
                     "storage_bytes": 0, "cpu_seconds": 0, "review_limit": 20},
-                    "worker": {"state": "idle"}, "schema": SCHEMA}
+                    "worker": {"state": "idle"}, "schema": SCHEMA,
+                    "carryover": {"reserved_download_bytes": 0, "reserved_compute_seconds": 0,
+                                  "attempts": 0, "review_decisions": 0, "review_seconds": 0}}
         with db:
             for key, value in defaults.items():
                 db.execute("INSERT OR IGNORE INTO meta VALUES (?,?)", (key, canonical(value)))
+            _promote_legacy_single_human_reviews(db)
         db.close()
     return {"state": "initialized", "next_action": "set an authorized local budget, then add reviewed source manifests"}
 
@@ -194,8 +219,7 @@ def ingest(args):
                 resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
                 resource.setrlimit(resource.RLIMIT_AS, (512*1024**2, 512*1024**2))
                 resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_CONFIG, MAX_CONFIG))
-            used = db.execute("SELECT COALESCE(SUM(seconds),0) FROM reservations").fetchone()[0]
-            require(used + 15 <= budget["cpu_seconds"], "inspection compute budget exhausted")
+            require(cumulative_accounting(db)["reserved_compute_seconds"] + 15 <= budget["cpu_seconds"], "inspection compute budget exhausted")
             with db:
                 db.execute("INSERT INTO reservations(job,bytes,seconds,at) VALUES (0,0,15,?)", (time.time(),))
             info_path = local_path("staging/pdfinfo.txt")
@@ -349,12 +373,12 @@ def size_on_disk():
 
 def reserve(db, job, source):
     budget = meta(db, "budget")
-    used = db.execute("SELECT COALESCE(SUM(bytes),0),COALESCE(SUM(seconds),0) FROM reservations").fetchone()
+    used = cumulative_accounting(db)
     byte_count = source["max_bytes"] if job["stage"] == "acquire" else 0
     seconds = 120 if job["stage"] == "acquire" else 90
     # Reserve full worst-case storage, including temporary images, before starting.
     storage = source["max_bytes"] if job["stage"] == "acquire" else MAX_PIXELS * 12
-    if used[0] + byte_count > budget["download_bytes"] or used[1] + seconds > budget["cpu_seconds"]:
+    if used["reserved_download_bytes"] + byte_count > budget["download_bytes"] or used["reserved_compute_seconds"] + seconds > budget["cpu_seconds"]:
         raise Budget("attempt reservation exceeds download/compute ceiling")
     if size_on_disk() + storage > budget["storage_bytes"]:
         raise Budget("attempt reservation exceeds storage ceiling")
@@ -611,23 +635,34 @@ def status():
             worker["state"] = "heartbeat-stale-check-process-or-resume"
         counts = dict(db.execute("SELECT state,COUNT(*) FROM jobs GROUP BY state"))
         samples = db.execute("SELECT COUNT(*),COALESCE(SUM(accepted),0) FROM samples WHERE source NOT IN (SELECT source FROM exclusions)").fetchone()
-        reserved = db.execute("SELECT COALESCE(SUM(bytes),0),COALESCE(SUM(seconds),0),COUNT(*) FROM reservations").fetchone()
-        reviews = db.execute("SELECT COUNT(*),COALESCE(SUM(seconds),0) FROM reviews").fetchone()
+        accounting = cumulative_accounting(db)
         duplicates = db.execute("SELECT COUNT(*) FROM duplicates d JOIN samples a ON d.a=a.id JOIN samples b ON d.b=b.id WHERE d.decision IS NULL AND a.source NOT IN (SELECT source FROM exclusions) AND b.source NOT IN (SELECT source FROM exclusions)").fetchone()[0]
         sources = db.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
         return {"schema": SCHEMA, "worker": worker, "jobs": counts, "pages": samples[0],
                 "sources": sources,
                 "excluded_sources": db.execute("SELECT COUNT(*) FROM exclusions").fetchone()[0],
                 "accepted_pages": samples[1], "review_queue": samples[0] - samples[1],
-                "unresolved_duplicate_pairs": duplicates, "review_decisions": reviews[0],
-                "review_seconds": reviews[1], "budget": meta(db, "budget"),
-                "reserved_download_bytes": reserved[0], "reserved_compute_seconds": reserved[1],
-                "attempts": reserved[2], "storage_bytes": size_on_disk(),
+                "unresolved_duplicate_pairs": duplicates, "review_decisions": accounting["review_decisions"],
+                "review_seconds": accounting["review_seconds"], "budget": meta(db, "budget"),
+                "reserved_download_bytes": accounting["reserved_download_bytes"], "reserved_compute_seconds": accounting["reserved_compute_seconds"],
+                "attempts": accounting["attempts"], "storage_bytes": size_on_disk(),
                 "next_action": ("set authorized budget; ingest inbox or add reviewed public manifests" if not sources
                                 else "inspect queue and repair quarantined jobs" if counts.get("quarantined")
                                 else "resolve duplicate queue" if duplicates
-                                else "review pages twice; validate before export"),
+                                else "review pages; validate before export"),
                 "recognition_qualified": False}
+
+
+def cumulative_accounting(db):
+    """Lifetime charges, including archived generations after a reset."""
+    carry = meta(db, "carryover") if db.execute("SELECT 1 FROM meta WHERE key='carryover'").fetchone() else {}
+    reserved = db.execute("SELECT COALESCE(SUM(bytes),0),COALESCE(SUM(seconds),0),COUNT(*) FROM reservations").fetchone()
+    reviews = db.execute("SELECT COUNT(*),COALESCE(SUM(seconds),0) FROM reviews").fetchone()
+    return {"reserved_download_bytes": int(carry.get("reserved_download_bytes", 0)) + reserved[0],
+            "reserved_compute_seconds": int(carry.get("reserved_compute_seconds", 0)) + reserved[1],
+            "attempts": int(carry.get("attempts", 0)) + reserved[2],
+            "review_decisions": int(carry.get("review_decisions", 0)) + reviews[0],
+            "review_seconds": float(carry.get("review_seconds", 0)) + reviews[1]}
 
 
 def annotation_validate(data, width, height):
@@ -655,27 +690,58 @@ def annotation_validate(data, width, height):
     return {"kind": data["kind"], "boards": boards, "complete_page": True}
 
 
-def review(sample_id):
-    token(sample_id)
+def _promote_legacy_single_human_reviews(db):
+    """Promote pre-single-review records without writing a new review decision."""
+    rows = db.execute("""
+        SELECT s.id FROM samples s
+        WHERE s.accepted=0 AND s.annotation IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM reviews r
+            WHERE r.sample=s.id AND r.revision=s.revision
+              AND r.content=s.annotation AND r.human=1
+          )
+    """).fetchall()
+    db.executemany("UPDATE samples SET accepted=1 WHERE id=?", ((row[0],) for row in rows))
+    return len(rows)
+
+
+def promote_legacy_single_human_reviews():
+    """Idempotently apply the one-human policy to old pending review records."""
     with writer(), connect() as db:
+        promoted = _promote_legacy_single_human_reviews(db)
+    return {"state": "legacy-single-human-promoted", "promoted": promoted}
+
+
+def review_payload(sample_id):
+    token(sample_id)
+    with connect() as db:
         sample = db.execute("SELECT * FROM samples WHERE id=?", (sample_id,)).fetchone()
         require(sample is not None, "unknown sample")
         require(digest(local_path(sample["image"])) == sample["sha"], "stale/corrupt page")
         annotation = json.loads(sample["annotation"]) if sample["annotation"] else {"kind": "boards", "boards": []}
-        payload = {"schema": "chess-ocr-dataset-review/1", "sample_id": sample_id,
-                   "revision": sample["revision"], "image_sha256": sample["sha"],
-                   "width": sample["width"], "height": sample["height"], **annotation,
-                   "image_data_url": "data:image/png;base64," + base64.b64encode(local_path(sample["image"]).read_bytes()).decode()}
+        return {"schema": "chess-ocr-dataset-review/1", "sample_id": sample_id,
+                "revision": sample["revision"], "image_sha256": sample["sha"],
+                "width": sample["width"], "height": sample["height"], **annotation,
+                "image_data_url": "data:image/png;base64," + base64.b64encode(local_path(sample["image"]).read_bytes()).decode()}
+
+
+def review(sample_id):
+    payload = review_payload(sample_id)
+    with writer(), connect() as db:
         template = (Path(__file__).parent / "dataset_review.html").read_text()
         html = template.replace("__PAYLOAD_BASE64__", base64.b64encode(canonical(payload).encode()).decode())
         path = local_path(f"review/{sample_id}.html")
         require(size_on_disk() + len(html.encode()) <= meta(db, "budget")["storage_bytes"], "review storage ceiling")
         atomic(path, html.encode())
-    return {"review_file": str(path), "state": "proposal; import two independent matching reviews"}
+    return {"review_file": str(path), "state": "proposal; import one human review"}
 
 
 def import_review(path):
-    data = read_json(path)
+    return submit_review(read_json(path))
+
+
+def submit_review(data, *, check_current=None):
+    require(isinstance(data, dict), "invalid review payload")
     require(data.get("schema") == "chess-ocr-dataset-review/1", "invalid review schema")
     token(data["sample_id"])
     require(isinstance(data.get("reviewer"), str) and 0 < len(data["reviewer"].strip()) <= 80, "reviewer identity required")
@@ -683,21 +749,39 @@ def import_review(path):
     require(type(data.get("elapsed_seconds")) in (int, float) and math.isfinite(data["elapsed_seconds"])
             and 0 < data["elapsed_seconds"] <= 14400, "bounded review time required")
     with writer(), connect() as db:
-        require(db.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] < meta(db, "budget")["review_limit"], "review batch limit; inspect first-batch cost before extending")
         sample = db.execute("SELECT * FROM samples WHERE id=?", (data["sample_id"],)).fetchone()
         require(sample is not None, "unknown sample")
-        require(data["revision"] == sample["revision"] and data["image_sha256"] == sample["sha"]
-                and digest(local_path(sample["image"])) == sample["sha"], "stale review/image")
+        if check_current is not None:
+            check_current(db)
+        require(data.get("image_sha256") == sample["sha"] and digest(local_path(sample["image"])) == sample["sha"], "stale review/image")
+        requested_revision = data.get("revision")
+        require(type(requested_revision) is int and requested_revision in {sample["revision"], sample["revision"] - 1},
+                "stale review/image")
         annotation = annotation_validate(data, sample["width"], sample["height"])
         content = canonical(annotation)
-        changed = content != sample["annotation"]
-        revision = sample["revision"] + int(changed)
         reviewer = data["reviewer"].strip()
+        # Retried identical submissions are no-ops, including when the first
+        # submission advanced the revision before its response was delivered.
+        prior = db.execute("SELECT 1 FROM reviews WHERE sample=? AND revision=? AND content=? AND reviewer=? AND human=?",
+                           (sample["id"], sample["revision"], sample["annotation"], reviewer,
+                            int(data["human"]))).fetchone()
+        if prior is not None and content == sample["annotation"]:
+            accepted = bool(sample["accepted"] or data["human"])
+            if accepted and not sample["accepted"]:
+                db.execute("UPDATE samples SET accepted=1 WHERE id=?", (sample["id"],))
+            return {"state": "accepted" if accepted else "needs-human-review",
+                    "revision": sample["revision"], "idempotent": True}
+        require(requested_revision == sample["revision"], "stale review/image")
+        require(cumulative_accounting(db)["review_decisions"] < meta(db, "budget")["review_limit"], "review batch limit; inspect first-batch cost before extending")
+        changed = content != sample["annotation"]
+        require(not (changed and sample["accepted"] and not data["human"]),
+                "nonhuman review cannot overwrite accepted human annotation")
+        revision = sample["revision"] + int(changed)
         existing = db.execute("SELECT reviewer,human FROM reviews WHERE sample=? AND revision=? AND content=?",
                               (sample["id"], revision, content)).fetchall() if not changed else []
         require(reviewer not in {r["reviewer"] for r in existing}, "same reviewer cannot confirm own annotation")
-        # Every accepted page needs independent human pixel checking, including training.
-        accepted = data["human"] and any(r["human"] and r["reviewer"] != reviewer for r in existing)
+        # One matching human review is sufficient; agent-only decisions never accept.
+        accepted = bool(data["human"]) or any(r["human"] for r in existing)
         db.execute("INSERT INTO reviews(sample,revision,content,reviewer,human,seconds,decision,at) VALUES (?,?,?,?,?,?,?,?)",
                    (sample["id"], revision, content, reviewer, int(data["human"]), data["elapsed_seconds"],
                     "correction" if changed else "confirmation", time.time()))
@@ -722,7 +806,7 @@ def import_review(path):
                                        (a, b, "board-exact" if grid_sha == other["sha"] else "board-perceptual"))
                 db.execute("INSERT INTO board_signatures VALUES (?,?,?,?,?)",
                            (sample["id"], number, revision, grid_sha, grid_phash))
-    return {"state": "accepted" if accepted else "needs-independent-human-review", "revision": revision}
+    return {"state": "accepted" if accepted else "needs-human-review", "revision": revision}
 
 
 def resolve_duplicate(a, b, decision):
@@ -802,7 +886,7 @@ def validate(db):
             continue
         reviewers = db.execute("SELECT DISTINCT reviewer FROM reviews WHERE sample=? AND revision=? AND content=? AND human=1",
                                (sample["id"], sample["revision"], sample["annotation"])).fetchall()
-        if len(reviewers) < 2:
+        if len(reviewers) < 1:
             errors.append("review-integrity")
         source = sources[sample["source"]]
         ann = annotation_validate(json.loads(sample["annotation"]), sample["width"], sample["height"])
@@ -908,8 +992,7 @@ def build_export(clear_stop=True):
         estimate = sum(len(json.loads(r["annotation"])["boards"]) * (64*3*96*96*4 + 8*1024**2) + local_path(r["image"]).stat().st_size for r in selected)
         require(size_on_disk() + estimate <= meta(db, "budget")["storage_bytes"], "export storage reservation exceeds budget")
         seconds = 10 * sum(len(json.loads(r["annotation"])["boards"]) for r in selected) + 5*len(selected)
-        used = db.execute("SELECT COALESCE(SUM(seconds),0) FROM reservations").fetchone()[0]
-        require(used + seconds <= meta(db, "budget")["cpu_seconds"], "export compute reservation exceeds budget")
+        require(cumulative_accounting(db)["reserved_compute_seconds"] + seconds <= meta(db, "budget")["cpu_seconds"], "export compute reservation exceeds budget")
         with db:
             db.execute("INSERT INTO reservations(job,bytes,seconds,at) VALUES (0,0,?,?)", (seconds,time.time()))
         deadline = time.monotonic() + seconds

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "outDir": "./work/dataset-ui",
+    "rootDir": "./src"
+  },
+  "include": ["src/dataset-app.ts"]
+}

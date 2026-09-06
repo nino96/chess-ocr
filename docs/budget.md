@@ -56,14 +56,16 @@ per-input reports stay local under the owner's stricter privacy instruction.
 This is an initial acquisition/review feasibility allocation, not a demonstrated
 budget for the complete first learning tranche or model improvement. Twelve is
 an admission ceiling; no twelve-book source list has been selected or admitted.
-The current two-human-review gate means 20 decisions accept at most 10 pages,
-fewer when corrections need further reviews. The worker charges the full
+One human review accepts a matching page, so 20 decisions can accept at most 20
+unchanged pages; corrections consume further decisions. The worker charges the full
 90-second reservation for every rendered page, even on successful fast attempts.
 Four hours therefore covers at most 160 page-render attempts before acquisition,
 inspection and export charges; the 2,000-page ceiling is not achievable within
 that compute allocation under current accounting. No GPU training is included.
 
-Use the first reviews to measure diagram yield, label disagreement, review time,
-artwork independence and rendering cost. A complete learning tranche requires
+Use the first reviews to measure diagram yield, review time, corrections/ambiguity,
+artwork independence and rendering cost. A disagreement rate requires a separately
+chosen comparison review; it cannot be inferred from one reviewer. A complete
+learning tranche requires
 an evidence-based follow-up allocation and separately budgeted training; approval
 of these initial limits does not imply either. The approved limits remain unchanged.

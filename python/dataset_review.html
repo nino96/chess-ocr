@@ -223,8 +223,9 @@
   <body>
     <h1>Chess OCR dataset review</h1>
     <p class="notice">
-      These annotations are review proposals. Exporting does not accept them
-      automatically; an independent second review is still required.
+      Inspect the whole page and its visible pieces. One human review is enough
+      to accept a page. An empty chessboard is a board; a page without a board
+      is a negative example.
     </p>
     <main id="app" hidden>
       <p id="sample-meta"></p>
@@ -259,9 +260,17 @@
           </fieldset>
           <fieldset>
             <legend>Page classification</legend>
+            <button type="button" id="mark-negative">
+              No board on this page
+            </button>
+            <p class="muted">
+              Use Partial for incomplete diagrams and Unsupported for diagrams
+              you cannot annotate reliably. These are excluded from detector
+              training, not treated as negatives.
+            </p>
             <label
               >Kind
-              <select id="kind">
+              <select id="kind" aria-label="Page kind">
                 <option value="boards">Boards</option>
                 <option value="negative">Negative (no board)</option>
                 <option value="partial">Partial</option>
@@ -467,6 +476,55 @@
           human: false,
           complete: false,
         };
+        if (data.connected && data.draft) {
+          state = data.draft;
+          activeSeconds = state.elapsed_seconds || 0;
+          delete state.elapsed_seconds;
+        }
+        function post(type, extra = {}) {
+          if (data.connected && window.parent !== window)
+            window.parent.postMessage(
+              {
+                type,
+                session: new URLSearchParams(location.search).get("session"),
+                sample_id: data.sample_id,
+                revision: data.revision,
+                ...extra,
+              },
+              location.origin,
+            );
+        }
+        function notifyDraft() {
+          if (!data.connected) return;
+          post("draft", {
+            image_sha256: data.image_sha256,
+            state: {
+              ...state,
+              elapsed_seconds: Math.min(14400, activeSeconds),
+            },
+          });
+        }
+        if (data.connected) {
+          $("export").textContent = "Submit review & next";
+          window.addEventListener("message", (event) => {
+            if (
+              event.origin !== location.origin ||
+              event.source !== window.parent
+            )
+              return;
+            if (event.data?.type === "submission-finished")
+              $("export").disabled = false;
+            if (
+              event.data?.type === "profile" &&
+              !state.reviewer &&
+              typeof event.data.reviewer === "string"
+            ) {
+              state.reviewer = event.data.reviewer.slice(0, 80);
+              state.human = event.data.human === true;
+              render();
+            }
+          });
+        }
         selected = state.boards.length ? 0 : -1;
         $("sample-meta").textContent =
           "Sample " + data.sample_id + " · revision " + data.revision;
@@ -482,6 +540,10 @@
           }
           $("app").hidden = false;
           render();
+          post("ready", {
+            draft_version: data.draft_version,
+            restored: Boolean(data.draft),
+          });
         });
         img.addEventListener("error", () => fail("image cannot be decoded."));
         function board() {
@@ -508,6 +570,7 @@
         function changed() {
           active();
           render();
+          notifyDraft();
         }
         function render() {
           renderButtons();
@@ -605,6 +668,7 @@
               board().labels[i] = select.value;
               active();
               renderUnicode();
+              notifyDraft();
             });
             select.addEventListener("focus", () => {
               activeSquare = i;
@@ -766,6 +830,7 @@
           changed();
         });
         $("add-board").addEventListener("click", () => {
+          state.kind = "boards";
           state.boards.push(newBoard());
           selected = state.boards.length - 1;
           changed();
@@ -793,18 +858,37 @@
         $("kind").addEventListener("change", () => {
           state.kind = $("kind").value;
           active();
+          notifyDraft();
+        });
+        $("mark-negative").addEventListener("click", () => {
+          if (
+            state.boards.length &&
+            !window.confirm(
+              "Remove the board annotations from this draft and mark the page as having no board?",
+            )
+          )
+            return;
+          state.boards = [];
+          state.kind = "negative";
+          selected = -1;
+          placing = -1;
+          changed();
+          $("complete-page").focus();
         });
         $("reviewer").addEventListener("input", () => {
           state.reviewer = $("reviewer").value.slice(0, 80);
           active();
+          notifyDraft();
         });
         $("human").addEventListener("change", () => {
           state.human = $("human").checked;
           active();
+          notifyDraft();
         });
         $("complete-page").addEventListener("change", () => {
           state.complete = $("complete-page").checked;
           active();
+          notifyDraft();
         });
         function active() {
           const now = Date.now();
@@ -873,6 +957,15 @@
               complete_page: state.complete,
               elapsed_seconds: activeSeconds,
             };
+            if (data.connected) {
+              if (!state.human)
+                throw Error("confirm that you are a human reviewer");
+              notifyDraft();
+              $("export").disabled = true;
+              $("status").textContent = "Submitting review…";
+              post("submit", { proposal });
+              return;
+            }
             const blob = new Blob([JSON.stringify(proposal, null, 2) + "\n"], {
                 type: "application/json",
               }),
@@ -882,9 +975,9 @@
             a.click();
             setTimeout(() => URL.revokeObjectURL(a.href), 1000);
             $("status").textContent =
-              "Proposal exported. It remains unaccepted pending independent review.";
+              "Proposal exported. Import the JSON to save it; one human review accepts the page.";
           } catch (e) {
-            $("status").textContent = "Cannot export: " + e.message;
+            $("status").textContent = "Cannot submit: " + e.message;
           }
         });
       })();

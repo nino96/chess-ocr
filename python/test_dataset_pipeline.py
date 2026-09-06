@@ -80,41 +80,73 @@ class PipelineTests(unittest.TestCase):
                             "labels": list("PNBRQKpnbrqk" + "."*52), "orientation": "unknown"}]}
 
     def submit(self, data):
-        path = p.local_path("decision.json")
-        p.write_json(path, data)
-        return p.import_review(path)
+        return p.submit_review(data)
 
     def accept(self, sample):
-        data = self.review_data(sample)
-        self.submit(data)
-        data.update(revision=1, reviewer="second")
-        self.submit(data)
+        self.submit(self.review_data(sample))
 
-    def test_review_stale_independent_correction(self):
+    def test_single_human_review_accepts_and_retry_is_free(self):
         sample = self.sample()
         data = self.review_data(sample)
-        self.assertEqual(self.submit(data)["state"], "needs-independent-human-review")
-        with self.assertRaises(p.Invalid):
-            self.submit(data)
-        data["revision"] = 1
-        with self.assertRaises(p.Invalid):
-            self.submit(data)
-        data["reviewer"] = "second"
+        payload = p.review_payload(sample)
+        self.assertEqual(payload["sample_id"], sample)
+        self.assertTrue(payload["image_data_url"].startswith("data:image/png;base64,"))
         self.assertEqual(self.submit(data)["state"], "accepted")
-        data["boards"][0]["labels"][0] = "."
-        data["reviewer"] = "first"
-        self.assertEqual(self.submit(data)["state"], "needs-independent-human-review")
+        data["elapsed_seconds"] = 61
+        retry = self.submit(data)
+        self.assertEqual(retry, {"state": "accepted", "revision": 1, "idempotent": True})
         with p.connect() as db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM reviews").fetchone()[0], 3)
-            self.assertEqual(db.execute("SELECT accepted FROM samples").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reviews").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT accepted FROM samples").fetchone()[0], 1)
+
+    def test_stale_corrupt_and_nonhuman_overwrite_are_rejected(self):
+        sample = self.sample()
+        data = self.review_data(sample)
+        self.submit(data)
+        stale = self.review_data(sample, reviewer="late", revision=0)
+        stale["boards"][0]["labels"][0] = "."
+        with self.assertRaises(p.Invalid):
+            self.submit(stale)
+        correction = self.review_data(sample, reviewer="editor", revision=1)
+        correction["boards"][0]["labels"][0] = "."
+        self.assertEqual(self.submit(correction)["state"], "accepted")
+        agent_change = self.review_data(sample, reviewer="agent", revision=2)
+        agent_change["human"] = False
+        agent_change["boards"][0]["labels"][1] = "."
+        with self.assertRaisesRegex(p.Invalid, "nonhuman"):
+            self.submit(agent_change)
+        with p.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reviews").fetchone()[0], 2)
+            self.assertEqual(json.loads(db.execute("SELECT annotation FROM samples").fetchone()[0])["boards"][0]["labels"][0], ".")
+        corrupt = self.review_data(sample, reviewer="corrupt", revision=2)
+        p.atomic(p.local_path("pages/test-1.png"), b"corrupt")
+        with self.assertRaisesRegex(p.Invalid, "stale review/image"):
+            self.submit(corrupt)
 
     def test_agent_review_does_not_qualify(self):
         sample = self.sample(split="qualification")
         data = self.review_data(sample)
         data["human"] = False
-        self.submit(data)
+        self.assertEqual(self.submit(data)["state"], "needs-human-review")
+        with p.connect() as db:
+            self.assertEqual(db.execute("SELECT accepted FROM samples").fetchone()[0], 0)
         data.update(revision=1, reviewer="human", human=True)
-        self.assertNotEqual(self.submit(data)["state"], "accepted")
+        self.assertEqual(self.submit(data)["state"], "accepted")
+
+    def test_legacy_single_human_pending_record_promotes_without_budget_charge(self):
+        sample = self.sample()
+        data = self.review_data(sample)
+        content = p.canonical(p.annotation_validate(data, 160, 160))
+        with p.connect() as db:
+            db.execute("UPDATE samples SET revision=1,annotation=?,accepted=0 WHERE id=?", (content, sample))
+            db.execute("INSERT INTO reviews(sample,revision,content,reviewer,human,seconds,decision,at) VALUES (?,?,?,?,?,?,?,?)",
+                       (sample, 1, content, "legacy-human", 1, 45, "correction", 1))
+            before = db.execute("SELECT COUNT(*),SUM(seconds) FROM reviews").fetchone()
+        self.assertEqual(p.promote_legacy_single_human_reviews(), {"state": "legacy-single-human-promoted", "promoted": 1})
+        self.assertEqual(p.promote_legacy_single_human_reviews()["promoted"], 0)
+        with p.connect() as db:
+            self.assertEqual(db.execute("SELECT accepted FROM samples WHERE id=?", (sample,)).fetchone()[0], 1)
+            self.assertEqual(tuple(db.execute("SELECT COUNT(*),SUM(seconds) FROM reviews").fetchone()), tuple(before))
 
     def test_geometry_and_label_rejection(self):
         self.sample()
