@@ -1,0 +1,5 @@
+# CI-only requirements for test_native_runtime.py. Keep the large native runtime
+# stack out of x86_64 browser/unit-test jobs.
+--only-binary=:all:
+numpy==2.2.4
+pillow==11.1.0

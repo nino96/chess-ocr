@@ -239,3 +239,35 @@ implied by this repository bootstrap.
 The first user-visible delivery is an unfamiliar page becoming an editable
 position with board outlines and uncertain squares. The app should consume that
 capability, not depend on a particular neural-network implementation.
+
+## Issue #1 CI scope — owner direction, 2026-09-06
+
+This repository's main ongoing work is OCR training and evaluation. Routine CI
+runs source/type/contract/unit/payload checks and a production build. Browser
+input changes receive one Chromium WASM smoke test; native-only changes do not
+trigger browser tests. Firefox/WebKit, offline-origin shutdown, corrupt assets,
+and accessibility/touch checks are retained as manual browser integration gates
+for relevant runtime/demo changes, not an every-training-change CI matrix.
+Initial multi-browser evidence is retained; it is not physical iPad evidence.
+
+
+## Implemented issue #1 baseline
+
+The repository now contains the npm FENShot control, versioned raster/geometry/
+probability contract, cancellable WASM worker and small editable browser demo.
+Exact native starting checkpoints were exported with their unchanged COCO/ImageNet
+heads; source preprocessing and actual browser WASM parity were checked on original
+synthetic inputs. See [evidence](docs/issue-1-evidence.md) for commands and limits.
+No dataset training, real-diagram qualification or recognition superiority is
+claimed. Required laptop runtime budgets and unavailable physical OS/device gates
+remain explicit. The selected pinned GB10 native inference probe requires cuDNN
+disabled to pass CPU/GPU parity; training validation remains a later gate.
+
+
+## Package-manager alignment
+
+Owner direction: use pnpm consistently with chess-reader. This repository pins
+pnpm 11.11.0; `pnpm-lock.yaml` is authoritative and CI uses frozen installs.
+The npm lock was imported without changing any package/version identities.
+Historical evidence retains the original command names rather than relabeling
+previous npm runs as pnpm runs. Current commands are in README.

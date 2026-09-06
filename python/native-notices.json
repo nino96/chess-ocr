@@ -1,0 +1,25 @@
+{
+  "reviewed_on": "2026-09-06",
+  "schema_version": 1,
+  "sources": [
+    {
+      "artifact": "YOLOX-Nano COCO checkpoint",
+      "checkpoint_url": "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.pth",
+      "checkpoint_sha256": "cd28f55fbbc1829f99d9ac9b38a16d259a22889739c8728ea877610201feff7b",
+      "license_evidence_sha256": "577c03d505ec80f667ebf96ebd0cc4f6825c817ca1088ee348c48aaabd51bd92",
+      "license_evidence_url": "https://raw.githubusercontent.com/Megvii-BaseDetection/YOLOX/e1052df71842031413f6030723c3607b839c80ce/LICENSE",
+      "license_spdx": "Apache-2.0",
+      "notice": "Official 0.1.1rc0 release asset; source commit e1052df71842031413f6030723c3607b839c80ce. GitHub release metadata has no separate asset license field. Local issue-#1 export only; redistribution requires another artifact review."
+    },
+    {
+      "artifact": "timm MobileNetV3 Small 100 ImageNet checkpoint",
+      "checkpoint_url": "https://huggingface.co/timm/mobilenetv3_small_100.lamb_in1k/resolve/1824797e7887cbec1990e4adbd6675960a36c589/model.safetensors",
+      "checkpoint_sha256": "46d2c063b18125884c48937afa4c49e18128869e52e8db96df48bf0a4d7ff697",
+      "license_evidence_sha256": "3950face80991c4f91fb1ead491d787639e08a737f948fd630dd938ae8f78c18",
+      "license_evidence_url": "https://huggingface.co/timm/mobilenetv3_small_100.lamb_in1k/raw/1824797e7887cbec1990e4adbd6675960a36c589/README.md",
+      "license_spdx": "Apache-2.0",
+      "revision": "1824797e7887cbec1990e4adbd6675960a36c589",
+      "notice": "Model-card metadata declares Apache-2.0; safetensors only. Local issue-#1 export only; redistribution requires another artifact review."
+    }
+  ]
+}

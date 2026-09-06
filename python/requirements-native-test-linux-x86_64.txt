@@ -1,0 +1,7 @@
+# Hash-bound wheels for Linux x86_64 / Python 3.12; prepared on ARM64. Install with:
+# python -m pip install --require-hashes -r python/requirements-native-test-linux-x86_64.txt
+--only-binary :all:
+numpy==2.2.4 \
+    --hash=sha256:4f92084defa704deadd4e0a5ab1dc52d8ac9e8a8ef617f3fbb853e79b0ea3592
+pillow==11.1.0 \
+    --hash=sha256:7fdadc077553621911f27ce206ffcbec7d3f8d7b50e0da39f10997e8e2bb7f6a

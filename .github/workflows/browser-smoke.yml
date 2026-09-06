@@ -1,0 +1,54 @@
+name: Chromium WASM smoke
+on:
+  push:
+    paths:
+      [
+        "src/**",
+        "public/**",
+        "tests/browser/**",
+        "scripts/assets.mjs",
+        "scripts/offline.mjs",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "assets.lock.json",
+        "index.html",
+        "vite.config.ts",
+        "playwright.config.ts",
+        ".github/workflows/browser-smoke.yml",
+      ]
+  pull_request:
+    paths:
+      [
+        "src/**",
+        "public/**",
+        "tests/browser/**",
+        "scripts/assets.mjs",
+        "scripts/offline.mjs",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "assets.lock.json",
+        "index.html",
+        "vite.config.ts",
+        "playwright.config.ts",
+        ".github/workflows/browser-smoke.yml",
+      ]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run setup && pnpm run build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm run test:smoke

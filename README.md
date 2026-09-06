@@ -1,192 +1,119 @@
 # Chess OCR
 
-Offline-first recognition of **printed 2D chess diagrams**, with a browser demo
-and an explicitly opt-in GB10/server backend. A standalone recognizer for apps
-such as chess-reader, not another ebook reader or chess engine.
+Training and evaluation of printed 2D chess-diagram recognition, with a standalone
+TypeScript contract and a small offline browser demo. This is not an ebook reader,
+chess engine or generalized recognition claim.
 
-## Status
+## Run the browser baseline
 
-This repository currently contains the bootstrap rules and implementation plan,
-not a working recognizer. There is no application package, dependency lock,
-training environment, browser command or server endpoint yet. Issue #1 delivers
-the first runnable baseline; setup below prepares its prerequisites without
-pretending unimplemented commands exist.
-
-Read [AGENTS.md](AGENTS.md) before contributing and [PLAN.md](PLAN.md) for the
-model, dataset, evaluation and privacy decisions.
-
-## Four delivery issues
-
-| Issue                                              | Outcome                                                                                       |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [#1](https://github.com/nino96/chess-ocr/issues/1) | Runnable offline browser baseline, shared contract, pinned environment and actual WASM checks |
-| [#2](https://github.com/nino96/chess-ocr/issues/2) | Source-diverse real training data, page/grid labels, review tools and qualification pool      |
-| [#3](https://github.com/nino96/chess-ocr/issues/3) | Improved end-to-end offline recognition, qualified and delivered through the demo/library     |
-| [#4](https://github.com/nino96/chess-ocr/issues/4) | Explicit opt-in GB10/cloud backend with the same contract and security/privacy controls       |
-
-Start #1. Source research for #2 can proceed independently; #3 uses the accepted
-first real-data tranche rather than waiting for the final corpus. #4 can proceed
-when measured offline limits justify it; it does not require #3 to succeed.
-Do not create another issue for every source, failed seed or pipeline check.
-
-## Intended recognition path
-
-Page/selection -> board detection -> inner-grid refinement -> square recognition
--> editable position with uncertainty.
-
-Starting hypotheses: COCO-pretrained YOLOX-Nano for localization and native
-ImageNet-pretrained `timm/mobilenetv3_small_100.lamb_in1k` for 13-class square
-recognition, exported to ONNX Runtime Web WASM CPU. Keep unchanged FENShot as a
-baseline. A larger RF-DETR Small recognizer is the optional server candidate.
-None is claimed to meet chess accuracy, GB10 compatibility or browser latency
-requirements before measurement. No arbitrary 2 MB weight limit; usable offline
-latency/memory and preservation of working cases decide.
-
-ChessQueries (ViT encoder with 64 square queries and a DETR-style decoder) is
-also an owner-added GB10 evaluation candidate in [issue #4](https://github.com/nino96/chess-ocr/issues/4).
-That issue includes a proposed isolated Python/CUDA inference recipe, pinned
-source/weight identities and bounded screening gates. Setup and printed-diagram
-quality are not yet validated; its inclusion does not select it for delivery.
-
-## Environment preparation
-
-Baseline prerequisites: Git, **Node.js 24 LTS**, **Python 3.12**, and optionally
-Poppler for PDF-page extraction. Browser development and CPU checks do not need
-a GPU. Issue #1 must pin exact package-manager/dependency/platform versions and
-replace this prerequisite-only section with tested install/run commands.
-
-Useful official references: [Git installation](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git),
-[Node downloads](https://nodejs.org/en/download),
-[Python downloads](https://www.python.org/downloads/),
-[Poppler](https://poppler.freedesktop.org/).
-Python 3.12 is in its security-maintenance phase: distribution/package-manager
-availability and installer patch versions differ. Do not infer a supported
-training stack from the interpreter version alone.
-
-### Linux (Ubuntu 24.04 example)
-
-Install Git, Python/venv and the optional PDF tools using your distribution:
+Use **Node 24.19.0 / pnpm 11.11.0** (see `.node-version` and `package.json`):
 
 ```sh
-sudo apt-get update
-sudo apt-get install git python3.12 python3.12-venv poppler-utils
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run setup
+pnpm run dev
 ```
 
-Install Node 24 LTS using its official distribution or an already trusted
-version manager. On GB10 choose an ARM64 build, not an x86_64 binary. Other Linux
-distributions use their corresponding package manager; the Ubuntu commands are
-not universal.
+Open the loopback URL Vite prints. Load a PNG/JPEG page, select the inner grid
+by dragging or entering pixel bounds, then choose **Read selection**. **Find a
+board** runs unchanged FENShot automatic localization; failures remain explicit.
+Edit any of the 64 squares and choose orientation before exporting placement.
+Uppercase letters are white pieces, lowercase black, and `·` is empty.
+Alt+arrow keys move between square editors; native select keys change a piece.
+Files remain in memory, and no input is uploaded or added to training.
+
+For offline reload, use a production build:
 
 ```sh
-git clone https://github.com/nino96/chess-ocr.git
-cd chess-ocr
-git --version
-node --version
-python3.12 --version
-python3.12 -m venv .venv
-. .venv/bin/activate
-python --version
-python -m pip --version
-pdftoppm -v
-pdfinfo -v
+pnpm run build
+pnpm run preview
 ```
 
-### macOS (Intel or Apple Silicon)
+Wait for **Offline ready**. The verified application, worker, model and runtime
+are then cached. Development mode does not install an offline service worker.
+The browser cache retains application assets, not your images or edits; download
+edited JSON before closing/reloading a session. Runtime is local WASM CPU.
 
-Install Git and Node 24 LTS using the official installers or your trusted
-package manager. If Homebrew is already installed:
+## Checks and evaluation
 
 ```sh
-brew install git node@24 python@3.12 poppler
-export PATH="$(brew --prefix node@24)/bin:$PATH"
-git clone https://github.com/nino96/chess-ocr.git
-cd chess-ocr
-git --version
-node --version
-python3.12 --version
-python3.12 -m venv .venv
-. .venv/bin/activate
-python --version
-python -m pip --version
-pdftoppm -v
-pdfinfo -v
+pnpm run check                 # strict types, source hygiene and payload protection
+pnpm test                      # contract, preprocessing, lifecycle and geometry tests
+pnpm run build                 # production demo with integrity-bound offline cache
+pnpm exec playwright install chromium
+pnpm run test:smoke            # one real Chromium WASM integration check
+pnpm run eval                  # synthetic runtime distributions; requires all 3 browsers
 ```
 
-Use architecture-native binaries. CPU development is the baseline; MPS training
-is optional and must be explicitly tested for numerical/recovery behavior.
-The temporary PATH change above applies to the current terminal only.
-
-### Windows (PowerShell)
-
-Install Git, Node 24 LTS and Python 3.12 from their official installers. With
-WinGet, Git/Python installation can alternatively use:
-
-```powershell
-winget install --id Git.Git --exact
-winget install --id Python.Python.3.12 --exact
-```
-
-Restart PowerShell after installing tools. Install/select Node 24 LTS explicitly
-rather than assuming a moving LTS package always selects that major version.
-
-```powershell
-git clone https://github.com/nino96/chess-ocr.git
-Set-Location chess-ocr
-git --version
-node --version
-py -3.12 --version
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe --version
-.\.venv\Scripts\python.exe -m pip --version
-```
-
-Using the venv executable directly avoids changing PowerShell execution policy.
-Once implemented, Node/browser development can run natively. For PDF extraction,
-use WSL2 with Ubuntu and the Linux instructions, or an independently reviewed
-native Poppler installation and verify `pdftoppm -v` / `pdfinfo -v`. There is no
-claimed tested native Windows Poppler bundle in this bootstrap. Do not download
-an arbitrary binary zip just to make setup appear complete.
-
-Create a separate clone/venv inside WSL's Linux filesystem if using WSL. Never
-share a Windows venv or node_modules with Linux. Pin one reference renderer for
-dataset reproduction; platform render differences must not silently replace
-hash-bound reviewed images.
-
-### Optional NVIDIA GB10 training/server
-
-Use Linux ARM64 with a compatible NVIDIA driver and a deliberately selected
-PyTorch/CUDA stack. First record:
+Routine CI runs source checks/build plus the Chromium smoke for affected browser
+paths. It does not run an extensive browser matrix on training changes.
+For an affected browser/runtime integration gate, explicitly run:
 
 ```sh
-uname -m
-nvidia-smi
+pnpm exec playwright install chromium firefox webkit
+pnpm run test:browser
 ```
 
-Issue #1 must establish a tested pinned wheel or container environment and a
-real CUDA operation, device-capability and export/parity check. Do not assume
-that a generic CUDA wheel, x86_64 lock or `cuda.is_available()` alone proves
-GB10 support. A CPU environment remains useful without GPU training.
-See [NVIDIA Blackwell compatibility guidance](https://docs.nvidia.com/cuda/blackwell-compatibility-guide/).
+This includes offline reload with the origin server shut down, asset corruption
+and retry, unsupported input, selection, keyboard editing and cancellation.
+These checks are browser-engine evidence on the available host, not physical
+macOS/Windows/iPad qualification. CI configuration is not proof a remote job ran.
 
-### What to run after prerequisites
+## Native models and parity
 
-For this bootstrap: inspect the four issues and choose #1. **Do not run invented
-`pnpm install`, training or server commands:** no manifests/locks/scripts exist
-yet. #1 must add the real cross-platform CPU setup, optional GPU setup, demo,
-checks and test commands and validate them on the named available platforms.
-The OS instructions above are prerequisite recipes, not completed OS test runs.
+[Native runtime setup](docs/native-runtime.md) provides the Python 3.12 Linux
+ARM64 lock, artifact-specific provenance, safe loading and exact export commands.
+Native COCO YOLOX-Nano and ImageNet MobileNetV3 heads stay unchanged. They are
+runtime/export probes, not chess-trained alternatives to FENShot.
 
-## Local assets and privacy
+After preparing their documented local artifacts:
 
-Keep acquired originals under ignored `data/` or `cache/`; derived pages/crops,
-tensors, runs and checkpoints under ignored `work/` or `artifacts/`. Do not put
-downloads, model binaries or secrets in Git/LFS. Public URLs, rights decisions,
-hashes, recipes, safe factual labels and aggregate metrics can be versioned
-after review. Exceptions for tiny original synthetic test fixtures require
-their own source/hash/expected-result manifest.
+```sh
+pnpm run test:parity
+```
 
-Offline mode must not contact a server after readiness. Server mode is optional,
-explicitly configured and consented; no silent fallback or image/FEN retention.
-No private diagnostic material is authorized for training or uploading by this
-bootstrap. Source-code licensing must be selected with the owner before package
-publication; third-party code, data and model licenses remain separate.
+The parity harness checks artifact hashes, independently reproduces preprocessing
+in JavaScript, and executes both ONNX graphs in WASM workers. Missing artifacts
+or numeric disagreement fail the command. `pnpm run eval` measures only original
+procedural synthetic inputs and writes raw timing evidence to ignored
+`work/evidence/`; it is not an accuracy benchmark. Dataset qualification is #2/#3.
+
+## Library contract
+
+The source entry is [src/index.ts](src/index.ts). Version `chess-ocr/1` validates
+bounded raster dimensions/selection, clockwise original-image corners, 64
+image-relative labels and 13-class probabilities, orientation evidence/unknown,
+warnings, model/preprocessing identity and timings. Image coordinates refer to
+the browser-decoded raster (including its JPEG orientation handling).
+
+`RecognitionClient` owns a single reusable worker; cancellation/timeouts terminate
+it, and subsequent requests recreate it. `Editor` preserves corrections across
+retries and late/out-of-order results. A changed grid cannot relocate corrections
+silently. The model's original probability evidence remains alongside explicit
+user corrections. Side-to-move, castling, en passant and counters are not inferred.
+
+## Status and boundaries
+
+Issue [#1](https://github.com/nino96/chess-ocr/issues/1) implements the runnable
+baseline; see [evidence and remaining gates](docs/issue-1-evidence.md).
+[#2](https://github.com/nino96/chess-ocr/issues/2) owns real source-diverse data,
+[#3](https://github.com/nino96/chess-ocr/issues/3) owns qualified offline training,
+and [#4](https://github.com/nino96/chess-ocr/issues/4) owns optional server work.
+
+FENShot 0.1.4 comes directly from npm. Its core and model are unchanged; confidence
+is uncalibrated, automatic detection returns at most one axis-aligned board, and
+manual selection does not demonstrate automatic localization. Unsupported skew,
+misses and source diversity remain real limitations. The native runtime probes
+have no demonstrated chess accuracy advantage.
+
+[Reuse review](docs/reuse.md) records the chess-reader components and evidence
+used here. [Artifact review](docs/artifacts.md) preserves third-party attribution
+and exact hashes. The package remains private pending owner source-code license
+selection; no package/model publication is authorized.
+
+Read [AGENTS.md](AGENTS.md) and [PLAN.md](PLAN.md) before contributing. Keep
+originals, datasets, weights, exports and generated runs under ignored
+`data/`, `cache/`, `work/` or `artifacts/`. Never commit payloads, private positions
+or credentials. No paid service, telemetry, runtime CDN or server upload is part
+of this baseline.
