@@ -294,3 +294,20 @@ pnpm 11.11.0; `pnpm-lock.yaml` is authoritative and CI uses frozen installs.
 The npm lock was imported without changing any package/version identities.
 Historical evidence retains the original command names rather than relabeling
 previous npm runs as pnpm runs. Current commands are in README.
+
+## Issue #2 pipeline and owner privacy direction — 2026-09-06
+
+Dataset implementation can proceed independently of the deferred physical-device
+checks. The owner explicitly requires that downloaded data **and its sources and
+metadata** remain out of Git; this overrides the corresponding metadata check-in
+item in issue #2. Source research, rights records, review history and coverage
+artifacts stay in ignored local storage. No source-specific records are published.
+
+The [implemented pipeline](docs/dataset-pipeline.md) provides a local PDF inbox,
+explicit local-use ingestion, bounded background rendering/acquisition, status,
+stop/resume, hash/revision checks, independent review and candidate train/dev
+exports. Complete-page targets preserve negatives and exclude unsupported cases.
+Artwork independence remains a reviewed property, not a count of downloaded files.
+The first real tranche, verified coverage/lineage, measured human audit, approved
+synthetic fidelity, and downstream #3 preprocessing parity remain undelivered.
+Pipeline mechanics do not establish the dataset or recognition outcome.

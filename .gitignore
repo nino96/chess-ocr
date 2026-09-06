@@ -73,3 +73,10 @@ Thumbs.db
 .vscode/
 # Local asset staging, if used; production imports verified npm assets directly.
 /public/assets/
+# Dataset metadata, rights evidence and tensor exports are local-only too.
+*.sqlite3
+*.sqlite3-*
+*.evidence
+*.f32
+*.review.json
+*.dataset.json

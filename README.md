@@ -117,3 +117,18 @@ originals, datasets, weights, exports and generated runs under ignored
 `data/`, `cache/`, `work/` or `artifacts/`. Never commit payloads, private positions
 or credentials. No paid service, telemetry, runtime CDN or server upload is part
 of this baseline.
+
+## Dataset collection (issue #2)
+
+Start with the [operator workflow](docs/operator-workflow.md) for the sequence
+from feasibility collection to larger-budget approval and planned model training,
+including your review/approval checkpoints and the agent's responsibilities.
+
+The [local dataset pipeline](docs/dataset-pipeline.md) accepts PDFs placed in
+ignored `work/dataset/inbox/`, uses explicit resource limits, and runs resumable
+background acquisition/rendering with `pnpm run dataset start`, `status` and
+`stop`. `ingest` records explicit local-use authorization and a conservative
+source/artwork group. Offline review pages preserve corrections and require
+independent human confirmation. Validation and hashed train/dev exports are
+implemented; no real collection or recognition qualification is claimed.
+All dataset source information and metadata remain local, alongside the data.

@@ -1,0 +1,31 @@
+name: Offline dataset review UI
+on:
+  push:
+    paths:
+      - "python/dataset_pipeline.py"
+      - "python/dataset_review.html"
+      - "tests/dataset-review.browser.mjs"
+      - ".github/workflows/dataset-review.yml"
+  pull_request:
+    paths:
+      - "python/dataset_pipeline.py"
+      - "python/dataset_review.html"
+      - "tests/dataset-review.browser.mjs"
+      - ".github/workflows/dataset-review.yml"
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm run test:dataset-review
