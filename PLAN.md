@@ -334,6 +334,45 @@ active data, inbox files or cumulative usage; unsafe paths and links are rejecte
 These are local workflow controls, not a real collection, qualification result or
 browser-test claim.
 
+## Planned dashboard enhancements before larger collection
+
+Owner direction, 2026-09-06; all work stays in issue #2. The current dashboard
+supports a small manual feasibility batch; successful synthetic workflow tests
+do not establish large-collection throughput. The following are delivery work,
+not implemented capabilities or approval for more acquisition/compute/reviews:
+
+- **Annotation assistance:** deliver the bounded board-proposal and label-prefill
+  comparison below. Measure total human time per board, missed/false boards and
+  geometry/piece corrections; preserve one-human acceptance and edited labels.
+- **Focused review queues:** add filters for page kind, draft/annotation issues,
+  ambiguity and source/condition coverage gaps, with resumable batch progress.
+  Prioritization must not silently exclude negatives, difficult pages or misses.
+- **Concurrent acquisition and review:** remove the whole-job writer-lock conflict
+  so rendering does not block saving reviews. Retain transactional revision guards,
+  request cancellation/recovery, bounded concurrency and budget accounting. Test
+  simultaneous saves, worker stop/resume, reset exclusion and stale results.
+- **Append-only page selection:** allow additional explicitly selected pages of an
+  admitted PDF without changing source identity, prior annotations or frozen split
+  membership. Preview incremental costs, enforce remaining limits, and make retry
+  idempotent; test restart/recovery and duplicate selection.
+- **Acquisition control in the app:** clearly distinguish local PDF admission,
+  source discovery/rights review, and execution of an admitted source queue.
+  Add a UI for reviewing and admitting prepared public-source manifests with their
+  pinned hashes and rights evidence, plus queued/running/failed counts, progress,
+  remaining budget, actionable stop reasons and explicit repaired-job retry.
+  This does not authorize an unattended crawler, new rights decisions or spending.
+- **Measured scale gate:** under a recorded bounded test allocation, measure queue
+  responsiveness, draft-save latency, memory and recovery with representative
+  larger queues. Agree acceptable limits before the run and report distributions,
+  dataset/code hashes and untested conditions; use original synthetic fixtures
+  for tooling load tests and authorized real reviews for human-throughput evidence.
+
+Use the initial manual reviews to estimate annotation effort and propose a concrete
+follow-up collection/review allocation. The current 20-review-decision ceiling
+remains enforced until explicitly changed; reset/archive deletion cannot replenish
+it. Deliver these usability/scale checks before claiming readiness for hundreds of
+boards. This roadmap does not complete issue #2's real dataset outcome.
+
 ## Decision: automatic annotation proposals after feasibility
 
 Owner direction, 2026-09-06; owned by issue #2. After the initial manual feasibility

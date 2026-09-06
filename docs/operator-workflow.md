@@ -51,6 +51,30 @@ or overwrite a human-accepted annotation.
 
 ## 2. Ingest and start rendering
 
+In the app, admission and background processing are separate actions:
+
+1. For new local PDFs, place the intended files in `work/dataset/inbox/`, open
+   **Ingest PDFs from the local inbox**, fill the group/split/page count and your
+   name, confirm local-use authorization, then choose **Ingest inbox PDFs**.
+   This registers the sources and selected pages; it does not start rendering.
+2. Choose **Start / resume rendering** in the top toolbar. Despite its label,
+   this starts the common detached acquisition worker: it downloads already
+   admitted public sources and renders queued PDF pages. For already ingested
+   PDFs, begin with this step; re-ingestion is unnecessary.
+3. Use **Refresh status** to see progress and **Stop job** to request a stop.
+   The worker continues if you close the browser, SSH connection or chat while
+   the GX10 stays on. The web app can be restarted separately to check progress.
+
+There is currently no app action that discovers public sources or admits their
+manifests. For that broader collection workflow, the agent must first prepare
+rights-reviewed, hash-pinned source manifests and register them with `dataset add`.
+The app can then start/resume the admitted acquisition queue. Starting the worker
+with no pending jobs does not search for more material: it stops at a review,
+source, repair or budget boundary. The missing app controls and scale work are
+recorded in the [dashboard enhancement plan](../PLAN.md#planned-dashboard-enhancements-before-larger-collection).
+
+Equivalent CLI commands for local PDFs:
+
 For your own PDFs, place only one related family in `work/dataset/inbox/` and run:
 
 ```sh
