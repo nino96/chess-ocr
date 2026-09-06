@@ -35,11 +35,21 @@ Do not manufacture unobservable FEN state or correct printed diagrams for legali
 | Browser square classifier  | `timm/mobilenetv3_small_100.lamb_in1k`       | ImageNet features, not pretrained chess knowledge                |
 | Fixed control              | Shipped FENShot 0.1.4, exact artifact review | Baseline to beat, not the architecture we must rescue            |
 | Optional server recognizer | RF-DETR Small                                | Must improve measured accuracy or serve a stated runtime purpose |
+| Additional GB10 evaluation candidate | ChessQueries ViT-L/14 + square-query decoder | Unvalidated on printed pages; explicit geometry and runtime checks required |
 
 Acquire exact native training weights after provenance review, preserve them
 locally, and train new task heads. Pin every revision/hash/dependency. Do not
 reconstruct an inference ONNX when a legitimate native checkpoint is available.
 Native forward equivalence, trainability and good transfer are different claims.
+
+Owner addition (2026-09-06): evaluate the unchanged ChessQueries checkpoint in
+one bounded printed-diagram development screen before proposing adaptation.
+[Issue #4](https://github.com/nino96/chess-ocr/issues/4) owns the pinned source and
+safetensors identities, proposed GB10 venv/CUDA setup, resource reservation and
+advance/defer/reject decision. Its physical-board benchmarks do not establish
+printed-page quality, image-relative geometry or browser feasibility. Code and
+weights list noncommercial terms requiring separate artifact review. This is an
+evaluation candidate, not a selected backend or permission to start training.
 
 YOLOX-Nano is a small established detector with documented ONNX deployment;
 MobileNetV3 is a standard compact backbone. Proposed initial classifier input is

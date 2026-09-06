@@ -29,6 +29,49 @@ own constraints. Surface conflicts before changing either.
   Prefer a capable lower-cost available model for bounded work; do not pin model
   IDs or provider settings in shared policy. Delegation never widens authority.
 
+## Token-efficient execution
+
+- The user selects the primary model. The lead retains consequential design,
+  integration, review and final validation; do not lower acceptance criteria to
+  save tokens. Put exact model/effort routing in personal runtime configuration,
+  not shared repository policy.
+- Delegate only when a bounded independent task is likely to save total work or
+  provide necessary independent evidence. Keep small edits and tightly coupled
+  reasoning local. Use a capable inexpensive worker for clear lookup/check tasks,
+  a stronger coding worker for bounded implementation, and the lead or a stronger
+  reviewer for ambiguity, experimental design and consequential correctness.
+- State the chosen model/effort and reason briefly when delegating, using supported
+  runtime controls. Supply only the objective, relevant files/instructions,
+  decisions, owned paths, acceptance checks and a concise return format. Prefer
+  a fresh bounded context over forking the full conversation. Do not reread or
+  investigate the same material in both lead and worker without a review need.
+- Workers do not spawn other agents. Reuse a suitable existing worker for a
+  related follow-up; do not create a roster of speculative agents. Respect the
+  personal concurrency cap. Escalate a concrete reasoning gap to the lead after
+  one unsuccessful bounded attempt instead of cycling through cheap retries.
+- Read required governing documents once per task/context and reuse a compact
+  evidence summary; reread changed or missing sections when necessary. Use targeted
+  searches and bounded tool output. Return findings, file references, checks and
+  blockers rather than transcripts or repeated plans.
+- Before an experiment, record the hypothesis, changed inputs, reusable hashed
+  evidence, command, resource ceiling, completion/stop condition and next decision
+  in the owning issue or ignored local status artifact as privacy permits. One
+  failed comparison triggers one bounded diagnosis, not automatic new seeds,
+  model families or sweeps. Additional runs need a new evidence-based reason and
+  must fit the authorized budget. Preserve complete meaningful schedules.
+- Run long acquisition/training/evaluation as resumable local jobs with persisted
+  status and start/status/stop commands. Do not keep an AI turn or subagent alive
+  merely to poll logs, sleep or narrate progress; hand off the running job when
+  no independent work remains and inspect results on completion/resumption.
+- Run narrow checks while editing and the required integration gates once at
+  handoff. Reuse unchanged valid evidence with its hashes and original command;
+  rerun for relevant changes or unresolved failures. Never weaken tests, omit
+  required gates or label incomplete recognition successful to reduce usage.
+- Keep reports concise and evidence-bearing. At handoff record the next action,
+  changed hashes and unresolved blockers so work resumes without reconstructing
+  the session. Report measured token/quota usage only when available; neither a
+  model choice nor a concurrency cap guarantees a weekly allowance or savings.
+
 ## Product boundary
 
 - Build a standalone recognition library with a small browser demo and an
