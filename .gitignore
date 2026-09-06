@@ -71,3 +71,5 @@ playwright-report/
 Thumbs.db
 .idea/
 .vscode/
+# Local asset staging, if used; production imports verified npm assets directly.
+/public/assets/

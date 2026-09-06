@@ -162,6 +162,10 @@ own constraints. Surface conflicts before changing either.
 
 ## Implementation and verification
 
+- Use pnpm, matching chess-reader. Pin its version in package.json, keep
+  pnpm-lock.yaml authoritative, and install with --frozen-lockfile. Do not
+  introduce npm/yarn lockfiles or silently switch package managers.
+
 - Use strict TypeScript and validated schemas across browser/server boundaries.
   Keep preprocessing, decoding, geometry and contract tests shared/versioned.
   Heavy work is bounded/cancellable and stale results rejected by request ID.
@@ -176,9 +180,9 @@ own constraints. Surface conflicts before changing either.
 - Tests use local synthetic/approved fixtures, never the public internet.
   Do not add green placeholders, empty suites, unconditional skips, weakened
   assertions or silently relaxed accuracy/runtime thresholds.
-- Bootstrap currently has NO application scripts/locks. #1 introduces real
-  setup/check/test/eval commands and CI. Never claim a command works before it
-  exists. Documentation-only changes require link, whitespace and scope checks.
+- Issue #1 supplies setup/check/test/eval commands and locks; keep README
+  aligned with the implemented command surface. Never claim a command works
+  before it exists. Documentation-only changes need link, whitespace and scope checks.
 - Run narrow checks frequently. Full browser/runtime/security matrices occur
   at affected integration gates, not for each rejected offline seed. Record
   unrun OS/hardware gates and why; physical iPad is not simulated WebKit.

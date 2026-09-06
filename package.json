@@ -1,0 +1,38 @@
+{
+  "name": "@chess-ocr/browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.19.x"
+  },
+  "packageManager": "pnpm@11.11.0",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build && node scripts/offline.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "check": "tsc --noEmit && pnpm run lint && node scripts/protect.mjs && node scripts/check-docs.mjs",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:browser": "playwright test",
+    "setup": "node scripts/assets.mjs",
+    "lint": "prettier --check src tests scripts index.html *.json *.ts pnpm-workspace.yaml .github/workflows && node scripts/lint.mjs",
+    "eval": "node scripts/evaluate.mjs benchmark",
+    "test:parity": "node scripts/evaluate.mjs parity",
+    "test:smoke": "playwright test --project=chromium --grep \"manual selection, actual WASM\""
+  },
+  "dependencies": {
+    "@scoriiu/fenshot": "0.1.4",
+    "onnxruntime-web": "1.29.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.13.3",
+    "prettier": "3.6.2",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

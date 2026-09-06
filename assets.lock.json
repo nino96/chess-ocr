@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "reviewDate": "2026-09-06",
+  "assets": [
+    {
+      "id": "fenshot",
+      "source": "node_modules/@scoriiu/fenshot/model/chess-tiles-v2.onnx",
+      "bytes": 1289483,
+      "sha256": "883f6a8e639e6d6b6399b3fda0508ad772e3c6f9cefa2e678a13f27b9fa6248d"
+    },
+    {
+      "id": "ort-mjs",
+      "source": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs",
+      "bytes": 24218,
+      "sha256": "5a15f1fd086b3f6c2baf1f35105b8f502653b567e165cef80028870b39748747"
+    },
+    {
+      "id": "ort-wasm",
+      "source": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm",
+      "bytes": 13961845,
+      "sha256": "ec8580a9d7b9476ceee52e10a7f94124e4dc71a019d666ed6d4726697c109a4d"
+    }
+  ]
+}

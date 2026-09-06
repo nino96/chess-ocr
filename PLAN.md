@@ -32,6 +32,7 @@ Do not manufacture unobservable FEN state or correct printed diagrams for legali
 | Role                       | Initial native checkpoint                    | Important boundary                                               |
 | -------------------------- | -------------------------------------------- | ---------------------------------------------------------------- |
 | Browser board detector     | COCO-pretrained YOLOX-Nano                   | A rectangle is not yet the exact inner playing grid              |
+| Alternative browser board detector | Classical computer vision and grid geometry | Proposed bounded comparison in #3; no learned detector required |
 | Browser square classifier  | `timm/mobilenetv3_small_100.lamb_in1k`       | ImageNet features, not pretrained chess knowledge                |
 | Fixed control              | Shipped FENShot 0.1.4, exact artifact review | Baseline to beat, not the architecture we must rescue            |
 | Optional server recognizer | RF-DETR Small                                | Must improve measured accuracy or serve a stated runtime purpose |
@@ -50,6 +51,28 @@ advance/defer/reject decision. Its physical-board benchmarks do not establish
 printed-page quality, image-relative geometry or browser feasibility. Code and
 weights list noncommercial terms requiring separate artifact review. This is an
 evaluation candidate, not a selected backend or permission to start training.
+
+Owner addition (2026-09-06): [issue #3](https://github.com/nino96/chess-ocr/issues/3)
+also evaluates one bounded classical board/grid detector using line, contour and
+regular 8×8-grid evidence. Historical inspiration is the creator's description of
+[Chessvision.ai's computer-vision/graph detection and CNN cell classification](https://devpost.com/software/chessvision-ai),
+not knowledge of its current private implementation. Removing a learned localizer
+could reduce detector-training requirements; neural inference can also be
+deterministic, and classical heuristics do not guarantee reliability.
+
+Compare classical detection and YOLOX-Nano with the same frozen chess classifier,
+square preprocessing, confidence policy and shared downstream grid processing
+where applicable. Record unavoidable geometry-stage differences. Retain unchanged
+FENShot as the complete-path control. Freeze approved development inputs, hashes,
+thresholds, commands, coverage, stop/decision criteria and concrete ledger ceilings
+before execution; this addition does not enlarge the budget or expose qualification.
+Include degraded/broken lines, borderless grids, captions, small/multiple boards,
+skew and negative/partial cases. Report paired localization/grid errors, all-input
+exact boards, confident errors, clean losses and CPU latency/memory. End with an
+advance/defer/reject decision under unchanged #3 gates, including actual browser
+WASM CPU validation before promotion. YOLOX plus ImageNet-pretrained MobileNetV3
+adapted for chess may still win. No detector is selected by this planning addition;
+ChessQueries remains the separate #4 screen.
 
 YOLOX-Nano is a small established detector with documented ONNX deployment;
 MobileNetV3 is a standard compact backbone. Proposed initial classifier input is
@@ -239,3 +262,35 @@ implied by this repository bootstrap.
 The first user-visible delivery is an unfamiliar page becoming an editable
 position with board outlines and uncertain squares. The app should consume that
 capability, not depend on a particular neural-network implementation.
+
+## Issue #1 CI scope — owner direction, 2026-09-06
+
+This repository's main ongoing work is OCR training and evaluation. Routine CI
+runs source/type/contract/unit/payload checks and a production build. Browser
+input changes receive one Chromium WASM smoke test; native-only changes do not
+trigger browser tests. Firefox/WebKit, offline-origin shutdown, corrupt assets,
+and accessibility/touch checks are retained as manual browser integration gates
+for relevant runtime/demo changes, not an every-training-change CI matrix.
+Initial multi-browser evidence is retained; it is not physical iPad evidence.
+
+
+## Implemented issue #1 baseline
+
+The repository now contains the npm FENShot control, versioned raster/geometry/
+probability contract, cancellable WASM worker and small editable browser demo.
+Exact native starting checkpoints were exported with their unchanged COCO/ImageNet
+heads; source preprocessing and actual browser WASM parity were checked on original
+synthetic inputs. See [evidence](docs/issue-1-evidence.md) for commands and limits.
+No dataset training, real-diagram qualification or recognition superiority is
+claimed. Required laptop runtime budgets and unavailable physical OS/device gates
+remain explicit. The selected pinned GB10 native inference probe requires cuDNN
+disabled to pass CPU/GPU parity; training validation remains a later gate.
+
+
+## Package-manager alignment
+
+Owner direction: use pnpm consistently with chess-reader. This repository pins
+pnpm 11.11.0; `pnpm-lock.yaml` is authoritative and CI uses frozen installs.
+The npm lock was imported without changing any package/version identities.
+Historical evidence retains the original command names rather than relabeling
+previous npm runs as pnpm runs. Current commands are in README.
