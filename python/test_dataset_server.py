@@ -6,7 +6,10 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+import os
 from unittest.mock import patch
+
+os.environ["CHESS_OCR_TESTING"] = "1"
 
 from python import dataset_pipeline as p
 from python import dataset_server as s
@@ -14,6 +17,8 @@ from python import dataset_server as s
 
 class DatasetServerTests(unittest.TestCase):
     def setUp(self):
+        self.assertIs(s.p, p)
+        self.assertIs(s.reset.p, p)
         self.temp = tempfile.TemporaryDirectory()
         self.root_patch = patch.object(p, "ROOT", Path(self.temp.name) / "work")
         self.root_patch.start()

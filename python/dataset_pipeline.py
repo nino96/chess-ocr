@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import resource
 import signal
+import shutil
 import socket
 import sqlite3
 import ssl
@@ -72,6 +73,9 @@ def read_json(path):
 
 
 def local_path(relative):
+    if os.environ.get("CHESS_OCR_TESTING") == "1":
+        require(ROOT.resolve() != (REPO / "work/dataset").resolve(),
+                "test process refused access to live dataset")
     path = ROOT / relative
     require(".." not in Path(relative).parts, "path traversal")
     require(path.is_relative_to(ROOT), "path escaped workspace")
@@ -102,10 +106,10 @@ def connect():
     # A reset may have been interrupted after its durable marker was written.
     # Finish it before any caller can observe or mutate a mixed generation.
     if (ROOT / "reset.pending.json").exists():
-        try:
+        if __package__:
+            from .dataset_reset import recover_reset
+        else:
             from dataset_reset import recover_reset
-        except ModuleNotFoundError:
-            from python.dataset_reset import recover_reset
         recover_reset()
     local_path("state.sqlite3")
     require((ROOT / "state.sqlite3").exists(), "run init first")
@@ -131,10 +135,10 @@ def writer():
     # Recovery must finish before a normal writer obtains the lock; this avoids
     # a connection observing the generation between payload move and DB clear.
     if (ROOT / "reset.pending.json").exists():
-        try:
+        if __package__:
+            from .dataset_reset import recover_reset
+        else:
             from dataset_reset import recover_reset
-        except ModuleNotFoundError:
-            from python.dataset_reset import recover_reset
         recover_reset()
     with _writer_lock() as lock:
         yield lock
@@ -371,6 +375,23 @@ def size_on_disk():
     return total
 
 
+def require_free_space(additional_bytes, concurrent_bytes=1024**3):
+    """Owner floor plus headroom for the other bounded dataset worker."""
+    usage = shutil.disk_usage(ROOT)
+    if usage.free - additional_bytes - concurrent_bytes < math.ceil(usage.total * .30):
+        raise Budget("30 percent filesystem free-space floor would be crossed")
+
+
+def outstanding_synthetic_storage(db):
+    row = db.execute("SELECT value FROM meta WHERE key='synthetic_storage_reservation'").fetchone()
+    if not row:
+        return 0
+    reserved = json.loads(row[0])["bytes"]
+    root = local_path("synthetic")
+    present = sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) if root.exists() else 0
+    return max(0, reserved - present)
+
+
 def reserve(db, job, source):
     budget = meta(db, "budget")
     used = cumulative_accounting(db)
@@ -378,9 +399,10 @@ def reserve(db, job, source):
     seconds = 120 if job["stage"] == "acquire" else 90
     # Reserve full worst-case storage, including temporary images, before starting.
     storage = source["max_bytes"] if job["stage"] == "acquire" else MAX_PIXELS * 12
+    require_free_space(storage)
     if used["reserved_download_bytes"] + byte_count > budget["download_bytes"] or used["reserved_compute_seconds"] + seconds > budget["cpu_seconds"]:
         raise Budget("attempt reservation exceeds download/compute ceiling")
-    if size_on_disk() + storage > budget["storage_bytes"]:
+    if size_on_disk() + storage + outstanding_synthetic_storage(db) > budget["storage_bytes"]:
         raise Budget("attempt reservation exceeds storage ceiling")
     db.execute("INSERT INTO reservations(job,bytes,seconds,at) VALUES (?,?,?,?)", (job["id"], byte_count, seconds, time.time()))
     return seconds
@@ -1021,7 +1043,8 @@ def build_export(clear_stop=True):
         output = local_path(f"exports/{export_id}")
         require(not output.exists(), "immutable export already exists; reuse it")
         estimate = sum(len(json.loads(r["annotation"])["boards"]) * (64*3*96*96*4 + 8*1024**2) + local_path(r["image"]).stat().st_size for r in selected)
-        require(size_on_disk() + estimate <= meta(db, "budget")["storage_bytes"], "export storage reservation exceeds budget")
+        require_free_space(estimate)
+        require(size_on_disk() + estimate + outstanding_synthetic_storage(db) <= meta(db, "budget")["storage_bytes"], "export storage reservation exceeds budget")
         seconds = 10 * sum(len(json.loads(r["annotation"])["boards"]) for r in selected) + 5*len(selected)
         require(cumulative_accounting(db)["reserved_compute_seconds"] + seconds <= meta(db, "budget")["cpu_seconds"], "export compute reservation exceeds budget")
         with db:

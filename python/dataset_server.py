@@ -12,12 +12,12 @@ import secrets
 import socket
 import urllib.parse
 
-try:
+if __package__:
+    from . import dataset_pipeline as p
+    from . import dataset_reset as reset
+else:
     import dataset_pipeline as p
     import dataset_reset as reset
-except ModuleNotFoundError:
-    from python import dataset_pipeline as p
-    from python import dataset_reset as reset
 
 UI = Path(__file__).parent / "dataset_app.html"
 SCRIPT = p.REPO / "work/dataset-ui/dataset-app.js"

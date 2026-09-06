@@ -1,0 +1,14 @@
+{
+  "schema": "chess-ocr-synthetic-recipe/1",
+  "seed": 20260907,
+  "pages": 12000,
+  "max_boards": 20000,
+  "batch_pages": 64,
+  "attempt_seconds": 120,
+  "compute_seconds": 28800,
+  "storage_bytes": 17179869184,
+  "split": "train",
+  "sets": ["chessnut", "fantasy", "rhosgfx"],
+  "label_order": ".PNBRQKpnbrqk",
+  "purpose": "Synthetic bootstrap and localization training; not real qualification"
+}

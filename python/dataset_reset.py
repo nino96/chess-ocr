@@ -18,10 +18,10 @@ from pathlib import Path
 import sqlite3
 import uuid
 
-try:  # Supports both `python python/dataset_pipeline.py` and package tests.
+if __package__:
+    from . import dataset_pipeline as p
+else:
     import dataset_pipeline as p
-except ModuleNotFoundError:
-    from python import dataset_pipeline as p
 
 CONFIRMATION = "START OVER"
 MARKER = "reset.pending.json"

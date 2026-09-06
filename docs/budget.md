@@ -1,5 +1,21 @@
 # Project local resource ledger
 
+## Owner update — local budget discretion, 2026-09-07
+
+The owner authorizes the lead to increase local CPU/GPU, acquisition, review and
+storage ceilings when measured need justifies a reasonable bounded increment.
+The figures below are planning allocations, not mandatory terminal stops. Record
+the reason and new ceiling prospectively in this ledger and local operational
+state; retain every prior charge and failed attempt. This is not permission for
+unbounded sweeps, extravagant allocations, paid/cloud services, external exposure
+or publication of asset/model payloads.
+
+**Keep at least 30% of the dataset filesystem's total capacity free.** Check usable
+free bytes before each acquisition/render/generation batch, including worst-case
+temporary output. A discretionary budget increase cannot waive this free-space
+floor. Stop with resumable state if the floor would be crossed; do not delete
+owner data automatically to make space.
+
 2026-09-06 implementation reservation; no paid service, provisioning, training,
 external exposure or private upload. Operational experiment detail is persisted
 in ignored `work/issue-1-status.md` and `work/native/status.md`.

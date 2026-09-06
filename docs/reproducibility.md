@@ -28,7 +28,8 @@ Do not replace a missing or changed upstream file with different bytes. Stop and
 report the missing original; URL availability is not guaranteed by a hash.
 
 **It cannot yet reproduce the same complete labeled dataset from Git alone.**
-The synthetic generator/seed is not implemented. The human's accepted page labels,
+The [synthetic generator](synthetic-dataset.md) and public seed recipe are now
+implemented, with a required independent fidelity gate before bulk use. The human's accepted page labels,
 geometry, original review attestations and operational history remain locally saved
 and exported; public-source links cannot reconstruct those decisions. This update
 does not publish those annotations or fabricate fresh human reviews. A new session

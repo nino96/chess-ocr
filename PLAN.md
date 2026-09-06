@@ -430,3 +430,29 @@ the bulk labels or adjudicate same-split similarity. Qualification still needs
 one human pixel check and real source separation; synthetic counts do not replace
 those gates. No training accuracy or five-minute total review guarantee is implied.
 Use existing issues #2/#3 and the dataset branch; no independent workstream was added.
+
+## Dataset generation implementation — 2026-09-07
+
+The [synthetic pipeline](docs/synthetic-dataset.md) now supplies deterministic
+page recipes, independent renderer controls, persisted bounded start/status/stop,
+durable attempt accounting and candidate lazy training interfaces. Actual bulk
+launch requires a current passing fidelity report; implementation is not proof
+of recognition improvement. Partial stress records remain outside usable targets.
+
+The [historical increment and public dataset screen](docs/public-dataset-review.md)
+adds explicit public provenance and fixed page selections. Closely related De Witt
+and Staunton artwork remains one reserved group. Modern-document diversity,
+development groups, accepted real annotations, assisted-review measurements and
+the full first-real-tranche outcome remain incomplete.
+
+The owner permits justified, bounded local budget increases at lead discretion;
+retain prior charges and record reasons. Preserve at least 30% filesystem free
+space. Paid/cloud services and asset/model publication remain unauthorized.
+
+Current overriding delivery blocker: the
+[test-isolation incident](docs/dataset-incident-2026-09-07.md) removed the active
+reviewed seed and its recovery archive. Preserve remaining evidence and recover
+the actual human records before further dataset integration. Do not substitute
+new proposals for lost human truth. Synthetic bulk also remains gated on three
+unresolved small-board fidelity controls. Commit reviewed changes before any
+future unattended launch, as required by the owner.

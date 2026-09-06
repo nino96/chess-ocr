@@ -122,8 +122,9 @@ of this baseline.
 
 The current [synthetic-first kickoff](docs/dataset-kickoff.md) starts asset
 collection and an audited synthetic seed alongside real-source acquisition.
-It replaces bulk manual labeling as the collection strategy; generation and
-annotation assistance remain explicitly planned until their checks are delivered.
+It replaces bulk manual labeling as the collection strategy. Generation now has
+an executable fidelity gate; annotation assistance remains pending its comparison
+and workflow checks.
 Same-split duplicate candidates are retained with an export audit, not a required
 human task. Cross-split leakage remains blocking.
 
@@ -151,3 +152,15 @@ copy after confirmation. Active data, inbox PDFs and cumulative usage are retain
 Reviewed public-source provenance is tracked for
 [reproducibility](docs/reproducibility.md). Private source details, operational
 history, downloaded assets and generated datasets remain local and ignored.
+
+The [synthetic renderer and job controller](docs/synthetic-dataset.md) implement
+deterministic recipes, independent fidelity gating, bounded generation, lazy
+training inputs and resumable `pnpm run synthetic start/status/stop` commands.
+Bulk use requires current fidelity evidence. Coverage and recognition limitations
+remain explicit. The [public dataset screen](docs/public-dataset-review.md)
+distinguishes physical-board datasets from the printed-page collection.
+
+Dataset work currently has an unresolved
+[test-isolation and recovery incident](docs/dataset-incident-2026-09-07.md).
+The reviewed seed is not currently available in the active dataset; synthetic
+fidelity also remains failed. No dataset-readiness or recognition gain is claimed.

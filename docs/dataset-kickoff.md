@@ -152,9 +152,11 @@ the required #1/#2 interfaces are merged.
 Read the ignored `work/dataset/bootstrap/` status and manifests for exact acquired
 assets, preserved-label hashes, exports, commands and next action. Per the newer
 owner direction, publish reviewed public provenance separately, never the operational
-or mixed/private records; see [reproducibility](reproducibility.md). The renderer, synthetic seed, assistance UI and
-bootstrap training above remain proposed until their implementation/evidence is
-recorded; the existing public worker only downloads/renders admitted real inputs.
+or mixed/private records; see [reproducibility](reproducibility.md). The
+[renderer and job controller](synthetic-dataset.md) are now implemented with a
+required independent fidelity gate. Synthetic completion, assistance UI and
+bootstrap training remain subject to their actual evidence; the public worker
+only downloads/renders admitted real inputs.
 Long jobs end the AI turn after startup; inspect results on resumption, not polling.
 
 [New-session prompt](dataset-next-session.md) preserves these decisions without

@@ -6,7 +6,10 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import os
 from unittest.mock import patch
+
+os.environ["CHESS_OCR_TESTING"] = "1"
 
 from python import dataset_pipeline as p
 
