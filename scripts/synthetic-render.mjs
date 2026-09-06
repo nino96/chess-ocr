@@ -11,6 +11,16 @@ import {
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import {
+  perspectiveRecipe,
+  projectPoint,
+  validatePerspective,
+  perspectiveCss,
+} from "./synthetic-perspective.mjs";
+import {
+  degradationRecipe,
+  validateDegradation,
+} from "./synthetic-degradation.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_ASSET_ROOT = resolve(ROOT, "work/dataset/bootstrap/assets");
@@ -314,6 +324,12 @@ export function makeRecipe(seed, index) {
   }
   if (index % 11 === 10) boards = [];
   const partial = boards.length > 0 && index % 37 === 36;
+  const perspective = perspectiveRecipe(width, height, index);
+  if (perspective)
+    for (const board of boards) {
+      board.render_corners = board.corners;
+      board.corners = board.corners.map((p) => projectPoint(perspective, p));
+    }
   return {
     schema: "chess-ocr-synthetic-page/1",
     index,
@@ -337,14 +353,30 @@ export function makeRecipe(seed, index) {
       square_style: index % 5 === 2 ? "color" : "grayscale",
       border: index % 3 === 0 ? "double" : "single",
       affine: { shear_x: shearX, rotation_deg: rotationDeg },
+      perspective,
+      degradation: degradationRecipe(seed, Math.floor(index / 4)),
       negative: boards.length === 0,
       partial,
     },
   };
 }
 
-export function validateRecipe(recipe) {
+export function validateRecipe(recipe, fidelity = false) {
   assert(recipe && typeof recipe === "object", "recipe must be an object");
+  validatePerspective(
+    recipe.condition.perspective ?? null,
+    recipe.width,
+    recipe.height,
+    recipe.index,
+  );
+  validateDegradation(recipe.condition.degradation);
+  if (!fidelity)
+    assert(
+      Object.entries(
+        degradationRecipe(recipe.seed, Math.floor(recipe.index / 4)),
+      ).every(([key, value]) => recipe.condition.degradation[key] === value),
+      "changed degradation recipe",
+    );
   assert(
     ["boards", "negative", "partial"].includes(recipe.kind),
     "page kind invalid",
@@ -409,7 +441,39 @@ export function validateRecipe(recipe) {
         ),
       "corners invalid",
     );
-    const [tl, tr, br, bl] = b.corners;
+    const renderCorners = b.render_corners || b.corners;
+    if (recipe.condition.perspective) {
+      assert(
+        Array.isArray(b.render_corners) &&
+          b.render_corners.length === 4 &&
+          b.render_corners.every(
+            (p) =>
+              Array.isArray(p) && p.length === 2 && p.every(Number.isFinite),
+          ),
+        "invalid render corners",
+      );
+      assert(
+        b.corners.every((p, i) =>
+          p.every(
+            (v, j) =>
+              Math.abs(
+                v -
+                  projectPoint(recipe.condition.perspective, renderCorners[i])[
+                    j
+                  ],
+              ) < 1e-7,
+          ),
+        ),
+        "projected corners mismatch",
+      );
+    } else assert(!b.render_corners, "unexpected render corners");
+    const [tl, tr, br, bl] = renderCorners;
+    assert(
+      renderCorners.every(
+        ([x, y]) => x >= 0 && y >= 0 && x <= recipe.width && y <= recipe.height,
+      ),
+      "source board outside page",
+    );
     assert(
       b.corners.every(
         ([x, y]) => x >= 0 && y >= 0 && x <= recipe.width && y <= recipe.height,
@@ -623,6 +687,7 @@ export async function renderBatch({
   assetRoot = DEFAULT_ASSET_ROOT,
   recipes,
   outputDir,
+  fidelity = false,
 }) {
   assert(
     Array.isArray(recipes) && recipes.length > 0 && recipes.length <= MAX_PAGES,
@@ -632,10 +697,16 @@ export async function renderBatch({
     typeof outputDir === "string" && outputDir.length > 0,
     "outputDir required",
   );
-  recipes.forEach(validateRecipe);
+  recipes.forEach((recipe) => validateRecipe(recipe, fidelity));
   const resolvedRoot = resolve(assetRoot);
   await access(resolvedRoot);
   const glyphs = await approvedGlyphs(resolvedRoot);
+  const degradationSource = (
+    await readFile(
+      new URL("./synthetic-degradation.mjs", import.meta.url),
+      "utf8",
+    )
+  ).replaceAll("export function", "function");
   await mkdir(outputDir, { recursive: true });
   for (let parent = resolve(outputDir); ; parent = dirname(parent)) {
     assert(!(await lstat(parent)).isSymbolicLink(), "symlink output parent");
@@ -651,12 +722,21 @@ export async function renderBatch({
       });
       await page.route("**/*", (route) => route.abort());
       await page.setContent(
-        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\"> <canvas></canvas>",
+        `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><style>body{margin:0}#output{width:${recipe.width}px;height:${recipe.height}px;overflow:hidden;background:white}canvas{transform-origin:0 0;transform:${perspectiveCss(recipe.condition.perspective)}}</style><div id="output"><canvas></canvas></div>`,
         { waitUntil: "domcontentloaded", timeout: 30_000 },
       );
-      await page.evaluate(drawingScript(recipe, glyphs));
+      const drawingRecipe = structuredClone(recipe);
+      for (const b of [
+        ...drawingRecipe.boards,
+        ...(drawingRecipe.unsupported_boards || []),
+      ])
+        b.corners = b.render_corners || b.corners;
+      await page.evaluate(drawingScript(drawingRecipe, glyphs));
+      await page.evaluate(
+        `(() => {${degradationSource}\nconst c=document.querySelector('canvas'), x=c.getContext('2d'); const im=x.getImageData(0,0,c.width,c.height); im.data.set(degradePixels(im.data,c.width,c.height,${JSON.stringify(recipe.condition.degradation)})); x.putImageData(im,0,0);})()`,
+      );
       const png = await page
-        .locator("canvas")
+        .locator("#output")
         .screenshot({ type: "png", timeout: 30_000 });
       await page.close();
       const filename = `page-${pad(recipe.index)}.png`,

@@ -28,6 +28,8 @@ class SyntheticTests(unittest.TestCase):
         d.initialize()
         self.gate = patch.object(j, "fidelity_gate", return_value="test-gate")
         self.gate.start()
+        self.coverage_gate=patch.object(j,"validate_coverage")
+        self.coverage_gate.start()
         with d.connect() as db:
             d.set_meta(db, "budget", {"sources": 64, "pages": 2000,
                        "download_bytes": 10000, "storage_bytes": 64*1024**3,
@@ -35,6 +37,7 @@ class SyntheticTests(unittest.TestCase):
 
     def tearDown(self):
         self.gate.stop()
+        self.coverage_gate.stop()
         d.ROOT, j.ROOT = self.old_d, self.old_j
         self.tmp.cleanup()
 
@@ -152,12 +155,15 @@ class SyntheticTests(unittest.TestCase):
                   "bytes":original.stat().st_size, "max_bytes":10000, "sha256":d.digest(original),
                   "split":"train", "pages":list(range(20,44)), "revision":"original test source",
                   "attribution":"test", "lineage":["test-document","test-artwork"],
-                  "license":"original test only", "url":"https://example.org/test.pdf"}
+                  "license":"original test only", "url":"https://example.org/test.pdf", "conditions":["digital-print"]}
         rights = {"id":"test-rights", "kind":"license-evidence", "bytes":evidence.stat().st_size,
                   "max_bytes":10000, "sha256":d.digest(evidence), "url":"https://example.org/rights"}
         d.write_json(registry, {"schema":"chess-ocr-public-provenance/1", "public":True,"records":[record,rights]})
         self.assertEqual(admit_public.admit(registry,"test-source",original,evidence)["state"],"queued")
         self.assertEqual(admit_public.admit(registry,"test-source",original,evidence)["state"],"already-admitted")
+        with d.connect() as db:
+            body=json.loads(db.execute("SELECT body FROM sources WHERE id='test-source'").fetchone()[0])
+            self.assertEqual(body["conditions"],["digital-print"])
         d.atomic(original,b"changed")
         with self.assertRaises(d.Invalid):
             admit_public.admit(registry,"test-source",original,evidence)
@@ -190,6 +196,34 @@ class SyntheticTests(unittest.TestCase):
             with self.assertRaises(d.Invalid):
                 j.node("unused",timeout=1)
         self.assertIsNotNone(processes[0].poll())
+
+    def test_failed_database_reservation_remains_resumable(self):
+        import sqlite3
+        with patch.object(j, "configuration", return_value=self.config()), \
+             patch.object(j, "frozen_identity", side_effect=lambda c: {"configuration":c,"files":{}}), \
+             patch.object(j, "node", side_effect=self.fake_node):
+            j.initialize()
+            with d.connect() as db:
+                db.execute("CREATE TRIGGER fail_attempt BEFORE INSERT ON synthetic_attempts BEGIN SELECT RAISE(ABORT, 'injected disk failure'); END")
+            with self.assertRaises(sqlite3.IntegrityError):
+                j.run()
+            self.assertEqual(j.status()["reserved_attempt_seconds"], 0)
+            self.assertEqual(j.status()["attempt_count"], 0)
+            with d.connect() as db:
+                db.execute("DROP TRIGGER fail_attempt")
+            j.run()
+            self.assertEqual(j.status()["state"], "complete")
+
+    def test_incomplete_coverage_rejects_before_reservation(self):
+        self.coverage_gate.stop()
+        with patch.object(j,"configuration",return_value=self.config()), \
+             patch.object(j,"frozen_identity",side_effect=lambda c:{"configuration":c,"files":{}}), \
+             patch.object(j,"node",side_effect=self.fake_node):
+            with self.assertRaisesRegex(d.Invalid,"missing class/background/effect"):
+                j.initialize()
+            with d.connect() as db:
+                self.assertEqual(d.cumulative_accounting(db)["reserved_compute_seconds"],0)
+            self.assertFalse((j.ROOT/"frozen.json").exists())
 
     def test_live_dataset_is_refused_even_with_duplicate_import(self):
         with patch.object(d,"ROOT", d.REPO/"work/dataset"):

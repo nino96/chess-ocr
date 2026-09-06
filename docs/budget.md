@@ -16,6 +16,17 @@ temporary output. A discretionary budget increase cannot waive this free-space
 floor. Stop with resumable state if the floor would be crossed; do not delete
 owner data automatically to make space.
 
+2026-09-07 extension: reserve one additional local CPU hour and 1 GiB temporary
+fidelity storage (within the existing cumulative limits) for the newly requested
+print-degradation and projective-page checks. The additional design/class/effect
+controls validate legibility and geometry before bulk synthesis; no GPU run or
+new model comparison is included. Retain earlier failed-control charges.
+
+Modern real-layout increment: 32 MiB download/300 CPU-second preparation reservation
+for the fixed 2006 Chess Wikibook PDF and rights record, with per-file caps of
+16 MiB/2 MiB and 120-second transfer limits. Fixed 24-page TRAIN selection is
+charged separately by the existing page worker. No new cumulative ceiling needed.
+
 2026-09-06 implementation reservation; no paid service, provisioning, training,
 external exposure or private upload. Operational experiment detail is persisted
 in ignored `work/issue-1-status.md` and `work/native/status.md`.

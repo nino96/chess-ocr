@@ -22,6 +22,7 @@ else:
 ROOT = d.REPO / "work/dataset/synthetic"
 CONFIG = d.REPO / "recipes/synthetic-seed-v1.json"
 CODE = ["scripts/synthetic-render.mjs", "python/synthetic_job.py",
+        "scripts/synthetic-degradation.mjs", "scripts/synthetic-perspective.mjs",
         "python/synthetic_training.py", "python/dataset_pipeline.py", "pnpm-lock.yaml",
         "python/requirements-dataset-linux-cp312.txt", "provenance/public-bootstrap.json"]
 
@@ -32,8 +33,13 @@ def fidelity_gate():
               and report.get("calibration_controls") == 39 and report.get("rebuild_pages") == 3
               and report.get("independent_identity_squares") == 2496,
               "complete independent renderer fidelity required")
+    audit=report.get("effect_audit",{})
+    d.require(audit.get("state")=="passed" and audit.get("controls")==12 and audit.get("squares")==768 and audit.get("minimum_class_margin",0)>0,"effect label preservation required")
     for key, path in [("renderer_sha256", "scripts/synthetic-render.mjs"),
                       ("control_sha256", "scripts/synthetic-fidelity.mjs"),
+                      ("effects_sha256", "scripts/synthetic-degradation.mjs"),
+                      ("perspective_sha256", "scripts/synthetic-perspective.mjs"),
+                      ("effect_reference_sha256", "python/synthetic_effect_reference.py"),
                       ("checker_sha256", "python/synthetic_fidelity.py"),
                       ("training_sha256", "python/synthetic_training.py"),
                       ("provenance_sha256", "provenance/public-bootstrap.json")]:
@@ -139,6 +145,8 @@ def initialize():
         boards = sum(len(r["boards"]) for r in recipes)
         equivalents = boards + sum(len(r.get("unsupported_boards", [])) for r in recipes)
         d.require(0 < equivalents <= c["max_boards"], "board-equivalent ceiling")
+        cov=coverage(recipes)
+        validate_coverage(cov)
         budget, used = d.meta(db, "budget"), d.cumulative_accounting(db)
         d.require(used["reserved_compute_seconds"] + c["compute_seconds"] <= budget["cpu_seconds"], "global compute ceiling")
         d.require(d.size_on_disk() + c["storage_bytes"] <= budget["storage_bytes"], "global storage ceiling")
@@ -153,7 +161,7 @@ def initialize():
         frozen.update({"recipes_sha256": d.identity(recipes), "boards": boards, "board_equivalents": equivalents, "fidelity_sha256": gate})
         frozen["run_id"] = d.identity(frozen)
         d.write_json(ROOT / "recipes.json", recipes)
-        d.write_json(ROOT / "coverage.json", coverage(recipes))
+        d.write_json(ROOT / "coverage.json", cov)
         d.write_json(ROOT / "frozen.json", frozen)
         d.write_json(ROOT / "state.json", {"state": "ready", "completed_pages": 0,
                      "reserved_attempt_seconds": 0, "attempts": [], "pid": None})
@@ -162,27 +170,40 @@ def initialize():
 
 
 def coverage(recipes):
-    counts = {name: Counter() for name in ("page_kinds", "sets", "position_kinds", "classes", "class_background", "set_class_background", "joint_conditions", "position_repetition")}
+    counts = {name: Counter() for name in ("page_kinds", "sets", "position_kinds", "classes", "class_background", "set_class_background", "set_effect_class_background", "effects", "perspective", "joint_conditions", "position_repetition")}
     for r in recipes:
         counts["page_kinds"][r["kind"]] += 1
+        condition=r.get("condition",{})
+        effect=condition.get("degradation",{}).get("variant","unknown")
+        counts["effects"][effect]+=1
+        counts["perspective"]["projective" if condition.get("perspective") else "affine-only"]+=1
         for b in r["boards"]:
             counts["sets"][b["set"]] += 1
             counts["position_kinds"][b["position_kind"]] += 1
             counts["position_repetition"][d.identity(b["labels"])] += 1
-            counts["joint_conditions"][d.canonical({"set":b["set"],"position":b["position_kind"],"layout":r.get("layout"),"condition":r.get("condition"),"orientation":b["orientation"]})] += 1
+            summary_condition={**condition,"degradation":effect}
+            counts["joint_conditions"][d.canonical({"set":b["set"],"position":b["position_kind"],"layout":r.get("layout"),"condition":summary_condition,"orientation":b["orientation"]})] += 1
             for i, label in enumerate(b["labels"]):
                 parity=(i//8+i%8)%2
                 counts["classes"][label] += 1
                 counts["class_background"][f"{label}:{parity}"] += 1
                 counts["set_class_background"][f"{b['set']}:{label}:{parity}"] += 1
+                counts["set_effect_class_background"][f"{b['set']}:{effect}:{label}:{parity}"] += 1
     missing=[f"{s}:{p}:{bg}" for s in ("chessnut","fantasy","rhosgfx") for p in d.LABELS for bg in (0,1) if not counts["set_class_background"][f"{s}:{p}:{bg}"]]
+    missing_effects=[f"{s}:{e}:{p}:{bg}" for s in ("chessnut","fantasy","rhosgfx") for e in ("blank","paper","faded","soft") for p in d.LABELS for bg in (0,1) if not counts["set_effect_class_background"][f"{s}:{e}:{p}:{bg}"]]
     repetitions=counts.pop("position_repetition")
     return {**{k:dict(v) for k,v in counts.items()},"missing_set_class_background":missing,
+            "missing_set_effect_class_background":missing_effects,
             "unique_image_relative_positions":len(repetitions),"max_position_repetition":max(repetitions.values(),default=0),
             "repeated_position_board_count":sum(n for n in repetitions.values() if n>1),
             "training_boards":sum(counts["sets"].values()),
             "unsupported_board_equivalents":sum(len(r.get("unsupported_boards",[])) for r in recipes),
             "qualification":False,"recognition_improvement":"unmeasured"}
+
+
+def validate_coverage(cov):
+    d.require(not cov["missing_set_class_background"] and not cov["missing_set_effect_class_background"],"missing class/background/effect exposure")
+    d.require(all(cov["perspective"].get(k,0)>0 for k in ("projective","affine-only")),"missing perspective exposure")
 
 
 def process_identity(pid):
@@ -281,10 +302,10 @@ def run():
                     d.require(disk + len(batch)*16*1024**2 <= c["storage_bytes"], "seed storage ceiling")
                     d.require_free_space(len(batch)*16*1024**2)
                     d.require(not any(p.is_symlink() for p in ROOT.rglob("*")), "symlink in job")
-                    s["reserved_attempt_seconds"] += c["attempt_seconds"]
                     attempt = {"start": start, "pages": len(batch), "at": time.time(), "state": "running"}
                     with d.connect() as db:
                         db.execute("INSERT INTO synthetic_attempts VALUES (?,?,?)", (frozen["run_id"], len(s["attempts"]), d.canonical(attempt)))
+                    s["reserved_attempt_seconds"] += c["attempt_seconds"]
                     s["attempts"].append(attempt)
                     d.write_json(ROOT / "state.json", s)
                     d.write_json(ROOT / "active-recipes.json", batch)

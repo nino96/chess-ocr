@@ -4,6 +4,7 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { makeRecipe, renderBatch } from "./synthetic-render.mjs";
+import { degradationRecipe } from "./synthetic-degradation.mjs";
 
 const out = "work/dataset/bootstrap/fidelity";
 await mkdir(out, { recursive: true });
@@ -11,6 +12,8 @@ const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const generation = {
   renderer_sha256: sha(await readFile("scripts/synthetic-render.mjs")),
   control_sha256: sha(await readFile("scripts/synthetic-fidelity.mjs")),
+  effects_sha256: sha(await readFile("scripts/synthetic-degradation.mjs")),
+  perspective_sha256: sha(await readFile("scripts/synthetic-perspective.mjs")),
 };
 const pieces = [
   ".",
@@ -58,6 +61,7 @@ for (const set of ["chessnut", "fantasy", "rhosgfx"]) {
       hatched: false,
       square_style: "grayscale",
       partial: false,
+      degradation: degradationRecipe(0, 0),
     };
     recipe.boards = [
       {
@@ -81,12 +85,42 @@ for (const set of ["chessnut", "fantasy", "rhosgfx"]) {
 // A deterministic mixed subset covers multi-board transforms, hatching, rotations,
 // both orientations and sizes. Partial pages are rendered but not classifier truth.
 for (let i = 0; i < 40; i++) recipes.push(makeRecipe(20260907, i));
+// Worst admitted 150px size: every class on both parities, all designs/effects.
+for (const [setIndex, set] of ["chessnut", "fantasy", "rhosgfx"].entries()) {
+  for (let effect = 0; effect < 4; effect++) {
+    const recipe = structuredClone(recipes[0]);
+    Object.assign(recipe, {
+      index: 300000 + setIndex * 4 + effect,
+      width: 342,
+      height: 342,
+    });
+    recipe.condition.degradation = degradationRecipe(20260907, effect);
+    recipe.boards[0] = {
+      ...recipe.boards[0],
+      set,
+      labels: Array.from(
+        { length: 64 },
+        (_, i) => pieces[Math.floor(i / 2) % 13],
+      ),
+      corners: [
+        [96, 96],
+        [246, 96],
+        [246, 246],
+        [96, 246],
+      ],
+      position_kind: "fidelity-effect-audit",
+      parent: `fidelity-${set}-${effect}`,
+    };
+    recipes.push(recipe);
+  }
+}
 const records = [];
 for (let i = 0; i < recipes.length; i += 32) {
   records.push(
     ...(await renderBatch({
       recipes: recipes.slice(i, i + 32),
       outputDir: out,
+      fidelity: true,
     })),
   );
 }
@@ -101,7 +135,8 @@ try {
   for (const record of records) {
     if (record.recipe.kind !== "boards") continue;
     for (let b = 0; b < record.recipe.boards.length; b++) {
-      const board = record.recipe.boards[b];
+      const board = structuredClone(record.recipe.boards[b]);
+      board.corners = board.render_corners || board.corners;
       const side = Math.round(
         Math.hypot(
           board.corners[1][0] - board.corners[0][0],
@@ -143,8 +178,19 @@ try {
           `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" fill="${bg}"/>${hatch}${data ? `<image x="${x + cell * 0.04}" y="${y + cell * 0.04}" width="${cell * 0.92}" height="${cell * 0.92}" href="data:image/svg+xml;base64,${data}"/>` : ""}`,
         );
       }
+      const [tl, tr, , bl] = board.corners;
+      const matrix = [
+        (tr[0] - tl[0]) / side,
+        (tr[1] - tl[1]) / side,
+        (bl[0] - tl[0]) / side,
+        (bl[1] - tl[1]) / side,
+        tl[0],
+        tl[1],
+      ];
+      const { width, height } = record.recipe;
+      await page.setViewportSize({ width, height });
       await page.setContent(
-        `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><svg id="grid" xmlns="http://www.w3.org/2000/svg" width="${side}" height="${side}" viewBox="0 0 ${side} ${side}">${cells.join("")}</svg>`,
+        `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><style>body{margin:0}</style><svg id="grid" xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="white"/><g transform="matrix(${matrix.join(" ")})">${cells.join("")}</g></svg>`,
       );
       await page.locator("image").evaluateAll((images) =>
         Promise.all(
@@ -167,6 +213,7 @@ try {
 const repeated = await renderBatch({
   recipes: recipes.slice(0, 3),
   outputDir: `${out}/rebuild`,
+  fidelity: true,
 });
 if (repeated.some((r, i) => r.sha256 !== records[i].sha256))
   throw new Error("Rebuild differs");

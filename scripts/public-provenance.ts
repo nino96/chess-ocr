@@ -39,6 +39,7 @@ const record = z
       .optional(),
     split: z.enum(["train", "dev", "qualification", "regression"]).optional(),
     lineage: z.array(token).min(1).max(20).optional(),
+    conditions: z.array(token).min(1).max(20).optional(),
   })
   .strict();
 

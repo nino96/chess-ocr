@@ -160,7 +160,9 @@ Bulk use requires current fidelity evidence. Coverage and recognition limitation
 remain explicit. The [public dataset screen](docs/public-dataset-review.md)
 distinguishes physical-board datasets from the printed-page collection.
 
-Dataset work currently has an unresolved
+Dataset work suffered a
 [test-isolation and recovery incident](docs/dataset-incident-2026-09-07.md).
-The reviewed seed is not currently available in the active dataset; synthetic
-fidelity also remains failed. No dataset-readiness or recognition gain is claimed.
+The reviewed seed was lost; the owner waived recovery and authorized continuation.
+Rebuilt real labels are unverified proposals. See the synthetic status command and
+current fidelity evidence below the pipeline documentation; no dataset-readiness
+or recognition gain is claimed.

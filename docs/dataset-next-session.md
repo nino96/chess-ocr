@@ -1,5 +1,13 @@
 # Continue dataset creation in a fresh session
 
+Current implementation update: the renderer, perspective/print effects and
+independent fidelity checks are delivered; use the status commands before doing
+anything else. Do not repeat acquisition of the four verified local PDFs or the
+36 SVG assets. Remaining work includes corpus-result validation, source-diverse
+real TRAIN/DEV/qualification preparation, proposals and short assisted review,
+leakage investigation and the recorded training/evaluation gates. The older
+kickoff prompt below describes the full objective, not a reason to rebuild tools.
+
 Paste this into a new session opened in this repository:
 
 ```text
@@ -8,6 +16,9 @@ Read AGENTS.md, README.md, PLAN.md, docs/dataset-kickoff.md, docs/budget.md,
 the owning issues/dependencies, docs/reproducibility.md,
 provenance/public-bootstrap.json and ignored work/dataset/bootstrap/ handoff records.
 Inspect current Git/worker state once; preserve all user changes and accepted labels.
+The original 12-page/16-board seed was lost in the documented test-isolation
+incident. The owner waived recovery and authorized continuing without it. Never
+represent replacement proposals as recovered human truth. Preserve prior charges.
 
 The owner authorized synthetic-first dataset creation and adequate local resources.
 Concrete cumulative ceilings and suballocations are in docs/budget.md; prior usage

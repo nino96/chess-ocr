@@ -10,6 +10,15 @@ const registry = JSON.parse(
 
 test("reviewed public provenance is bounded and complete for the acquired inputs", () => {
   assert.equal(publicProvenance.safeParse(registry).success, true);
+  for (const path of [
+    "provenance/public-historical-increment.json",
+    "provenance/public-wikibook-increment.json",
+  ])
+    assert.equal(
+      publicProvenance.safeParse(JSON.parse(readFileSync(path, "utf8")))
+        .success,
+      true,
+    );
   assert.equal(
     registry.records.filter((r: { kind: string }) => r.kind === "piece-svg")
       .length,

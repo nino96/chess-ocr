@@ -27,7 +27,7 @@ def admit(registry, source_id, original, evidence):
             "private": False, "real": True, "lineage_reviewed": True,
             "lineage": {"document": [r["lineage"][0]], "edition": [r["lineage"][0]],
                         "artwork": [r["lineage"][-1]], "parent": [r["lineage"][0]]},
-            "conditions": ["historical-print", "hatching", "scan", "text-and-diagrams"],
+            "conditions": r.get("conditions", ["historical-print", "hatching", "scan", "text-and-diagrams"]),
             "url": r["url"], "rights": {"reviewer": "agent-public-artifact-review",
                 "evidence_url": e["url"], "evidence_sha256": e["sha256"], "review_date": "2026-09-07",
                 "license": r["license"], "exclusions": "No font extraction or payload/model publication; page-pixel local use only",

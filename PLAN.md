@@ -449,10 +449,10 @@ The owner permits justified, bounded local budget increases at lead discretion;
 retain prior charges and record reasons. Preserve at least 30% filesystem free
 space. Paid/cloud services and asset/model publication remain unauthorized.
 
-Current overriding delivery blocker: the
+The
 [test-isolation incident](docs/dataset-incident-2026-09-07.md) removed the active
-reviewed seed and its recovery archive. Preserve remaining evidence and recover
-the actual human records before further dataset integration. Do not substitute
-new proposals for lost human truth. Synthetic bulk also remains gated on three
-unresolved small-board fidelity controls. Commit reviewed changes before any
-future unattended launch, as required by the owner.
+reviewed seed and its recovery archive. The owner explicitly waived recovery and
+authorized continuation without those labels. Preserve remaining evidence and
+prior charges; do not substitute new proposals for lost human truth. Synthetic
+bulk remains conditional on current independently checked fidelity evidence.
+Commit reviewed changes before every unattended launch, as required by the owner.

@@ -48,7 +48,7 @@ test("recipe layouts include small, large, and multiple boards with bounded geom
     assert.ok(Math.abs(left - right) < 1e-9);
   for (let index = 0; index < 12; index++)
     for (const board of makeRecipe("layout", index).boards) {
-      const [tl, tr, br, bl] = board.corners;
+      const [tl, tr, br, bl] = board.render_corners || board.corners;
       close(tr[0]! - tl[0]!, br[0]! - bl[0]!);
       close(tr[1]! - tl[1]!, br[1]! - bl[1]!);
       close(br[0]! - tr[0]!, bl[0]! - tl[0]!);

@@ -29,12 +29,20 @@ report the missing original; URL availability is not guaranteed by a hash.
 
 **It cannot yet reproduce the same complete labeled dataset from Git alone.**
 The [synthetic generator](synthetic-dataset.md) and public seed recipe are now
-implemented, with a required independent fidelity gate before bulk use. The human's accepted page labels,
-geometry, original review attestations and operational history remain locally saved
-and exported; public-source links cannot reconstruct those decisions. This update
-does not publish those annotations or fabricate fresh human reviews. A new session
-on the same GX10 retains that local data; a fresh clone on another machine does not.
+implemented, with a required independent fidelity gate before bulk use. The original
+human-reviewed seed and its review history were lost in the documented
+[test-isolation incident](dataset-incident-2026-09-07.md). The owner waived recovery;
+public-source links cannot reconstruct those decisions. Neither this machine nor
+a fresh clone currently has that human truth. New real annotations begin as
+proposals until separately confirmed, never as reconstructed review history.
 Private inputs must always be supplied separately by an authorized owner.
+
+The [historical increment](../provenance/public-historical-increment.json) and
+[fixed Wikibook increment](../provenance/public-wikibook-increment.json) identify
+four PDF originals and 96 selected pages. `python/admit_public.py` verifies local
+original/evidence hashes and admits these records without re-downloading already
+verified originals. Their source groups and page selections are reproducible;
+human board labels are not yet available.
 
 ## Required as subsequent stages are delivered
 
