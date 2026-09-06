@@ -109,8 +109,8 @@ have no demonstrated chess accuracy advantage.
 
 [Reuse review](docs/reuse.md) records the chess-reader components and evidence
 used here. [Artifact review](docs/artifacts.md) preserves third-party attribution
-and exact hashes. The package remains private pending owner source-code license
-selection; no package/model publication is authorized.
+and exact hashes. Original repository source is licensed under the MIT License;
+third-party packages, models and notices retain their separate terms.
 
 Read [AGENTS.md](AGENTS.md) and [PLAN.md](PLAN.md) before contributing. Keep
 originals, datasets, weights, exports and generated runs under ignored

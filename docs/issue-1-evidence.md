@@ -93,7 +93,8 @@ without weakening the offline requirement. Physical iPad remains deferred.
   cuDNN disabled (MobileNet max abs 1.48e-5, YOLOX 5.82e-5). The default cuDNN
   path failed and remains recorded. Backward/optimizer/recovery validation is #3.
 * CPU native lock is Linux ARM64-specific; it must not be copied to other platforms.
-* Source-code license selection is pending owner review before publication;
+* Original repository source is licensed under MIT; third-party packages and
+  model artifacts retain their separate licenses and notices.
   package is private. Model release/publication is a separate decision.
 * No real-data accuracy, qualified localization, skew support or superiority over
   FENShot is claimed. Dataset and substantive training stay in #2/#3.

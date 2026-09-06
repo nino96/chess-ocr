@@ -1,7 +1,8 @@
 # Browser artifact admission — 2026-09-06
 
 Local evaluation only; no model release/publication is approved. Source-code
-license selection remains with the owner; npm package is explicitly private.
+The repository's original source is licensed under MIT; the npm package remains
+explicitly private until a separate publication decision is made.
 
 ## FENShot control
 

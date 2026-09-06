@@ -28,4 +28,5 @@ No files or production state in chess-reader were changed.
 No root source-code LICENSE exists in that snapshot. This is limited owner-directed
 reuse of their code between their repositories, with provenance retained, not a
 new public licensing grant. Both npm dependencies' MIT notices are preserved
-separately; code/package publication remains pending owner license selection.
+separately; original repository source is licensed under MIT, while package and
+third-party artifact publication remain separate decisions.
