@@ -23,3 +23,24 @@ test("payload protection rejects renamed dataset metadata outside ignored storag
     rmSync(folder, { recursive: true });
   }
 });
+
+test("a public marker cannot bypass the reviewed provenance location", () => {
+  const folder = mkdtempSync(resolve("dataset-protection-test-"));
+  try {
+    writeFileSync(
+      join(folder, "renamed.json"),
+      JSON.stringify({
+        schema: "chess-ocr-public-provenance/1",
+        public: true,
+        reviewer: "synthetic-test-only",
+      }),
+    );
+    const result = spawnSync(process.execPath, ["scripts/protect.mjs"], {
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /invalid reviewed public provenance/);
+  } finally {
+    rmSync(folder, { recursive: true });
+  }
+});

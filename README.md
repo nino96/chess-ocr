@@ -148,4 +148,6 @@ a conservative source/artwork group. Validation and hashed train/dev exports are
 implemented; no real collection or recognition qualification is claimed.
 Use **Archives** to see dated archive sizes and permanently delete an old recovery
 copy after confirmation. Active data, inbox PDFs and cumulative usage are retained.
-All dataset source information and metadata remain local, alongside the data.
+Reviewed public-source provenance is tracked for
+[reproducibility](docs/reproducibility.md). Private source details, operational
+history, downloaded assets and generated datasets remain local and ignored.

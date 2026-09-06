@@ -105,6 +105,20 @@ own constraints. Surface conflicts before changing either.
   fixtures may be tracked under fixtures/synthetic with provenance/hash/expected
   output records. Downloaded assets do not become original synthetic fixtures.
   Any other fixture exception needs explicit reviewed policy/ignore changes.
+- Owner update (2026-09-07): public-source provenance belongs in Git after review,
+  not only in ignored work folders. Record public URLs, immutable revisions,
+  original/evidence SHA-256 values, licenses/attribution, selected pages, lineage,
+  splits and reconstruction recipes under provenance/ and docs/. Never copy an
+  operational database or mixed public/private manifest wholesale. Publish only
+  explicitly public, reviewed records; strip local paths, account/reviewer identity,
+  credentials and private-derived details. Public access still is not permission
+  to redistribute original assets, crops, fonts, datasets or weights.
+- Reproducibility requires more than source links: commit generator code, dependency
+  locks, public selection/seed/configuration and safe public annotation versions as
+  each is delivered. State which outputs a clean checkout can actually rebuild.
+  If exact reconstruction requires unshared human annotations or private inputs,
+  say so and preserve those locally; never claim full reproducibility from a plan.
+  Validate public manifests and keep the payload/private-record protections intact.
 - Private diagnostic inputs never enter training without explicit approval.
   Do not publish their identities, names, paths, contents, images, derivatives,
   FENs or results in Git, issues, PRs, logs or attachments. Do not read unrelated

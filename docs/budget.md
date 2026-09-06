@@ -48,8 +48,9 @@ are applied to the local ledger. Fresh workspaces start at zero; use the documen
 `dataset budget` command to apply this allocation. Source-specific rights and
 local-use authorization remain separate admission requirements. The local SQLite
 reservation ledger counts failed/interrupted attempts without refunds; it does
-not reuse issue #1 or another repository's allocation. Sources, metadata and
-per-input reports stay local under the owner's stricter privacy instruction.
+not reuse issue #1 or another repository's allocation. Private metadata and
+operational records stay local; reviewed public provenance is now tracked under
+the 2026-09-07 owner update in [reproducibility](reproducibility.md).
 
 ### Feasibility limits of this allocation
 
@@ -108,5 +109,5 @@ kickoff acquisition itself. If the measured schedule cannot fit, resize the plan
 prospectively and report it rather than silently overrun.
 
 The concrete sequence and acceptance boundaries are in
-[dataset kickoff](dataset-kickoff.md). Asset inventories/URLs/hashes, exact source
-selections and job status remain ignored local records, not public issue payloads.
+[dataset kickoff](dataset-kickoff.md). Reviewed public inventories/URLs/hashes and
+selection recipes are tracked; private details and operational job state stay ignored.

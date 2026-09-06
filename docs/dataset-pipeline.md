@@ -5,10 +5,10 @@ For the step-by-step process and division of responsibilities, read the
 
 This is issue #2 tooling, independent of physical laptop/iPad qualification.
 It is not a delivered training collection or evidence of recognition accuracy.
-All originals, source identities, rights evidence, annotations, review history,
-coverage reports and exported tensors stay under ignored `work/dataset/`.
-The owner's instruction supersedes issue #2's request to commit source metadata.
-Only generic implementation, tests, dependency locks and documentation belong in Git.
+All originals, private-source details, operational review history and exported
+tensors stay under ignored `work/dataset/`. The 2026-09-07 owner update permits
+reviewed public-source provenance and reproduction recipes in Git, but not asset
+payloads or mixed/private records. See [reproducibility](reproducibility.md).
 
 ## Dataset design
 

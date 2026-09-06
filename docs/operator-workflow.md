@@ -38,7 +38,8 @@ Your immediate decisions are which optional local books to contribute and who wi
 perform the human pixel review. Public-source discovery can be done by the agent;
 you do not have to find or upload books. The current source ceiling is twelve
 admitted documents, not a list of twelve selected titles and not twelve proven
-independent artwork groups. Source lists and rights evidence remain local.
+independent artwork groups. Public-source lists and rights references are now
+tracked after privacy review; private lists/evidence remain local.
 
 Start with two or three candidate design families and a small, explicit page
 selection. Keep enough review allowance to cover different designs and negative
@@ -247,7 +248,8 @@ pnpm run dataset status
 The current exporter creates immutable candidate train/dev snapshots, including
 page targets, rectified grids and proposed 96-pixel classifier tensors. It does
 not export qualification or establish production preprocessing parity. Preserve
-its hashes for #3 and keep all generated data and metadata outside Git.
+its hashes for #3. Keep generated data and private/operational metadata outside Git;
+commit reviewed public provenance and reconstruction recipes.
 
 ## 7. Approve and run model training — planned, not implemented
 

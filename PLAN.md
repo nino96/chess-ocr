@@ -300,10 +300,11 @@ previous npm runs as pnpm runs. Current commands are in README.
 ## Issue #2 pipeline and owner privacy direction — 2026-09-06
 
 Dataset implementation can proceed independently of the deferred physical-device
-checks. The owner explicitly requires that downloaded data **and its sources and
-metadata** remain out of Git; this overrides the corresponding metadata check-in
-item in issue #2. Source research, rights records, review history and coverage
-artifacts stay in ignored local storage. No source-specific records are published.
+checks. The 2026-09-07 owner update supersedes the original blanket metadata ban:
+reviewed public-source URLs, revisions, hashes, rights, selection and reconstruction
+recipes belong in Git; private source details and operational/mixed records remain
+ignored. Downloaded originals and generated datasets/weights are never committed.
+See [public provenance and reconstruction limits](docs/reproducibility.md).
 
 The [implemented pipeline](docs/dataset-pipeline.md) provides a local PDF inbox,
 explicit local-use ingestion, bounded background rendering/acquisition, status,
@@ -400,7 +401,8 @@ not an already implemented feature. No board detector has been selected.
   verification or admit labels automatically. One human pixel review, independent
   of the proposal/model, accepts a matching annotation; a second review is
   optional, never mandatory. Keep all input-specific evidence
-  and generated metadata local. Freeze the comparison limits within an approved
+  and private-derived metadata local; commit reviewed public recipes/provenance.
+  Freeze the comparison limits within an approved
   allocation; this decision does not increase the current collection/GPU budget.
 
 Handoff gate: report the selected method, measured review-time benefit and failure

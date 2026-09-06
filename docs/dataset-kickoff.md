@@ -150,8 +150,9 @@ the required #1/#2 interfaces are merged.
 ## Handoff and current limitations
 
 Read the ignored `work/dataset/bootstrap/` status and manifests for exact acquired
-assets, preserved-label hashes, exports, commands and next action. Do not publish
-these source-specific records. The renderer, synthetic seed, assistance UI and
+assets, preserved-label hashes, exports, commands and next action. Per the newer
+owner direction, publish reviewed public provenance separately, never the operational
+or mixed/private records; see [reproducibility](reproducibility.md). The renderer, synthetic seed, assistance UI and
 bootstrap training above remain proposed until their implementation/evidence is
 recorded; the existing public worker only downloads/renders admitted real inputs.
 Long jobs end the AI turn after startup; inspect results on resumption, not polling.
