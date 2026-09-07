@@ -235,7 +235,7 @@ finally:
     await editor
       .getByRole("button", { name: "Submit review & next", exact: true })
       .click();
-    await page.locator("#queue").waitFor({ state: "visible" });
+    await page.getByText(/3 \/ 3 pages accepted/).waitFor();
     assert.match(
       await page.locator("#summary").textContent(),
       /3 \/ 3 pages accepted/,
