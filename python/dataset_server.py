@@ -14,9 +14,11 @@ import urllib.parse
 
 if __package__:
     from . import dataset_pipeline as p
+    from . import dataset_proposals as proposals
     from . import dataset_reset as reset
 else:
     import dataset_pipeline as p
+    import dataset_proposals as proposals
     import dataset_reset as reset
 
 UI = Path(__file__).parent / "dataset_app.html"
@@ -33,6 +35,7 @@ def initialize():
     except p.Invalid:
         # Rendering owns the writer lock; the app must still open to show status/stop.
         pass
+    proposals.initialize()
 
 
 def sample_row(db, sample_id):
@@ -44,23 +47,38 @@ def sample_row(db, sample_id):
 
 
 def draft_state(value):
-    p.require(isinstance(value, dict) and set(value) == {"boards", "kind", "reviewer", "human", "complete", "elapsed_seconds"}, "invalid draft")
+    basic = {"boards", "kind", "reviewer", "human", "complete", "elapsed_seconds"}
+    extension = {"proposal_base", "proposal_run", "touched"}
+    p.require(isinstance(value, dict) and frozenset(value) in {frozenset(basic), frozenset(basic | extension)}, "invalid draft")
     p.require(value["kind"] in {"boards", "negative", "partial", "unsupported"}, "invalid page kind")
     p.require(isinstance(value["reviewer"], str) and len(value["reviewer"]) <= 80, "invalid reviewer")
     p.require(type(value["human"]) is bool and type(value["complete"]) is bool, "invalid declarations")
     elapsed = value["elapsed_seconds"]
     p.require(type(elapsed) in (int, float) and 0 <= elapsed <= 14400, "invalid review time")
-    p.require(isinstance(value["boards"], list) and len(value["boards"]) <= 64, "invalid draft boards")
-    for b in value["boards"]:
-        p.require(isinstance(b, dict) and set(b) == {"corners", "labels", "orientation"}, "invalid draft board")
-        p.require(b["orientation"] in {"unknown", "white-bottom", "black-bottom"}, "invalid orientation")
-        p.require(isinstance(b["labels"], list) and len(b["labels"]) == 64
-                  and all(isinstance(x, str) and len(x) == 1 and x in p.LABELS for x in b["labels"]), "invalid labels")
-        # In-progress geometry can be nonconvex. Submission performs full validation.
-        p.require(isinstance(b["corners"], list) and len(b["corners"]) == 4, "invalid corners")
-        for point in b["corners"]:
-            p.require(isinstance(point, list) and len(point) == 2
-                      and all(type(x) in (int, float) and -p.MAX_EDGE <= x <= p.MAX_EDGE for x in point), "invalid coordinates")
+    def boards(values):
+        p.require(isinstance(values, list) and len(values) <= 64, "invalid draft boards")
+        for b in values:
+            p.require(isinstance(b, dict) and set(b) == {"corners", "labels", "orientation"}, "invalid draft board")
+            p.require(b["orientation"] in {"unknown", "white-bottom", "black-bottom"}, "invalid orientation")
+            p.require(isinstance(b["labels"], list) and len(b["labels"]) == 64
+                      and all(isinstance(x, str) and len(x) == 1 and x in p.LABELS for x in b["labels"]), "invalid labels")
+            # In-progress geometry can be nonconvex. Submission performs full validation.
+            p.require(isinstance(b["corners"], list) and len(b["corners"]) == 4, "invalid corners")
+            for point in b["corners"]:
+                p.require(isinstance(point, list) and len(point) == 2
+                          and all(type(x) in (int, float) and -p.MAX_EDGE <= x <= p.MAX_EDGE for x in point), "invalid coordinates")
+    boards(value["boards"])
+    if extension <= set(value):
+        boards(value["proposal_base"])
+        p.require(value["proposal_run"] is None or (isinstance(value["proposal_run"], str)
+                  and len(value["proposal_run"]) == 64 and all(x in "0123456789abcdef" for x in value["proposal_run"])),
+                  "invalid draft proposal identity")
+        touched = value["touched"]
+        p.require(isinstance(touched, dict) and set(touched) == {"boards", "corners", "squares", "corrections"},
+                  "invalid draft touch record")
+        for records in touched.values():
+            p.require(isinstance(records,list) and len(records) <= 4096
+                      and all(isinstance(x,str) and 0 < len(x) <= 40 for x in records), "invalid draft touch record")
     return value
 
 
@@ -91,7 +109,12 @@ def queue():
             body = json.loads(row["body"])
             sources.append({"id": row["id"], "label": f"Document {number}", "split": body["split"], "selected_pages": len(body["pages"])})
         pages = [dict(r) for r in db.execute("""SELECT s.id,s.source,s.page,s.revision,s.accepted,
-                CASE WHEN d.sample IS NULL THEN 0 ELSE 1 END AS draft
+                CASE WHEN d.sample IS NULL THEN 0 ELSE 1 END AS draft,
+                (SELECT reason FROM review_deferrals f WHERE f.sample=s.id AND f.revision=s.revision
+                 ORDER BY f.id DESC LIMIT 1) AS deferred_reason,
+                (SELECT COUNT(*) FROM proposal_results pr WHERE pr.sample=s.id
+                 AND pr.sample_revision=s.revision AND pr.image_sha=s.sha) AS proposal_count,
+                COALESCE(json_extract(d.body,'$.kind'),json_extract(s.annotation,'$.kind')) AS review_state
                 FROM samples s LEFT JOIN web_drafts d ON s.id=d.sample AND s.revision=d.revision
                 WHERE s.source NOT IN (SELECT source FROM exclusions) ORDER BY s.source,s.page""")]
         # Same-split candidates are retained and reported by pipeline status/audits.
@@ -103,7 +126,7 @@ def queue():
             AND a.source NOT IN (SELECT source FROM exclusions)
             AND b.source NOT IN (SELECT source FROM exclusions)""")]
     return {"schema": "chess-ocr-dataset-app/1", "sources": sources, "pages": pages,
-            "duplicates": duplicates, "status": p.status()}
+            "duplicates": duplicates, "status": p.status(), "proposal_status": proposals.status()}
 
 
 def review_html(sample_id):
@@ -115,6 +138,7 @@ def review_html(sample_id):
     payload["draft_version"] = draft["version"] if draft else 0
     payload["draft"] = (json.loads(draft["body"]) if draft and draft["revision"] == row["revision"]
                         and draft["image_sha"] == row["sha"] else None)
+    payload["proposals"] = proposals.sample_results(sample_id)["results"]
     return (Path(__file__).parent / "dataset_review.html").read_text().replace(
         "__PAYLOAD_BASE64__", base64.b64encode(p.canonical(payload).encode()).decode()).encode()
 
@@ -182,6 +206,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, queue())
             elif self.path == "/api/archives":
                 self.reply(200, reset.list_archives())
+            elif self.path == "/api/providers":
+                self.reply(200, proposals.providers())
+            elif self.path == "/api/proposals/status":
+                self.reply(200, proposals.status())
+            elif route.path.startswith("/api/proposals/"):
+                self.reply(200, proposals.sample_results(route.path.removeprefix("/api/proposals/")))
             elif route.path.startswith("/review/"):
                 query = urllib.parse.parse_qs(route.query, strict_parsing=True, max_num_fields=1)
                 p.require(not query or set(query) == {"session"}, "invalid editor session")
@@ -228,6 +258,15 @@ class Handler(BaseHTTPRequestHandler):
                     p.require(type(version) is int and version == (draft[0] if draft else 0), "draft changed in another tab; reload before submitting")
                 p.require(data.get("human") is True, "confirm human review before submitting")
                 result = p.submit_review(data, check_current=check_current)
+                try:
+                    proposals.record_review_metrics(
+                        data["sample_id"], data["reviewer"].strip(),
+                        {"boards": data["boards"]}, data["elapsed_seconds"])
+                    result["assistance_metrics"] = "recorded"
+                except p.Invalid:
+                    # Truth was already committed. A metrics problem must not turn
+                    # an accepted human decision into an apparent failed review.
+                    result["assistance_metrics"] = "unavailable"
                 # Keep the old revision's draft as a retry receipt. It is not restored
                 # over the accepted revision; its monotonic version prevents tab races.
             elif self.path == "/api/action":
@@ -261,6 +300,14 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/archive-delete":
                 p.require(set(data) == {"id", "version", "confirmation"}, "invalid archive deletion request")
                 result = reset.delete_archive(data["id"], data["version"], data["confirmation"])
+            elif self.path == "/api/proposals/start":
+                p.require(set(data) == {"localizer", "labeler", "scope", "max_pages"}, "invalid proposal start request")
+                result = proposals.create_run(data["localizer"], data["labeler"], data["scope"], data["max_pages"])
+            elif self.path == "/api/proposals/stop":
+                p.require(not data, "proposal stop takes no fields")
+                result = proposals.stop()
+            elif self.path == "/api/defer":
+                result = proposals.defer(data)
             else:
                 self.reply(404, {"error": "not found"})
                 return

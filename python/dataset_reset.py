@@ -25,7 +25,7 @@ else:
 
 CONFIRMATION = "START OVER"
 MARKER = "reset.pending.json"
-PAYLOAD_DIRS = ("originals", "rights", "pages", "staging", "review", "exports")
+PAYLOAD_DIRS = ("originals", "rights", "pages", "staging", "review", "exports", "proposals")
 ARCHIVE_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}")
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
@@ -244,7 +244,9 @@ def _clear_active(marker):
         db.execute("PRAGMA foreign_keys=ON")
         names = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         with db:
-            for name in ("web_drafts", "board_signatures", "duplicates", "reviews", "samples", "exclusions", "jobs", "reservations", "sources"):
+            for name in ("review_metrics", "review_deferrals", "proposal_results", "proposal_attempts",
+                         "proposal_runs", "web_drafts", "board_signatures", "duplicates", "reviews",
+                         "samples", "exclusions", "jobs", "reservations", "sources"):
                 if name in names:
                     db.execute("DELETE FROM " + name)
             db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", ("carryover", p.canonical(marker["carryover"])))
@@ -252,6 +254,7 @@ def _clear_active(marker):
     finally:
         db.close()
     p.local_path("stop").unlink(missing_ok=True)
+    p.local_path("proposal-stop").unlink(missing_ok=True)
 
 
 def _complete(marker, interrupt_at=None):
@@ -310,6 +313,11 @@ def reset_dataset(confirmation, *, _interrupt_at=None):
         # The only transient duplicate is SQLite's consistent backup.  Enforce
         # its bounded overhead before writing any marker or moving payload.
         with p.connect() as db:
+            names = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "proposal_runs" in names:
+                active_run = db.execute("SELECT 1 FROM proposal_runs WHERE state IN ('starting','running') AND heartbeat>?",
+                                        (time.time() - 90,)).fetchone()
+                p.require(active_run is None, "stop the active proposal job before resetting")
             budget = p.meta(db, "budget")
             p.require(p.size_on_disk() + active.stat().st_size <= budget["storage_bytes"],
                       "reset archive backup exceeds storage ceiling")

@@ -7,6 +7,7 @@ if (!existsSync(python) && !process.env.DATASET_PYTHON) {
   );
 }
 const serving = process.argv[2] === "serve";
+const proposals = process.argv[2] === "proposals";
 if (serving) {
   const build = spawnSync(
     process.execPath,
@@ -22,8 +23,12 @@ if (serving) {
 const result = spawnSync(
   python,
   [
-    serving ? "python/dataset_server.py" : "python/dataset_pipeline.py",
-    ...process.argv.slice(serving ? 3 : 2),
+    serving
+      ? "python/dataset_server.py"
+      : proposals
+        ? "python/dataset_proposals.py"
+        : "python/dataset_pipeline.py",
+    ...process.argv.slice(serving || proposals ? 3 : 2),
   ],
   {
     stdio: "inherit",

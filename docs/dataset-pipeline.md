@@ -175,8 +175,38 @@ corrections create a new revision requiring a human review. The dashboard provid
 the existing start/stop, validation, candidate export, inbox ingestion (with its
 explicit local-use checkbox), and duplicate inspection/resolution actions. It
 does not upload PDFs: add new intended PDFs to `work/dataset/inbox/` through VS
-Code/the local workspace, then ingest that existing inbox. There are no automatic
-board or label proposals.
+Code/the local workspace, then ingest that existing inbox.
+
+### Assisted proposals
+
+The dashboard has separate localizer and labeler selectors. A valid proposal
+prefills only an untouched new draft. Once a reviewer interacts, loading or
+switching providers preserves the draft and shows the proposal for comparison;
+replacing an edited board is explicit, confirmed and undoable. Uncertain squares
+are highlighted, but every square and the complete page still require human pixel
+inspection. Deferral is recorded locally and never accepts a page.
+
+The default pair is FENShot localization plus FENShot labels; the deterministic
+classical grid localizer is a diagnostic/fallback for a small smoke screen. The
+meaningful promotion comparison will be the issue #3 model versus FENShot. List
+and operate the bounded detached jobs with:
+
+```sh
+pnpm run dataset proposals providers
+pnpm run dataset proposals start --localizer fenshot-localizer-v1 --labeler fenshot-labeler-v1 --scope train-pending --max-pages 20
+pnpm run dataset proposals status
+pnpm run dataset proposals stop
+pnpm run dataset proposals resume RUN_ID
+```
+
+Use `--scope train-all` or `accepted-train` only for the recorded diagnostic or
+promotion-comparison need.
+Qualification is not a valid scope. Runs are capped at 100 pages/two hours and
+attempts reserve 45 CPU seconds in the existing ledger. Add `--after-repair` to
+resume only after diagnosing a provider failure. Result visibility is bound to
+the current sample revision and image SHA-256. Provider manifests, schemas,
+issue #3 integration boundary and metric definitions are in
+[assisted dataset review](assisted-review.md).
 
 Use **Stop job** for the separate acquisition/export worker; `Ctrl+C` stops only
 the web app. The app and worker share one writer lock, so active rendering can
@@ -214,8 +244,9 @@ are rejected, accepted edits are never overwritten, and all imported decisions
 are retained. Validation requires at least one matching human decision. Repeated
 submission of the same reviewer decision is idempotent and does not consume another
 review decision. Old pending records with a matching human review are promoted
-without new review time or budget. The pipeline does not yet provide automatic
-model-assisted label proposals.
+without new review time or budget. The assisted path never writes predictions
+into accepted truth. The standalone fallback does not run providers, but it can
+render an already embedded proposal.
 
 ### Confirmed Start over
 
@@ -311,7 +342,7 @@ not an aggregate tile score or source count alone.
 ## Checks
 
 ```sh
-work/dataset-venv/bin/python -m unittest python/test_dataset_pipeline.py python/test_dataset_reset.py python/test_dataset_server.py
+work/dataset-venv/bin/python -m unittest python/test_dataset_pipeline.py python/test_dataset_reset.py python/test_dataset_server.py python/test_dataset_proposals.py
 pnpm run check
 pnpm test
 pnpm run build

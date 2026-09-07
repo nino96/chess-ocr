@@ -95,7 +95,9 @@
       #overlay {
         position: absolute;
         inset: 0;
-        pointer-events: none;
+        pointer-events: auto;
+        touch-action: none;
+        cursor: crosshair;
         width: 100%;
         height: 100%;
       }
@@ -118,7 +120,7 @@
       .label-grid {
         display: grid;
         grid-template-columns: repeat(8, minmax(3.3rem, 1fr));
-        max-width: 42rem;
+        max-width: 34rem;
         gap: 2px;
       }
       .square {
@@ -147,6 +149,35 @@
       }
       .square select {
         width: 100%;
+      }
+      .square.uncertain {
+        background: #fff2b8;
+        outline: 2px solid #b16a00;
+      }
+      .palette {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px;
+        margin: 0.4rem 0;
+      }
+      .palette button {
+        min-width: 2.2rem;
+        min-height: 2.2rem;
+        padding: 0.15rem;
+      }
+      .review-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        align-items: center;
+      }
+      .proposal {
+        border-left: 4px solid #17594c;
+        padding-left: 0.7rem;
+      }
+      .handle-help {
+        font-size: 0.85rem;
+        color: #53616b;
       }
       .square span {
         display: block;
@@ -235,8 +266,14 @@
           <div id="page-wrap">
             <img id="page" alt="Source page under review" /><canvas
               id="overlay"
-              aria-hidden="true"
+              aria-label="Board geometry overlay. Drag a corner handle, or use arrow keys to move the selected corner."
+              tabindex="0"
             ></canvas>
+          </div>
+          <div class="review-actions">
+            <button type="button" id="zoom-out">Zoom out</button>
+            <button type="button" id="zoom-in">Zoom in</button>
+            <output id="zoom">100%</output>
           </div>
           <p id="click-help" class="muted">
             Select a board, then use “place four corners” and click TL, TR, BR,
@@ -327,6 +364,27 @@
               Rows run top to bottom in source-image order. Each control has its
               square coordinate.
             </p>
+            <div
+              id="piece-palette"
+              class="palette"
+              aria-label="Piece palette"
+            ></div>
+            <div class="review-actions">
+              <button type="button" id="undo">Undo</button>
+              <button type="button" id="redo">Redo</button>
+              <button type="button" id="mark-correction">
+                Mark correction
+              </button>
+              <label
+                >Proposal pair
+                <select id="proposal-choice">
+                  <option value="">None available</option>
+                </select></label
+              >
+              <output id="proposal-status" class="proposal"
+                >No proposal loaded.</output
+              >
+            </div>
             <div id="labels" class="label-grid"></div>
           </div>
           <fieldset>
@@ -338,9 +396,29 @@
             <label
               ><input id="human" type="checkbox" /> I am a human reviewer</label
             >
-            <p>Active review time: <output id="elapsed">0</output> seconds</p>
+            <p>
+              Active review time: <output id="elapsed">0</output> seconds.
+              <button type="button" id="session-toggle">
+                Start optional 5-minute session
+              </button>
+              <output id="session-progress" hidden></output>
+            </p>
           </fieldset>
-          <button type="button" id="export">Export review proposal JSON</button>
+          <div class="review-actions">
+            <label
+              >Defer reason
+              <select id="defer-reason">
+                <option value="ambiguous">Ambiguous</option>
+                <option value="geometry">Geometry unclear</option>
+                <option value="labels">Labels unclear</option>
+                <option value="image-quality">Image quality</option>
+              </select></label
+            >
+            <button type="button" id="defer">Defer</button>
+            <button type="button" id="export">
+              Export review proposal JSON
+            </button>
+          </div>
           <p id="status" role="status"></p>
         </section>
       </div>
@@ -375,7 +453,24 @@
           activeSeconds = 0,
           lastActive = Date.now(),
           lastInteraction = Date.now(),
-          activeSquare = 0;
+          activeSquare = 0,
+          zoom = 1,
+          dragging = -1,
+          proposedBoards = [],
+          proposalStatus = "No proposal loaded.",
+          availableProposals = [],
+          activeProposalRun = null,
+          proposedEvidence = [],
+          corrections = new Set(),
+          touchedBoards = new Set(),
+          touchedCorners = new Set(),
+          touchedSquares = new Set(),
+          extensionDraft = false,
+          undoStack = [],
+          redoStack = [],
+          touched = false,
+          sessionRunning = false,
+          sessionStartSeconds = 0;
         function fail(message) {
           $("error").textContent = "Cannot open review payload: " + message;
           $("error").hidden = false;
@@ -476,10 +571,33 @@
           human: false,
           complete: false,
         };
+        extensionDraft = data.connected === true;
         if (data.connected && data.draft) {
           state = data.draft;
           activeSeconds = state.elapsed_seconds || 0;
           delete state.elapsed_seconds;
+          if (Array.isArray(state.proposal_base))
+            proposedBoards = state.proposal_base;
+          if (typeof state.proposal_run === "string")
+            activeProposalRun = state.proposal_run;
+          if (Array.isArray(state.touched?.boards))
+            state.touched.boards.forEach((x) => touchedBoards.add(x));
+          if (Array.isArray(state.touched?.corners))
+            state.touched.corners.forEach((x) => touchedCorners.add(x));
+          if (Array.isArray(state.touched?.squares))
+            state.touched.squares.forEach((x) => touchedSquares.add(x));
+          if (Array.isArray(state.touched?.corrections))
+            state.touched.corrections.forEach((x) => corrections.add(x));
+        }
+        function cloneState() {
+          return JSON.parse(JSON.stringify(state));
+        }
+        function remember() {
+          undoStack.push(cloneState());
+          if (undoStack.length > 80) undoStack.shift();
+          redoStack = [];
+          $("undo").disabled = false;
+          $("redo").disabled = true;
         }
         function post(type, extra = {}) {
           if (data.connected && window.parent !== window)
@@ -498,10 +616,23 @@
           if (!data.connected) return;
           post("draft", {
             image_sha256: data.image_sha256,
-            state: {
-              ...state,
-              elapsed_seconds: Math.min(14400, activeSeconds),
-            },
+            state: extensionDraft
+              ? {
+                  ...state,
+                  elapsed_seconds: Math.min(14400, activeSeconds),
+                  proposal_base: proposedBoards,
+                  proposal_run: activeProposalRun,
+                  touched: {
+                    boards: [...touchedBoards],
+                    corners: [...touchedCorners],
+                    squares: [...touchedSquares],
+                    corrections: [...corrections],
+                  },
+                }
+              : {
+                  ...state,
+                  elapsed_seconds: Math.min(14400, activeSeconds),
+                },
           });
         }
         if (data.connected) {
@@ -523,12 +654,17 @@
               state.human = event.data.human === true;
               render();
             }
+            if (event.data?.type === "proposal")
+              applyProposal(event.data.proposal);
+            if (event.data?.type === "review-extensions") extensionDraft = true;
           });
         }
         selected = state.boards.length ? 0 : -1;
         $("sample-meta").textContent =
           "Sample " + data.sample_id + " · revision " + data.revision;
         const img = $("page");
+        if (data.proposals) applyProposal({ results: data.proposals });
+        else if (data.proposal) applyProposal(data.proposal);
         img.src = data.image_data_url;
         img.addEventListener("load", () => {
           if (
@@ -568,6 +704,7 @@
           };
         }
         function changed() {
+          touched = true;
           active();
           render();
           notifyDraft();
@@ -587,6 +724,28 @@
           $("delete-board").disabled = !exists;
           $("place-corners").disabled = !exists;
           $("add-board").disabled = state.boards.length >= 64;
+          $("undo").disabled = !undoStack.length;
+          $("redo").disabled = !redoStack.length;
+          $("proposal-status").textContent =
+            proposalStatus +
+            (corrections.size
+              ? " · " + corrections.size + " marked correction(s)"
+              : "");
+          $("zoom").value = Math.round(zoom * 100) + "%";
+          $("page-wrap").style.width = Math.round(zoom * 100) + "%";
+          const sessionElapsed = Math.max(
+            0,
+            activeSeconds - sessionStartSeconds,
+          );
+          $("session-progress").hidden = !sessionRunning;
+          $("session-progress").value = sessionRunning
+            ? Math.min(300, Math.floor(sessionElapsed)) + " / 300 seconds"
+            : "";
+          $("session-toggle").textContent = sessionRunning
+            ? sessionElapsed >= 300
+              ? "5-minute target reached — end session"
+              : "End 5-minute session"
+            : "Start optional 5-minute session";
         }
         function renderButtons() {
           const host = $("board-buttons");
@@ -599,11 +758,144 @@
             x.addEventListener("click", () => {
               selected = i;
               placing = -1;
-              changed();
+              active();
+              render();
             });
             host.append(x);
+            if (proposedBoards[i]) {
+              const replace = document.createElement("button");
+              replace.type = "button";
+              replace.textContent = "Use proposed board " + (i + 1);
+              replace.addEventListener("click", () => {
+                const edited =
+                  [...touchedBoards].some(
+                    (entry) => entry === String(i) || entry.endsWith(":" + i),
+                  ) ||
+                  [...touchedCorners, ...touchedSquares].some((entry) =>
+                    entry.startsWith(i + ":"),
+                  );
+                if (
+                  edited &&
+                  !window.confirm(
+                    "Replace this board with the selected provider proposal? Your current edits remain available through Undo.",
+                  )
+                )
+                  return;
+                remember();
+                state.boards[i] = JSON.parse(JSON.stringify(proposedBoards[i]));
+                touchedBoards.add("replace:" + i);
+                touched = true;
+                proposalStatus =
+                  "Proposal copied into current board; compare overlay remains available.";
+                changed();
+              });
+              host.append(replace);
+            }
           });
+          proposedBoards
+            .slice(state.boards.length)
+            .forEach((proposal, offset) => {
+              const proposalIndex = state.boards.length + offset;
+              const add = document.createElement("button");
+              add.type = "button";
+              add.textContent = "Add proposed board " + (proposalIndex + 1);
+              add.addEventListener("click", () => {
+                if (state.boards.length >= 64) return;
+                remember();
+                state.kind = "boards";
+                state.boards.push(JSON.parse(JSON.stringify(proposal)));
+                selected = state.boards.length - 1;
+                touchedBoards.add("add-proposal:" + proposalIndex);
+                proposalStatus =
+                  "Proposed board added explicitly; inspect its geometry and every square.";
+                changed();
+              });
+              host.append(add);
+            });
         }
+        function proposalLabel(candidate, index) {
+          const providers = Array.isArray(candidate?.providers)
+            ? candidate.providers
+                .map((p) => p?.id || p?.runtime)
+                .filter(Boolean)
+                .join(" + ")
+            : "provider pair";
+          return (
+            providers +
+            " · " +
+            (candidate?.runId ? candidate.runId.slice(0, 8) : index + 1)
+          );
+        }
+        function applyProposal(raw) {
+          if (Array.isArray(raw?.results)) {
+            availableProposals = raw.results;
+            const choices = $("proposal-choice");
+            choices.replaceChildren(
+              ...availableProposals.map(
+                (candidate, index) =>
+                  new Option(proposalLabel(candidate, index), String(index)),
+              ),
+            );
+            choices.disabled = availableProposals.length < 2;
+            if (!availableProposals.length) {
+              choices.append(new Option("None available", ""));
+              proposalStatus =
+                "No valid proposal is available; manual review remains enabled.";
+              render();
+              return;
+            }
+            raw = availableProposals[Number(choices.value) || 0];
+          }
+          const candidate = raw && (raw.current || raw.proposal || raw),
+            boards = candidate && candidate.boards;
+          if (
+            !Array.isArray(boards) ||
+            boards.length === 0 ||
+            !boards.every((b) => validBoard(b, data.width, data.height))
+          ) {
+            proposalStatus =
+              "Proposal unavailable or invalid; current labels were not changed.";
+            render();
+            return;
+          }
+          proposedBoards = boards.map((b) => ({
+            corners: b.corners.map((p) => p.slice()),
+            labels: b.labels.slice(),
+            orientation: b.orientation || "unknown",
+          }));
+          proposedEvidence = boards.map((b) => ({
+            probabilities: Array.isArray(b.probabilities)
+              ? b.probabilities
+              : Array(64).fill(null),
+            uncertain: Array.isArray(b.uncertain)
+              ? b.uncertain
+              : Array(64).fill(true),
+          }));
+          activeProposalRun =
+            typeof candidate.runId === "string" &&
+            /^[a-f0-9]{64}$/.test(candidate.runId)
+              ? candidate.runId
+              : null;
+          const untouchedNewDraft =
+            !data.draft && !touched && state.kind === "boards";
+          if (untouchedNewDraft) {
+            state.boards = proposedBoards.map((b) =>
+              JSON.parse(JSON.stringify(b)),
+            );
+            selected = state.boards.length ? 0 : -1;
+            proposalStatus =
+              "Valid proposal autofilled into this untouched new draft. Inspect every square before accepting.";
+          } else {
+            proposalStatus =
+              "Proposal loaded as green compare overlay; current edits were preserved.";
+          }
+          render();
+        }
+        $("proposal-choice").addEventListener("change", () => {
+          const candidate =
+            availableProposals[Number($("proposal-choice").value)];
+          if (candidate) applyProposal(candidate);
+        });
         function renderGeometry() {
           const host = $("corner-fields");
           host.replaceChildren();
@@ -633,7 +925,9 @@
               input.addEventListener("change", () => {
                 const n = Number(input.value);
                 if (Number.isFinite(n) && n >= 0 && n <= max) {
+                  remember();
                   board().corners[i][axis] = n;
+                  touchedCorners.add(selected + ":" + i);
                   changed();
                 } else input.value = board().corners[i][axis];
               }),
@@ -650,6 +944,16 @@
           board().labels.forEach((v, i) => {
             const cell = document.createElement("label");
             cell.className = "square";
+            const evidence = proposedEvidence[selected];
+            if (evidence?.uncertain?.[i] === true)
+              cell.classList.add("uncertain");
+            const probabilities = evidence?.probabilities?.[i];
+            if (Array.isArray(probabilities)) {
+              const confidence = Math.max(...probabilities);
+              cell.title = `Provider confidence ${(confidence * 100).toFixed(1)}%${evidence.uncertain[i] ? " — uncertain" : ""}`;
+            } else if (evidence?.uncertain?.[i] === true) {
+              cell.title = "Provider evidence unavailable — uncertain";
+            }
             const coord =
               String.fromCharCode(97 + (i % 8)) + (8 - Math.floor(i / 8));
             const text = document.createElement("span");
@@ -665,7 +969,10 @@
               select.append(o);
             });
             select.addEventListener("change", () => {
+              remember();
               board().labels[i] = select.value;
+              touchedSquares.add(selected + ":" + i);
+              touched = true;
               active();
               renderUnicode();
               notifyDraft();
@@ -690,6 +997,28 @@
             });
             cell.append(text, select);
             host.append(cell);
+          });
+          const palette = $("piece-palette");
+          palette.replaceChildren();
+          chars.split("").forEach((piece) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.textContent = piece === "." ? "·" : glyph[piece];
+            b.setAttribute(
+              "aria-label",
+              piece === "." ? "Set empty" : "Set " + piece,
+            );
+            b.addEventListener("click", () => {
+              if (!board()) return;
+              remember();
+              board().labels[activeSquare] = piece;
+              touchedSquares.add(selected + ":" + activeSquare);
+              touched = true;
+              active();
+              renderLabels();
+              notifyDraft();
+            });
+            palette.append(b);
           });
           renderUnicode();
         }
@@ -725,6 +1054,23 @@
           });
           ctx.closePath();
           ctx.stroke();
+          if (
+            proposedBoards[selected] &&
+            validBoard(proposedBoards[selected], data.width, data.height)
+          ) {
+            ctx.strokeStyle = "#17594c";
+            ctx.setLineDash([6, 4]);
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            proposedBoards[selected].corners.forEach((p, i) => {
+              const x = p[0] * sx,
+                y = p[1] * sy;
+              i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+            });
+            ctx.closePath();
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
           board().corners.forEach((p, i) => {
             ctx.fillStyle = "#e52020";
             ctx.fillRect(p[0] * sx - 4, p[1] * sy - 4, 8, 8);
@@ -818,10 +1164,12 @@
         img.addEventListener("click", (e) => {
           if (!board() || placing < 0) return;
           const r = img.getBoundingClientRect();
+          remember();
           board().corners[placing] = [
             ((e.clientX - r.left) * data.width) / r.width,
             ((e.clientY - r.top) * data.height) / r.height,
           ];
+          touchedCorners.add(selected + ":" + placing);
           placing = placing === 3 ? -1 : placing + 1;
           $("click-help").textContent =
             placing < 0
@@ -829,14 +1177,83 @@
               : "Click " + names[placing] + " corner.";
           changed();
         });
+        function imagePoint(event) {
+          const r = img.getBoundingClientRect();
+          return [
+            ((event.clientX - r.left) * data.width) / r.width,
+            ((event.clientY - r.top) * data.height) / r.height,
+          ];
+        }
+        $("overlay").addEventListener("pointerdown", (event) => {
+          if (!board()) return;
+          const p = imagePoint(event),
+            distances = board().corners.map((c) =>
+              Math.hypot(c[0] - p[0], c[1] - p[1]),
+            );
+          dragging = distances.indexOf(Math.min(...distances));
+          if (distances[dragging] > Math.max(data.width, data.height) * 0.08)
+            return (dragging = -1);
+          remember();
+          $("overlay").setPointerCapture(event.pointerId);
+          event.preventDefault();
+        });
+        $("overlay").addEventListener("pointermove", (event) => {
+          if (dragging < 0 || !board()) return;
+          const p = imagePoint(event);
+          board().corners[dragging] = [
+            Math.max(0, Math.min(data.width, p[0])),
+            Math.max(0, Math.min(data.height, p[1])),
+          ];
+          touchedCorners.add(selected + ":" + dragging);
+          touched = true;
+          render();
+          notifyDraft();
+        });
+        $("overlay").addEventListener("pointerup", () => {
+          if (dragging >= 0) {
+            dragging = -1;
+            changed();
+          }
+        });
+        $("overlay").addEventListener("keydown", (event) => {
+          if (
+            !board() ||
+            !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(
+              event.key,
+            )
+          )
+            return;
+          event.preventDefault();
+          const i = placing >= 0 ? placing : 0,
+            step = event.shiftKey ? 10 : 1;
+          remember();
+          board().corners[i][
+            event.key === "ArrowLeft" ? 0 : event.key === "ArrowRight" ? 0 : 1
+          ] +=
+            event.key === "ArrowLeft" || event.key === "ArrowUp" ? -step : step;
+          touchedCorners.add(selected + ":" + i);
+          board().corners[i][0] = Math.max(
+            0,
+            Math.min(data.width, board().corners[i][0]),
+          );
+          board().corners[i][1] = Math.max(
+            0,
+            Math.min(data.height, board().corners[i][1]),
+          );
+          changed();
+        });
         $("add-board").addEventListener("click", () => {
+          remember();
           state.kind = "boards";
           state.boards.push(newBoard());
           selected = state.boards.length - 1;
+          touchedBoards.add("add:" + selected);
           changed();
         });
         $("delete-board").addEventListener("click", () => {
           if (!board()) return;
+          remember();
+          touchedBoards.add("delete:" + selected);
           state.boards.splice(selected, 1);
           selected = Math.min(selected, state.boards.length - 1);
           placing = -1;
@@ -851,11 +1268,14 @@
         });
         $("orientation").addEventListener("change", () => {
           if (board()) {
+            remember();
             board().orientation = $("orientation").value;
+            touchedBoards.add(String(selected));
             changed();
           }
         });
         $("kind").addEventListener("change", () => {
+          remember();
           state.kind = $("kind").value;
           active();
           notifyDraft();
@@ -868,6 +1288,7 @@
             )
           )
             return;
+          remember();
           state.boards = [];
           state.kind = "negative";
           selected = -1;
@@ -890,6 +1311,58 @@
           active();
           notifyDraft();
         });
+        $("zoom-in").addEventListener("click", () => {
+          zoom = Math.min(2.5, zoom + 0.25);
+          render();
+        });
+        $("zoom-out").addEventListener("click", () => {
+          zoom = Math.max(0.5, zoom - 0.25);
+          render();
+        });
+        $("session-toggle").addEventListener("click", () => {
+          active();
+          sessionRunning = !sessionRunning;
+          if (sessionRunning) sessionStartSeconds = activeSeconds;
+          render();
+        });
+        $("undo").addEventListener("click", () => {
+          if (!undoStack.length) return;
+          redoStack.push(cloneState());
+          state = undoStack.pop();
+          selected = Math.min(selected, state.boards.length - 1);
+          touched = true;
+          active();
+          render();
+          notifyDraft();
+        });
+        $("redo").addEventListener("click", () => {
+          if (!redoStack.length) return;
+          undoStack.push(cloneState());
+          state = redoStack.pop();
+          selected = Math.min(selected, state.boards.length - 1);
+          touched = true;
+          render();
+          notifyDraft();
+        });
+        $("mark-correction").addEventListener("click", () => {
+          corrections.add((selected < 0 ? 0 : selected) + ":" + activeSquare);
+          proposalStatus = "Current square marked as a human correction.";
+          active();
+          render();
+          notifyDraft();
+        });
+        $("defer").addEventListener("click", () => {
+          const bounded = $("defer-reason").value;
+          if (data.connected) {
+            $("status").textContent = "Deferring page…";
+            post("defer", {
+              image_sha256: data.image_sha256,
+              reason: bounded,
+              proposal_run: activeProposalRun,
+              elapsed_seconds: Math.min(14400, activeSeconds),
+            });
+          } else $("status").textContent = "Deferred locally: " + bounded;
+        });
         function active() {
           const now = Date.now();
           if (
@@ -906,6 +1379,10 @@
               ) / 1000;
           lastActive = now;
           $("elapsed").value = String(Math.floor(activeSeconds));
+          if (sessionRunning)
+            $("session-progress").value =
+              Math.min(300, Math.floor(activeSeconds - sessionStartSeconds)) +
+              " / 300 seconds";
         }
         for (const event of [
           "pointerdown",
