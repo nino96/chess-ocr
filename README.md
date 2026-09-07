@@ -156,7 +156,7 @@ keeps FENShot as its default and loads candidate ONNX files only after the user
 selects and verifies them locally.
 Use **Archives** to see dated archive sizes and permanently delete an old recovery
 copy after confirmation. Active data, inbox PDFs and cumulative usage are retained.
-Proposal jobs are explicit, TRAIN-only, resumable, and bounded:
+Proposal jobs are explicit, nonqualification, resumable, and bounded:
 
 ```sh
 pnpm run dataset proposals providers
@@ -164,6 +164,12 @@ pnpm run dataset proposals start --localizer fenshot-localizer-v1 --labeler fens
 pnpm run dataset proposals status
 pnpm run dataset proposals stop
 ```
+
+Hash-bound v2 ONNX localizer/labeler manifests are executable through the same
+runner, including prospectively assigned `dev-*` scopes. The browser also has a
+reference-first paired diagnostic against unchanged FENShot with automatic and
+manual four-corner modes. See [local candidate testing](docs/local-candidate.md).
+Neither interface accesses qualification or accepts model proposals as truth.
 
 Reviewed public-source provenance is tracked for
 [reproducibility](docs/reproducibility.md). Private source details, operational

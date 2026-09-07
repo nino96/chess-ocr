@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { InferenceSession } from "onnxruntime-web/wasm";
 import {
+  PROPOSAL_LABELS,
   PROPOSAL_VERSION,
   PROVIDER_MANIFEST_VERSION,
   composeProviders,
   createClassicalGridLocalizationProvider,
   createFENShotLocalizationProvider,
+  createOnnxLabelProvider,
+  createOnnxLocalizationProvider,
   fenshotSquares,
   labelResultSchema,
   localizationResultSchema,
@@ -213,4 +217,110 @@ test("composition preserves localizer candidates and labels each candidate", asy
   )(input(raster(8, 8), 8, 8));
   assert.equal(result.localization.candidates[0]!.id, "board");
   assert.equal(result.labels[0]!.candidateId, "board");
+});
+
+const refinement = {
+  id: "nine-line-grid-refiner-v1",
+  implementationSha256: "b".repeat(64),
+  regionExpansion: 0.12,
+  outputSize: 768,
+  classifierTileSize: 96,
+  maxCandidates: 4,
+} as const;
+const onnxManifest = (capability: "localization" | "labels") =>
+  providerManifestSchema.parse({
+    schema: PROVIDER_MANIFEST_VERSION,
+    id: `onnx-${capability}`,
+    capability,
+    runtime:
+      capability === "localization"
+        ? "chess-ocr-onnx-localizer-v1"
+        : "chess-ocr-onnx-labeler-v1",
+    model: { name: "v2", version: "frozen", sha256: hash },
+    preprocessing:
+      capability === "localization"
+        ? "yolox-rgb-imagenet-v2"
+        : "nine-line-grid-refiner-v1/rgb768-bilinear/rgb96-imagenet-v1",
+    artifact: { path: "work/model.onnx", sha256: hash },
+    configuration:
+      capability === "localization"
+        ? {
+            kind: "chess-ocr-onnx-localizer/1",
+            input: "images",
+            output: "predictions",
+            inputShape: [1, 3, 416, 416],
+            proposalScoreThreshold: 0.01,
+            calibratedAcceptanceThreshold: 1,
+            nmsIou: 0.65,
+            refinement,
+          }
+        : {
+            kind: "chess-ocr-onnx-labeler/1",
+            input: "tiles",
+            output: "logits",
+            inputShape: ["squares", 3, 96, 96],
+            outputShape: ["squares", 13],
+            labels: [...PROPOSAL_LABELS],
+            refinement,
+          },
+    limits: {
+      max_pixels: 16_000_000,
+      max_dimension: 8192,
+      timeout_ms: 30_000,
+      max_candidates: 4,
+    },
+  });
+
+test("ONNX provider contracts reject missing configuration and preprocessing mismatch", () => {
+  const valid = onnxManifest("localization");
+  assert.throws(
+    () => providerManifestSchema.parse({ ...valid, configuration: undefined }),
+    /configuration is required/,
+  );
+  assert.throws(
+    () => providerManifestSchema.parse({ ...valid, preprocessing: "wrong" }),
+    /detector preprocessing/,
+  );
+});
+
+test("ONNX localizer runs shared preprocessing and returns no board for empty predictions", async () => {
+  const fake = {
+    async run() {
+      return {
+        predictions: { data: new Float32Array(3549 * 6), dispose() {} },
+      };
+    },
+  } as unknown as InferenceSession;
+  const provider = createOnnxLocalizationProvider(
+    fake,
+    onnxManifest("localization"),
+  );
+  const localized = await provider.localize(input(raster(80, 60), 80, 60));
+  assert.deepEqual(localized.candidates, []);
+});
+
+test("ONNX labeler rectifies a manual quadrilateral and keeps every class uncertain", async () => {
+  const fake = {
+    async run() {
+      const logits = new Float32Array(64 * 13);
+      for (let square = 0; square < 64; square++) logits[square * 13 + 1] = 9;
+      return { logits: { data: logits, dispose() {} } };
+    },
+  } as unknown as InferenceSession;
+  const provider = createOnnxLabelProvider(fake, onnxManifest("labels"));
+  const labeled = await provider.label(input(raster(100, 100), 100, 100), {
+    id: "manual",
+    providerRuntimeId: "manual-grid",
+    score: 1,
+    corners: [
+      { x: 5, y: 5 },
+      { x: 94, y: 7 },
+      { x: 92, y: 94 },
+      { x: 7, y: 92 },
+    ],
+  });
+  assert.equal(labeled.squares.length, 64);
+  assert.ok(
+    labeled.squares.every((square) => square.label === "P" && square.uncertain),
+  );
 });

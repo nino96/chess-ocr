@@ -15,6 +15,7 @@ import {
 } from "./browser.ts";
 import { loadCandidateFiles, type CandidateConfig } from "./candidate.ts";
 import { decodeRaster } from "./image.ts";
+import { mountDiagnostic } from "./diagnostic.ts";
 const el = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
 const canvas = el<HTMLCanvasElement>("source"),
@@ -358,6 +359,7 @@ el("export").addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 renderBoard();
+mountDiagnostic(() => candidate);
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   void navigator.serviceWorker
     .register("/sw.js")

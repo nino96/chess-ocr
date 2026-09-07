@@ -35,18 +35,42 @@ const model = z
 
 export const candidateManifestSchema = z
   .object({
-    schema: z.literal("chess-ocr-candidate-bundle/2"),
+    schema: z.literal("chess-ocr-candidate-bundle/3"),
     name: z.string().min(1).max(120),
     version: z.string().min(1).max(120),
     qualification: z.literal("synthetic-development-only"),
     preprocessing: detectorPreprocessingSchema,
     classifier: model.extend({
       labels: z.array(z.string()).length(13),
+      inputShape: z.tuple([
+        z.literal("squares"),
+        z.literal(3),
+        z.literal(96),
+        z.literal(96),
+      ]),
+      outputShape: z.tuple([z.literal("squares"), z.literal(13)]),
     }),
     detector: model.extend({
-      scoreThreshold: z.number().finite().min(0.001).max(1),
+      inputShape: z.tuple([
+        z.literal(1),
+        z.literal(3),
+        z.literal(416),
+        z.literal(416),
+      ]),
+      proposalScoreThreshold: z.number().finite().min(0.001).max(1),
+      calibratedAcceptanceThreshold: z.number().finite().min(0.001).max(1),
       nmsIou: z.number().finite().min(0).max(1),
     }),
+    refinement: z
+      .object({
+        id: z.literal("nine-line-grid-refiner-v1"),
+        implementationSha256: hash,
+        regionExpansion: z.number().finite().min(0).max(0.5),
+        outputSize: z.literal(768),
+        classifierTileSize: z.literal(96),
+        maxCandidates: z.number().int().positive().max(16),
+      })
+      .strict(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -59,6 +83,14 @@ export const candidateManifestSchema = z
       context.addIssue({ code: "custom", message: "Classifier is too large" });
     if (value.detector.bytes > 64 * 1024 * 1024)
       context.addIssue({ code: "custom", message: "Detector is too large" });
+    if (
+      value.detector.proposalScoreThreshold >
+      value.detector.calibratedAcceptanceThreshold
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Proposal threshold cannot exceed calibrated acceptance",
+      });
   });
 
 export type CandidateManifest = z.infer<typeof candidateManifestSchema>;
@@ -100,10 +132,11 @@ export async function loadCandidateFiles(
     value &&
     typeof value === "object" &&
     "schema" in value &&
-    value.schema === "chess-ocr-candidate-bundle/1"
+    (value.schema === "chess-ocr-candidate-bundle/1" ||
+      value.schema === "chess-ocr-candidate-bundle/2")
   )
     throw new Error(
-      "Candidate bundle schema 1 has ambiguous preprocessing; regenerate it as schema 2",
+      `Candidate bundle schema ${value.schema.endsWith("/1") ? "1" : "2"} lacks the shared refinement contract; regenerate it as schema 3`,
     );
   const manifest = candidateManifestSchema.parse(value);
   const [classifier, detector] = await Promise.all([

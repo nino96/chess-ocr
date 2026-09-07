@@ -38,7 +38,8 @@ SUPPORTED_RUNTIMES = {
     "chess-ocr-onnx-labeler-v1": "labels",
 }
 RUNNABLE_RUNTIMES = {
-    "fenshot-localizer-v1", "fenshot-labeler-v1", "classical-grid-v1"
+    "fenshot-localizer-v1", "fenshot-labeler-v1", "classical-grid-v1",
+    "chess-ocr-onnx-localizer-v1", "chess-ocr-onnx-labeler-v1",
 }
 # The first classical manifest accidentally hashed the whole shared provider
 # module. Keep its exact source hash recognizable for the one-time migration
@@ -118,9 +119,12 @@ def _builtin_manifests():
 
 
 def validate_manifest(value, *, allow_builtin=False):
-    p.require(isinstance(value, dict) and set(value) == {
+    p.require(isinstance(value, dict) and set(value) in ({
         "schema", "id", "capability", "runtime", "model", "preprocessing", "artifact", "limits"
-    }, "invalid provider manifest")
+    }, {
+        "schema", "id", "capability", "runtime", "model", "preprocessing", "artifact", "limits",
+        "configuration",
+    }), "invalid provider manifest")
     p.require(value["schema"] == SCHEMA, "invalid provider schema")
     p.token(value["id"])
     runtime = value["runtime"]
@@ -157,6 +161,57 @@ def validate_manifest(value, *, allow_builtin=False):
         p.require(path.is_file() and not path.is_symlink() and p.digest(path) == artifact["sha256"],
                   "provider artifact missing or changed")
         p.require(artifact["sha256"] == model["sha256"], "artifact/model hash mismatch")
+    configuration = value.get("configuration")
+    if runtime.startswith("chess-ocr-onnx-"):
+        p.require(isinstance(configuration, dict), "ONNX provider configuration required")
+        refinement = configuration.get("refinement")
+        p.require(isinstance(refinement, dict) and set(refinement) == {
+            "id", "implementationSha256", "regionExpansion", "outputSize",
+            "classifierTileSize", "maxCandidates",
+        } and refinement["id"] == "nine-line-grid-refiner-v1"
+          and _hex(refinement["implementationSha256"])
+          and type(refinement["regionExpansion"]) in (int, float)
+          and 0 <= refinement["regionExpansion"] <= .5
+          and refinement["outputSize"] == 768
+          and refinement["classifierTileSize"] == 96
+          and type(refinement["maxCandidates"]) is int
+          and 1 <= refinement["maxCandidates"] <= limits["max_candidates"],
+          "invalid ONNX refinement configuration")
+        if runtime == "chess-ocr-onnx-localizer-v1":
+            p.require(set(configuration) == {
+                "kind", "input", "output", "inputShape", "proposalScoreThreshold",
+                "calibratedAcceptanceThreshold", "nmsIou", "refinement",
+            } and configuration["kind"] == "chess-ocr-onnx-localizer/1"
+              and configuration["inputShape"] == [1, 3, 416, 416]
+              and all(isinstance(configuration[key], str) and configuration[key]
+                      for key in ("input", "output"))
+              and type(configuration["proposalScoreThreshold"]) in (int, float)
+              and type(configuration["calibratedAcceptanceThreshold"]) in (int, float)
+              and .001 <= configuration["proposalScoreThreshold"]
+                  <= configuration["calibratedAcceptanceThreshold"] <= 1
+              and type(configuration["nmsIou"]) in (int, float)
+              and 0 <= configuration["nmsIou"] <= 1,
+              "invalid ONNX localizer configuration")
+            p.require(value["preprocessing"] in {
+                "legacy-bgr-div255-v1", "yolox-rgb-imagenet-v2",
+            }, "unsupported ONNX detector preprocessing")
+        else:
+            p.require(set(configuration) == {
+                "kind", "input", "output", "inputShape", "outputShape", "labels", "refinement",
+            } and configuration["kind"] == "chess-ocr-onnx-labeler/1"
+              and configuration["inputShape"] == ["squares", 3, 96, 96]
+              and configuration["outputShape"] == ["squares", 13]
+              and configuration["labels"] == [
+                  "empty", "P", "N", "B", "R", "Q", "K",
+                  "p", "n", "b", "r", "q", "k",
+              ] and all(isinstance(configuration[key], str) and configuration[key]
+                        for key in ("input", "output")),
+              "invalid ONNX labeler configuration")
+            p.require(value["preprocessing"] ==
+                      "nine-line-grid-refiner-v1/rgb768-bilinear/rgb96-imagenet-v1",
+                      "unsupported ONNX classifier preprocessing")
+    else:
+        p.require(configuration is None, "built-in provider configuration must be absent")
     return value
 
 
@@ -215,6 +270,7 @@ def register_manifest(path):
 
 
 def providers():
+    grid_sha = p.digest(p.REPO / "src/grid.ts")
     with p.connect() as db:
         _provider_tables(db)
         values = []
@@ -223,6 +279,9 @@ def providers():
             f"SELECT * FROM provider_manifests WHERE runtime IN ({placeholders}) AND id != ? ORDER BY capability,id",
             (*sorted(RUNNABLE_RUNTIMES), ACCIDENTAL_PROVIDER_ID)):
             body = json.loads(row["body"])
+            configuration = body.get("configuration")
+            if (configuration and configuration["refinement"]["implementationSha256"] != grid_sha):
+                continue
             values.append({"id": row["id"], "capability": row["capability"],
                            "runtime": row["runtime"], "manifest_sha256": row["sha"],
                            "model": body["model"], "preprocessing": body["preprocessing"],
@@ -236,6 +295,9 @@ def _selected_samples(db, scope, maximum):
         "train-pending": "json_extract(o.body,'$.split')='train' AND s.accepted=0",
         "train-all": "json_extract(o.body,'$.split')='train'",
         "accepted-train": "json_extract(o.body,'$.split')='train' AND s.accepted=1",
+        "dev-pending": "json_extract(o.body,'$.split')='dev' AND s.accepted=0",
+        "dev-all": "json_extract(o.body,'$.split')='dev'",
+        "accepted-dev": "json_extract(o.body,'$.split')='dev' AND s.accepted=1",
     }.get(scope)
     p.require(where is not None, "proposal scope must exclude qualification")
     rows = db.execute(f"""SELECT s.id,s.revision,s.sha FROM samples s JOIN sources o ON o.id=s.source
@@ -621,7 +683,9 @@ def main():
     start = sub.add_parser("start")
     start.add_argument("--localizer", default="fenshot-localizer-v1")
     start.add_argument("--labeler", default="fenshot-labeler-v1")
-    start.add_argument("--scope", choices=("train-pending","train-all","accepted-train"), default="train-pending")
+    start.add_argument("--scope", choices=("train-pending","train-all","accepted-train",
+                                           "dev-pending","dev-all","accepted-dev"),
+                       default="train-pending")
     start.add_argument("--max-pages", type=int, default=MAX_PAGES)
     resume_parser = sub.add_parser("resume")
     resume_parser.add_argument("run_id")

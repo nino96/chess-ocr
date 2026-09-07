@@ -202,8 +202,9 @@ pnpm run dataset proposals stop
 pnpm run dataset proposals resume RUN_ID
 ```
 
-Use `--scope train-all` or `accepted-train` only for the recorded diagnostic or
-promotion-comparison need.
+Use `--scope train-all` or `accepted-train` only for a recorded training
+diagnostic. After development sources are prospectively assigned, `dev-pending`,
+`dev-all`, and `accepted-dev` support the paired promotion comparison.
 Qualification is not a valid scope. Runs are capped at 100 pages/two hours and
 attempts reserve 45 CPU seconds in the existing ledger. Add `--after-repair` to
 resume only after diagnosing a provider failure. Result visibility is bound to

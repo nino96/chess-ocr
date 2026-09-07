@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -14,7 +15,7 @@ const argv = process.argv.slice(2);
 if (argv[0] === "--") argv.shift();
 if (argv.shift() !== "prepare")
   throw new Error(
-    "Usage: candidate prepare --run-root PATH --output PATH --score-threshold NUMBER --preprocessing ID",
+    "Usage: candidate prepare --run-root PATH --output PATH --proposal-score-threshold NUMBER --calibrated-score-threshold NUMBER --preprocessing ID",
   );
 const options = new Map();
 while (argv.length) {
@@ -119,9 +120,20 @@ try {
   detectorStep = best.global_step;
   exportedPreprocessing = "legacy-bgr-div255-v1";
 }
-const threshold = Number(required("--score-threshold"));
-if (!Number.isFinite(threshold) || threshold < 0.001 || threshold > 1)
-  throw new Error("Score threshold must be between 0.001 and 1");
+const proposalThreshold = Number(required("--proposal-score-threshold"));
+const calibratedThreshold = Number(required("--calibrated-score-threshold"));
+if (
+  !Number.isFinite(proposalThreshold) ||
+  proposalThreshold < 0.001 ||
+  proposalThreshold > 1 ||
+  !Number.isFinite(calibratedThreshold) ||
+  calibratedThreshold < 0.001 ||
+  calibratedThreshold > 1 ||
+  proposalThreshold > calibratedThreshold
+)
+  throw new Error(
+    "Proposal and calibrated thresholds must be ordered values between 0.001 and 1",
+  );
 const preprocessing = required("--preprocessing");
 if (
   preprocessing !== "legacy-bgr-div255-v1" &&
@@ -136,7 +148,7 @@ const classifierStep = Number(
 if (!Number.isInteger(classifierStep) || !Number.isInteger(detectorStep))
   throw new Error("Selected checkpoint steps are unavailable");
 const manifest = {
-  schema: "chess-ocr-candidate-bundle/2",
+  schema: "chess-ocr-candidate-bundle/3",
   name: frozen.recipe?.run,
   version: `classifier-${classifierStep}-detector-${detectorStep}`,
   qualification: "synthetic-development-only",
@@ -146,6 +158,8 @@ const manifest = {
     bytes: statSync(classifier).size,
     input: "tiles",
     output: "logits",
+    inputShape: ["squares", 3, 96, 96],
+    outputShape: ["squares", 13],
     labels: [
       "empty",
       "P",
@@ -167,8 +181,18 @@ const manifest = {
     bytes: statSync(detector).size,
     input: "images",
     output: "predictions",
-    scoreThreshold: threshold,
+    inputShape: [1, 3, 416, 416],
+    proposalScoreThreshold: proposalThreshold,
+    calibratedAcceptanceThreshold: calibratedThreshold,
     nmsIou: 0.65,
+  },
+  refinement: {
+    id: "nine-line-grid-refiner-v1",
+    implementationSha256: digest(resolve(repository, "src/grid.ts")),
+    regionExpansion: 0.12,
+    outputSize: 768,
+    classifierTileSize: 96,
+    maxCandidates: 4,
   },
 };
 const output = resolve(repository, required("--output"));
@@ -183,4 +207,96 @@ writeFileSync(temporary, JSON.stringify(manifest, null, 2) + "\n", {
   flag: "wx",
 });
 renameSync(temporary, output);
-process.stdout.write(`${output}\n`);
+
+const providerDirectoryOption = options.get("--provider-output-directory");
+const providerOutputs = [];
+if (providerDirectoryOption) {
+  const providerDirectory = resolve(repository, providerDirectoryOption);
+  mkdirSync(providerDirectory, { recursive: true });
+  const checkedDirectory = realpathSync(providerDirectory);
+  const providerLocation = relative(work, checkedDirectory);
+  if (
+    isAbsolute(providerLocation) ||
+    providerLocation === ".." ||
+    providerLocation.startsWith("../")
+  )
+    throw new Error("Provider output directory must remain under work/");
+  const limits = {
+    max_pixels: 16_000_000,
+    max_dimension: 8192,
+    timeout_ms: 30_000,
+    max_candidates: manifest.refinement.maxCandidates,
+  };
+  const refinement = { ...manifest.refinement };
+  const providers = [
+    {
+      schema: "chess-ocr-provider-manifest/1",
+      id: `v2-localizer-${manifest.detector.sha256.slice(0, 8)}-${manifest.refinement.implementationSha256.slice(0, 8)}`,
+      capability: "localization",
+      runtime: "chess-ocr-onnx-localizer-v1",
+      model: {
+        name: `${manifest.name} detector`,
+        version: manifest.version,
+        sha256: manifest.detector.sha256,
+      },
+      preprocessing: manifest.preprocessing,
+      artifact: {
+        path: relative(repository, detector),
+        sha256: manifest.detector.sha256,
+      },
+      configuration: {
+        kind: "chess-ocr-onnx-localizer/1",
+        input: manifest.detector.input,
+        output: manifest.detector.output,
+        inputShape: manifest.detector.inputShape,
+        proposalScoreThreshold: manifest.detector.proposalScoreThreshold,
+        calibratedAcceptanceThreshold:
+          manifest.detector.calibratedAcceptanceThreshold,
+        nmsIou: manifest.detector.nmsIou,
+        refinement,
+      },
+      limits,
+    },
+    {
+      schema: "chess-ocr-provider-manifest/1",
+      id: `v2-labeler-${manifest.classifier.sha256.slice(0, 8)}-${manifest.refinement.implementationSha256.slice(0, 8)}`,
+      capability: "labels",
+      runtime: "chess-ocr-onnx-labeler-v1",
+      model: {
+        name: `${manifest.name} classifier`,
+        version: manifest.version,
+        sha256: manifest.classifier.sha256,
+      },
+      preprocessing:
+        "nine-line-grid-refiner-v1/rgb768-bilinear/rgb96-imagenet-v1",
+      artifact: {
+        path: relative(repository, classifier),
+        sha256: manifest.classifier.sha256,
+      },
+      configuration: {
+        kind: "chess-ocr-onnx-labeler/1",
+        input: manifest.classifier.input,
+        output: manifest.classifier.output,
+        inputShape: manifest.classifier.inputShape,
+        outputShape: manifest.classifier.outputShape,
+        labels: manifest.classifier.labels,
+        refinement,
+      },
+      limits,
+    },
+  ];
+  for (const provider of providers) {
+    const path = resolve(providerDirectory, `${provider.id}.json`);
+    const body = `${JSON.stringify(provider, null, 2)}\n`;
+    if (existsSync(path)) {
+      if (readFileSync(path, "utf8") !== body)
+        throw new Error(`Immutable provider manifest already differs: ${path}`);
+    } else {
+      const staged = `${path}.${process.pid}.tmp`;
+      writeFileSync(staged, body, { flag: "wx" });
+      renameSync(staged, path);
+    }
+    providerOutputs.push(path);
+  }
+}
+process.stdout.write(`${[output, ...providerOutputs].join("\n")}\n`);

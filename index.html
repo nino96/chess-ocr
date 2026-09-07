@@ -140,11 +140,202 @@
           >
         </section>
       </div>
+      <section
+        id="diagnostic"
+        class="diagnostic"
+        aria-labelledby="diagnostic-title"
+      >
+        <h2 id="diagnostic-title">Paired local diagnostic</h2>
+        <p>
+          Private comparison evidence for a verified v2 candidate against
+          unchanged FENShot. Nothing is uploaded or persisted. Results stay
+          hidden until you save an independent reference.
+        </p>
+        <label
+          >Queue up to 20 PNG/JPEG inputs<input
+            id="diagnostic-files"
+            type="file"
+            accept="image/png,image/jpeg"
+            multiple
+        /></label>
+        <p id="diagnostic-current" aria-live="polite">
+          No local images queued.
+        </p>
+        <button id="diagnostic-previous" type="button">Previous</button>
+        <button id="diagnostic-next" type="button">Next</button>
+        <label
+          >Comparison mode<select id="diagnostic-mode">
+            <option value="automatic">Automatic full page</option>
+            <option value="manual-grid">Manual four-corner grid</option>
+          </select></label
+        >
+        <fieldset>
+          <legend>Reference first</legend>
+          <label
+            >Reference<select id="diagnostic-reference-kind">
+              <option value="no-board">No board</option>
+              <option value="partial">Partial board</option>
+              <option value="board">Board</option>
+            </select></label
+          >
+          <label
+            >Orientation<select id="diagnostic-orientation">
+              <option value="unknown">Unknown</option>
+              <option value="white-bottom">White at bottom</option>
+              <option value="black-bottom">Black at bottom</option>
+            </select></label
+          >
+          <div
+            class="diagnostic-corners"
+            aria-label="Board corners in original image pixels, clockwise top-left through bottom-left"
+          >
+            <label
+              >TL x<input
+                id="diagnostic-corner-0"
+                type="number"
+                min="0" /></label
+            ><label
+              >TL y<input
+                id="diagnostic-corner-1"
+                type="number"
+                min="0" /></label
+            ><label
+              >TR x<input
+                id="diagnostic-corner-2"
+                type="number"
+                min="0" /></label
+            ><label
+              >TR y<input
+                id="diagnostic-corner-3"
+                type="number"
+                min="0" /></label
+            ><label
+              >BR x<input
+                id="diagnostic-corner-4"
+                type="number"
+                min="0" /></label
+            ><label
+              >BR y<input
+                id="diagnostic-corner-5"
+                type="number"
+                min="0" /></label
+            ><label
+              >BL x<input
+                id="diagnostic-corner-6"
+                type="number"
+                min="0" /></label
+            ><label
+              >BL y<input id="diagnostic-corner-7" type="number" min="0"
+            /></label>
+          </div>
+          <div
+            id="diagnostic-labels"
+            class="diagnostic-labels"
+            role="group"
+            aria-label="64 visible reference labels"
+          ></div>
+          <button id="diagnostic-save-reference" type="button" disabled>
+            Save reference
+          </button>
+        </fieldset>
+        <p class="diagnostic-note">
+          Manual-grid mode perspective-rectifies the saved clockwise corners
+          once, feeds the identical local raster to both unchanged classifiers,
+          and restores source-image geometry for scoring. It bypasses both
+          localizers and automatic line refinement.
+        </p>
+        <button id="diagnostic-run" type="button" disabled>
+          Run paired comparison
+        </button>
+        <pre id="diagnostic-result" hidden aria-live="polite"></pre>
+        <fieldset>
+          <legend>Private resumable evidence</legend>
+          <p>
+            Private export includes image hashes, corners, labels and raw
+            results. Do not publish it. The aggregate summary omits all of those
+            fields.
+          </p>
+          <label
+            >Device label<input
+              id="diagnostic-device"
+              value="local device" /></label
+          ><label
+            >OS<input id="diagnostic-os" value="operator supplied" /></label
+          ><label
+            >Browser<input
+              id="diagnostic-browser"
+              value="operator supplied" /></label
+          ><label
+            >Browser version<input
+              id="diagnostic-browser-version"
+              value="operator supplied" /></label
+          ><label
+            >CPU<input id="diagnostic-cpu" value="operator supplied" /></label
+          ><label
+            >Memory GiB<input
+              id="diagnostic-memory"
+              type="number"
+              min="0"
+              step="0.1" /></label
+          ><label
+            >Peak-memory method<input
+              id="diagnostic-memory-method"
+              value="performance.memory when supported; otherwise browser task manager peak during one cold run"
+          /></label>
+          <p>
+            For an unsupported heap counter, open the browser task manager,
+            start one cold paired run, record the highest process memory, then
+            repeat for the next input. Do not treat this as a cross-browser
+            equivalent metric.
+          </p>
+          <button id="diagnostic-export-private" type="button" disabled>
+            Download private evidence</button
+          ><button id="diagnostic-export-summary" type="button" disabled>
+            Download aggregate summary
+          </button>
+          <label
+            >Import private evidence<input
+              id="diagnostic-import"
+              type="file"
+              accept="application/json,.json" /></label
+          ><label
+            >Reselect matching inputs in exported order<input
+              id="diagnostic-reselect"
+              type="file"
+              accept="image/png,image/jpeg"
+              multiple
+          /></label>
+        </fieldset>
+        <p id="diagnostic-status" role="status" aria-live="polite">
+          Load a verified v2 candidate using the existing local loader, then
+          queue inputs.
+        </p>
+      </section>
       <footer>
         Offline WASM CPU · FENShot 0.1.4 or an explicitly loaded local candidate
         · Confidence is not calibrated. No chess-legality corrections.
       </footer>
     </main>
+    <template id="diagnostic-label-template"
+      ><label
+        ><span></span
+        ><select>
+          <option value="empty">·</option>
+          <option value="P">P</option>
+          <option value="N">N</option>
+          <option value="B">B</option>
+          <option value="R">R</option>
+          <option value="Q">Q</option>
+          <option value="K">K</option>
+          <option value="p">p</option>
+          <option value="n">n</option>
+          <option value="b">b</option>
+          <option value="r">r</option>
+          <option value="q">q</option>
+          <option value="k">k</option>
+        </select></label
+      ></template
+    >
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

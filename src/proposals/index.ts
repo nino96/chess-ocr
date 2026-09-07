@@ -1,5 +1,17 @@
 import { Tensor, type InferenceSession } from "onnxruntime-web/wasm";
 import { z } from "zod";
+import {
+  classProbabilities,
+  classifierTiles,
+  detectorRasterFromRgba,
+  sourceDetections,
+} from "../candidate-runtime.ts";
+import {
+  deduplicateGrids,
+  findInnerGrid,
+  rectifyGrid,
+  type GridCorners,
+} from "../grid.ts";
 
 /** Stable, deliberately small contract for locally registered proposal adapters. */
 export const PROPOSAL_VERSION = "chess-ocr-dataset-proposal/1" as const;
@@ -49,6 +61,54 @@ const identitySchema = z
   })
   .strict();
 
+const onnxRefinementSchema = z
+  .object({
+    id: z.literal("nine-line-grid-refiner-v1"),
+    implementationSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    regionExpansion: finite.min(0).max(0.5),
+    outputSize: z.literal(768),
+    classifierTileSize: z.literal(96),
+    maxCandidates: finite.int().positive().max(16),
+  })
+  .strict();
+const providerConfigurationSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("chess-ocr-onnx-localizer/1"),
+        input: z.string().min(1).max(80),
+        output: z.string().min(1).max(80),
+        inputShape: z.tuple([
+          z.literal(1),
+          z.literal(3),
+          z.literal(416),
+          z.literal(416),
+        ]),
+        proposalScoreThreshold: finite.min(0.001).max(1),
+        calibratedAcceptanceThreshold: finite.min(0.001).max(1),
+        nmsIou: finite.min(0).max(1),
+        refinement: onnxRefinementSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("chess-ocr-onnx-labeler/1"),
+        input: z.string().min(1).max(80),
+        output: z.string().min(1).max(80),
+        inputShape: z.tuple([
+          z.literal("squares"),
+          z.literal(3),
+          z.literal(96),
+          z.literal(96),
+        ]),
+        outputShape: z.tuple([z.literal("squares"), z.literal(13)]),
+        labels: z.array(z.enum(PROPOSAL_LABELS)).length(13),
+        refinement: onnxRefinementSchema,
+      })
+      .strict(),
+  ])
+  .nullable();
+
 export const providerManifestSchema = z
   .object({
     schema: z.literal(PROVIDER_MANIFEST_VERSION),
@@ -70,6 +130,7 @@ export const providerManifestSchema = z
       })
       .strict()
       .nullable(),
+    configuration: providerConfigurationSchema.optional(),
     limits: z
       .object({
         max_pixels: finite.int().positive().max(16_000_000),
@@ -79,7 +140,62 @@ export const providerManifestSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((manifest, context) => {
+    if (
+      manifest.runtime === "chess-ocr-onnx-localizer-v1" &&
+      manifest.configuration?.kind !== "chess-ocr-onnx-localizer/1"
+    )
+      context.addIssue({
+        code: "custom",
+        message: "ONNX localizer configuration is required",
+      });
+    if (
+      manifest.runtime === "chess-ocr-onnx-localizer-v1" &&
+      manifest.preprocessing !== "yolox-rgb-imagenet-v2" &&
+      manifest.preprocessing !== "legacy-bgr-div255-v1"
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Unsupported ONNX detector preprocessing",
+      });
+    if (
+      manifest.runtime === "chess-ocr-onnx-labeler-v1" &&
+      manifest.configuration?.kind !== "chess-ocr-onnx-labeler/1"
+    )
+      context.addIssue({
+        code: "custom",
+        message: "ONNX labeler configuration is required",
+      });
+    if (
+      manifest.runtime === "chess-ocr-onnx-labeler-v1" &&
+      manifest.preprocessing !==
+        "nine-line-grid-refiner-v1/rgb768-bilinear/rgb96-imagenet-v1"
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Unsupported ONNX classifier preprocessing",
+      });
+    if (
+      manifest.configuration?.kind === "chess-ocr-onnx-localizer/1" &&
+      manifest.configuration.proposalScoreThreshold >
+        manifest.configuration.calibratedAcceptanceThreshold
+    )
+      context.addIssue({
+        code: "custom",
+        message: "ONNX proposal threshold exceeds calibrated acceptance",
+      });
+    if (
+      manifest.configuration?.kind === "chess-ocr-onnx-labeler/1" &&
+      !manifest.configuration.labels.every(
+        (label, index) => label === PROPOSAL_LABELS[index],
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        message: "ONNX label order mismatch",
+      });
+  });
 export type ProviderManifest = z.infer<typeof providerManifestSchema>;
 
 export const proposalInputSchema = z
@@ -237,12 +353,13 @@ export function createFENShotLocalizationProvider(
             },
           ]
         : [];
+      const distinct = deduplicateGrids(candidates);
       return localizationResultSchema.parse({
         schema: PROPOSAL_VERSION,
         requestId: input.requestId,
         image: input.image,
         provider: manifest,
-        candidates,
+        candidates: distinct,
         warnings: found
           ? ["FENShot returns at most one axis-aligned candidate."]
           : ["No FENShot grid candidate."],
@@ -316,6 +433,213 @@ export function createFENShotLabelProvider(
             squares: fenshotSquares(numeric),
             warnings: [
               "Uncalibrated FENShot confidence; inspect every square.",
+            ],
+          });
+        } finally {
+          for (const value of Object.values(output)) value.dispose();
+        }
+      } finally {
+        tensor.dispose();
+      }
+    },
+  };
+}
+
+function onnxConfiguration(
+  manifest: ProviderManifest,
+  kind: "chess-ocr-onnx-localizer/1",
+): Extract<
+  NonNullable<ProviderManifest["configuration"]>,
+  { kind: typeof kind }
+>;
+function onnxConfiguration(
+  manifest: ProviderManifest,
+  kind: "chess-ocr-onnx-labeler/1",
+): Extract<
+  NonNullable<ProviderManifest["configuration"]>,
+  { kind: typeof kind }
+>;
+function onnxConfiguration(
+  manifest: ProviderManifest,
+  kind: "chess-ocr-onnx-localizer/1" | "chess-ocr-onnx-labeler/1",
+) {
+  if (!manifest.artifact || manifest.configuration?.kind !== kind)
+    throw new Error("ONNX provider manifest is incomplete");
+  return manifest.configuration;
+}
+
+function expandedRect(
+  box: { x: number; y: number; width: number; height: number },
+  width: number,
+  height: number,
+  fraction: number,
+) {
+  const padding = Math.max(box.width, box.height) * fraction;
+  const x = Math.max(0, box.x - padding);
+  const y = Math.max(0, box.y - padding);
+  const right = Math.min(width, box.x + box.width + padding);
+  const bottom = Math.min(height, box.y + box.height + padding);
+  return { x, y, width: right - x, height: bottom - y };
+}
+
+/** Shared v2 detector plus deterministic nine-line refinement. */
+export function createOnnxLocalizationProvider(
+  session: InferenceSession,
+  supplied: ProviderManifest,
+): LocalizationProvider {
+  const manifest = providerManifestSchema.parse(supplied);
+  if (
+    manifest.runtime !== "chess-ocr-onnx-localizer-v1" ||
+    manifest.capability !== "localization"
+  )
+    throw new Error("Invalid chess-ocr ONNX localization manifest");
+  const configuration = onnxConfiguration(
+    manifest,
+    "chess-ocr-onnx-localizer/1",
+  );
+  return {
+    manifest,
+    async localize(input) {
+      assertRaster(input);
+      const prepared = detectorRasterFromRgba(
+        input.rgba,
+        input.image.width,
+        input.image.height,
+        manifest.preprocessing as
+          | "legacy-bgr-div255-v1"
+          | "yolox-rgb-imagenet-v2",
+      );
+      const tensor = new Tensor("float32", prepared.input, [1, 3, 416, 416]);
+      let detections;
+      try {
+        const output = await session.run({ [configuration.input]: tensor });
+        try {
+          const raw = output[configuration.output];
+          if (!raw || !(raw.data instanceof Float32Array))
+            throw new Error("Invalid ONNX detector output");
+          detections = sourceDetections(
+            raw.data,
+            prepared,
+            configuration.proposalScoreThreshold,
+            configuration.nmsIou,
+            configuration.refinement.maxCandidates,
+          );
+        } finally {
+          for (const value of Object.values(output)) value.dispose();
+        }
+      } finally {
+        tensor.dispose();
+      }
+      const source = {
+        data: new Uint8Array(
+          input.rgba.buffer,
+          input.rgba.byteOffset,
+          input.rgba.byteLength,
+        ),
+        width: input.image.width,
+        height: input.image.height,
+      };
+      let rejected = 0;
+      const candidates: BoardCandidate[] = [];
+      for (const detection of detections) {
+        const refined = findInnerGrid(
+          source,
+          expandedRect(
+            detection.box,
+            input.image.width,
+            input.image.height,
+            configuration.refinement.regionExpansion,
+          ),
+        );
+        if (!refined.ok) {
+          rejected++;
+          continue;
+        }
+        candidates.push({
+          id: `onnx-refined-${candidates.length}`,
+          corners: refined.corners.map((point) => ({
+            ...point,
+          })) as BoardCandidate["corners"],
+          score: Math.max(0, Math.min(1, detection.score * refined.score)),
+          providerRuntimeId: manifest.id,
+        });
+      }
+      return localizationResultSchema.parse({
+        schema: PROPOSAL_VERSION,
+        requestId: input.requestId,
+        image: input.image,
+        provider: manifest,
+        candidates,
+        warnings: [
+          "Detector outputs are low-threshold region proposals; only refined nine-line grids are returned.",
+          ...(rejected
+            ? [
+                `Grid refinement rejected ${rejected} detector proposal${rejected === 1 ? "" : "s"}.`,
+              ]
+            : []),
+        ],
+      });
+    },
+  };
+}
+
+/** Shared perspective rectification and MobileNetV3 square classifier. */
+export function createOnnxLabelProvider(
+  session: InferenceSession,
+  supplied: ProviderManifest,
+): LabelProvider {
+  const manifest = providerManifestSchema.parse(supplied);
+  if (
+    manifest.runtime !== "chess-ocr-onnx-labeler-v1" ||
+    manifest.capability !== "labels"
+  )
+    throw new Error("Invalid chess-ocr ONNX label manifest");
+  const configuration = onnxConfiguration(manifest, "chess-ocr-onnx-labeler/1");
+  return {
+    manifest,
+    async label(input, candidate) {
+      assertRaster(input);
+      candidateSchema.parse(candidate);
+      const source = {
+        data: new Uint8Array(
+          input.rgba.buffer,
+          input.rgba.byteOffset,
+          input.rgba.byteLength,
+        ),
+        width: input.image.width,
+        height: input.image.height,
+      };
+      const rectified = rectifyGrid(
+        source,
+        candidate.corners as GridCorners,
+        3,
+        configuration.refinement.outputSize,
+      );
+      const values = classifierTiles(rectified.data);
+      const tensor = new Tensor("float32", values, [64, 3, 96, 96]);
+      try {
+        const output = await session.run({ [configuration.input]: tensor });
+        try {
+          const raw = output[configuration.output];
+          if (!raw || !(raw.data instanceof Float32Array))
+            throw new Error("Invalid ONNX classifier output");
+          const probabilities = classProbabilities(raw.data, 64);
+          return labelResultSchema.parse({
+            schema: PROPOSAL_VERSION,
+            requestId: input.requestId,
+            image: input.image,
+            provider: manifest,
+            candidateId: candidate.id,
+            squares: probabilities.map((values) => {
+              const confidence = Math.max(...values);
+              return {
+                label: PROPOSAL_LABELS[values.indexOf(confidence)]!,
+                probabilities: values,
+                uncertain: true,
+              };
+            }),
+            warnings: [
+              "Synthetic-development-only confidence; inspect all 64 squares.",
             ],
           });
         } finally {
@@ -675,11 +999,7 @@ export function validateManifest(value: unknown): ProviderManifest {
 }
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
-/**
- * The complete set of identifiers this package understands.  `onnx-labels-v1`
- * and `user-selection` are contracts for reviewed future adapters, not dynamic
- * module loaders; the registry below exposes only adapters with implementation.
- */
+/** Default built-ins. Hash-bound ONNX manifests are registered explicitly. */
 export function builtInManifests(modelSha256: string): ProviderManifest[] {
   const sha256 = sha256Schema.parse(modelSha256);
   return [
@@ -695,26 +1015,6 @@ export function builtInManifests(modelSha256: string): ProviderManifest[] {
       artifact: null,
       limits: defaultLimits,
     }),
-    providerManifestSchema.parse({
-      schema: PROVIDER_MANIFEST_VERSION,
-      id: "onnx-localizer",
-      capability: "localization",
-      runtime: "chess-ocr-onnx-localizer-v1",
-      model: { name: "future-reviewed-onnx", version: "unconfigured", sha256 },
-      preprocessing: "unconfigured",
-      artifact: null,
-      limits: defaultLimits,
-    }),
-    providerManifestSchema.parse({
-      schema: PROVIDER_MANIFEST_VERSION,
-      id: "onnx-labeler",
-      capability: "labels",
-      runtime: "chess-ocr-onnx-labeler-v1",
-      model: { name: "future-reviewed-onnx", version: "unconfigured", sha256 },
-      preprocessing: "unconfigured",
-      artifact: null,
-      limits: defaultLimits,
-    }),
   ];
 }
 
@@ -724,7 +1024,11 @@ export interface BuiltInRegistry {
   labels(manifest: unknown): LabelProvider;
 }
 export function createBuiltInRegistry(options: {
+  /** Backward-compatible FENShot label session. */
   session?: InferenceSession;
+  fenshotSession?: InferenceSession;
+  onnxLocalizerSession?: InferenceSession;
+  onnxLabelerSession?: InferenceSession;
   modelSha256?: string;
   manifests?: ProviderManifest[];
 }): BuiltInRegistry {
@@ -736,21 +1040,37 @@ export function createBuiltInRegistry(options: {
       ? [createClassicalGridLocalizationProvider(manifest)]
       : manifest.runtime === "fenshot-localizer-v1"
         ? [createFENShotLocalizationProvider(manifest)]
-        : [],
+        : manifest.runtime === "chess-ocr-onnx-localizer-v1" &&
+            options.onnxLocalizerSession
+          ? [
+              createOnnxLocalizationProvider(
+                options.onnxLocalizerSession,
+                manifest,
+              ),
+            ]
+          : [],
   );
   const fenshotLabels = manifests.find(
     (manifest) => manifest.runtime === "fenshot-labeler-v1",
   )!;
-  const labelers: LabelProvider[] =
-    options.session && fenshotLabels
+  const fenshotSession = options.fenshotSession ?? options.session;
+  const onnxLabels = manifests.find(
+    (manifest) => manifest.runtime === "chess-ocr-onnx-labeler-v1",
+  );
+  const labelers: LabelProvider[] = [
+    ...(fenshotSession && fenshotLabels
       ? [
           createFENShotLabelProvider(
-            options.session,
+            fenshotSession,
             fenshotLabels.model,
             fenshotLabels,
           ),
         ]
-      : [];
+      : []),
+    ...(options.onnxLabelerSession && onnxLabels
+      ? [createOnnxLabelProvider(options.onnxLabelerSession, onnxLabels)]
+      : []),
+  ];
   const exact = <T extends { manifest: ProviderManifest }>(
     providers: readonly T[],
     manifest: unknown,

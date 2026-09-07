@@ -253,6 +253,79 @@ footer {
   font-size: 0.75rem;
   color: #647460;
 }
+.diagnostic {
+  margin-top: 48px;
+  padding: 24px;
+  border: 1px solid #aabaaa;
+  border-radius: 8px;
+  background: #fff;
+}
+.diagnostic > label,
+.diagnostic fieldset > label {
+  display: inline-grid;
+  gap: 5px;
+  margin: 8px 12px 8px 0;
+  font-size: 0.8rem;
+}
+.diagnostic input,
+.diagnostic select {
+  max-width: 290px;
+  padding: 7px;
+  border: 1px solid #bcc8b8;
+  border-radius: 4px;
+  background: #fff;
+}
+.diagnostic-corners {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(70px, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.diagnostic-corners label {
+  display: grid;
+  gap: 3px;
+  font-size: 0.75rem;
+}
+.diagnostic-labels {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  max-width: 520px;
+  border: 3px solid #284939;
+}
+.diagnostic-labels label {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-width: 0;
+  padding: 3px;
+  background: #eee9d8;
+  font-size: 0.62rem;
+}
+.diagnostic-labels label:nth-child(16n + 2),
+.diagnostic-labels label:nth-child(16n + 4),
+.diagnostic-labels label:nth-child(16n + 6),
+.diagnostic-labels label:nth-child(16n + 8),
+.diagnostic-labels label:nth-child(16n + 9),
+.diagnostic-labels label:nth-child(16n + 11),
+.diagnostic-labels label:nth-child(16n + 13),
+.diagnostic-labels label:nth-child(16n + 15) {
+  background: #98ad94;
+}
+.diagnostic-labels select {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 0;
+}
+.diagnostic-note {
+  padding: 10px;
+  border-left: 4px solid #b57b18;
+  background: #fff5dc;
+}
+#diagnostic-result {
+  overflow: auto;
+  padding: 12px;
+  background: #eef2ea;
+  white-space: pre-wrap;
+}
 @media (max-width: 800px) {
   main {
     padding: 24px 16px;

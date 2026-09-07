@@ -68,6 +68,15 @@ const localizer = validateManifest(value.localizer);
 const labeler = validateManifest(value.labeler);
 if (localizer.capability !== "localization" || labeler.capability !== "labels")
   throw new Error("provider capability mismatch");
+const gridSource = await readFile(resolve(repository, "src/grid.ts"));
+for (const manifest of [localizer, labeler]) {
+  const configuration = manifest.configuration;
+  if (
+    configuration &&
+    sha256(gridSource) !== configuration.refinement.implementationSha256
+  )
+    throw new Error("provider refinement implementation hash mismatch");
+}
 if (
   typeof value.config_sha256 !== "string" ||
   sha256(Buffer.from(canonical({ localizer, labeler }))) !== value.config_sha256
@@ -92,27 +101,55 @@ const rgbaBytes = await safeFile(
 if (rgbaBytes.length !== value.width * value.height * 4)
   throw new Error("decoded raster length mismatch");
 
-if (!labeler.artifact) throw new Error("label provider artifact required");
-const modelPath = resolve(repository, labeler.artifact.path);
-const modelRoot = labeler.artifact.path.startsWith("node_modules/")
-  ? resolve(repository, "node_modules")
-  : labeler.artifact.path.startsWith("artifacts/")
-    ? resolve(repository, "artifacts")
-    : resolve(repository, "work");
-const model = await safeFile(modelPath, modelRoot, 256 * 1024 * 1024);
-if (
-  sha256(model) !== labeler.artifact.sha256 ||
-  labeler.artifact.sha256 !== labeler.model.sha256
-)
-  throw new Error("label provider artifact hash mismatch");
+async function providerArtifact(manifest: typeof labeler) {
+  if (!manifest.artifact) throw new Error("model provider artifact required");
+  const modelPath = resolve(repository, manifest.artifact.path);
+  const modelRoot = manifest.artifact.path.startsWith("node_modules/")
+    ? resolve(repository, "node_modules")
+    : manifest.artifact.path.startsWith("artifacts/")
+      ? resolve(repository, "artifacts")
+      : resolve(repository, "work");
+  const model = await safeFile(modelPath, modelRoot, 256 * 1024 * 1024);
+  if (
+    sha256(model) !== manifest.artifact.sha256 ||
+    manifest.artifact.sha256 !== manifest.model.sha256
+  )
+    throw new Error(`${manifest.capability} provider artifact hash mismatch`);
+  return model;
+}
 
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.wasmPaths =
   resolve(repository, "node_modules/onnxruntime-web/dist") + "/";
-const session = await ort.InferenceSession.create(model, {
-  executionProviders: ["wasm"],
-});
+const fenshotModel =
+  labeler.runtime === "fenshot-labeler-v1"
+    ? await providerArtifact(labeler)
+    : null;
+const onnxLocalizerModel =
+  localizer.runtime === "chess-ocr-onnx-localizer-v1"
+    ? await providerArtifact(localizer)
+    : null;
+const onnxLabelerModel =
+  labeler.runtime === "chess-ocr-onnx-labeler-v1"
+    ? await providerArtifact(labeler)
+    : null;
+let fenshotSession: ort.InferenceSession | null = null;
+let onnxLocalizerSession: ort.InferenceSession | null = null;
+let onnxLabelerSession: ort.InferenceSession | null = null;
 try {
+  if (fenshotModel)
+    fenshotSession = await ort.InferenceSession.create(fenshotModel, {
+      executionProviders: ["wasm"],
+    });
+  if (onnxLocalizerModel)
+    onnxLocalizerSession = await ort.InferenceSession.create(
+      onnxLocalizerModel,
+      { executionProviders: ["wasm"] },
+    );
+  if (onnxLabelerModel)
+    onnxLabelerSession = await ort.InferenceSession.create(onnxLabelerModel, {
+      executionProviders: ["wasm"],
+    });
   const result = await runProposal(
     {
       sampleId: String(value.sample_id),
@@ -131,7 +168,9 @@ try {
       ),
     },
     createBuiltInRegistry({
-      session,
+      fenshotSession: fenshotSession ?? undefined,
+      onnxLocalizerSession: onnxLocalizerSession ?? undefined,
+      onnxLabelerSession: onnxLabelerSession ?? undefined,
       modelSha256: labeler.model.sha256,
       manifests: [localizer, labeler],
     }),
@@ -146,5 +185,9 @@ try {
   await writeFile(temporary, `${JSON.stringify(result)}\n`, { flag: "wx" });
   await rename(temporary, output);
 } finally {
-  await session.release();
+  await Promise.allSettled(
+    [fenshotSession, onnxLocalizerSession, onnxLabelerSession]
+      .filter((session): session is ort.InferenceSession => session !== null)
+      .map((session) => session.release()),
+  );
 }
