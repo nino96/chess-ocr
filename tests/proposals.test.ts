@@ -5,6 +5,7 @@ import {
   PROVIDER_MANIFEST_VERSION,
   composeProviders,
   createClassicalGridLocalizationProvider,
+  createFENShotLocalizationProvider,
   fenshotSquares,
   labelResultSchema,
   localizationResultSchema,
@@ -139,6 +140,22 @@ test("FENShot class ordering maps A1-origin output to image-relative row order",
     squares[0]!.probabilities,
     [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
   );
+});
+
+test("FENShot localization downsamples large pages and restores source geometry", async () => {
+  const width = 2400;
+  const height = 1800;
+  const rgba = raster(width, height);
+  checker(rgba, width, 600, 300, 100);
+  const result = await createFENShotLocalizationProvider().localize(
+    input(rgba, width, height),
+  );
+  assert.equal(result.candidates.length, 1);
+  const corners = result.candidates[0]!.corners;
+  assert.ok(corners[0].x > 500 && corners[0].x < 800);
+  assert.ok(corners[0].y > 200 && corners[0].y < 400);
+  assert.ok(corners[2].x > 1300 && corners[2].x < 1600);
+  assert.ok(corners[2].y > 1000 && corners[2].y < 1300);
 });
 
 test("composition preserves localizer candidates and labels each candidate", async () => {

@@ -343,9 +343,11 @@ The remaining bullets are delivery work, not approval for more
 acquisition/compute/reviews:
 
 - **Annotation assistance:** the provider framework, bounded jobs, editable
-  proposal UI and metric capture are implemented. Run only a bounded smoke check
-  of the classical diagnostic; reserve the measured human promotion comparison
-  for the issue #3 candidate versus unchanged FENShot.
+  proposal UI and metric capture are implemented. The 2026-09-07 four-page
+  smoke check found false/missed boards in both current localizers; this is
+  recorded as negative diagnostic evidence, not a winner-selection gate. Reserve
+  the measured human promotion comparison for the issue #3 candidate versus
+  unchanged FENShot.
 - **Geometry-triggered label re-read:** deferred until a reviewed label adapter
   rectifies arbitrary four-corner grids. FENShot's unchanged axis-aligned tile
   preprocessor must not be silently applied to a human-edited perspective grid;

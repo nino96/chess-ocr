@@ -223,8 +223,9 @@ export function createFENShotLocalizationProvider(
     async localize(input) {
       assertRaster(input);
       const { findChessboardCorners, rgbaToGray } = await loadFenshot();
-      const found = findChessboardCorners(
+      const found = detectFenshotBox(
         rgbaToGray(input.rgba, input.image.width, input.image.height),
+        findChessboardCorners,
       );
       const candidates = found
         ? [
@@ -440,6 +441,64 @@ async function loadFenshot(): Promise<FenshotApi> {
     rgbaToGray: tiles.rgbaToGray,
     extractTiles: tiles.extractTiles,
   } as FenshotApi;
+}
+
+const FENSHOT_MAX_DETECT_DIM = 1600;
+
+function resizeGray(
+  source: { data: Float32Array; width: number; height: number },
+  width: number,
+  height: number,
+): { data: Float32Array; width: number; height: number } {
+  const data = new Float32Array(width * height);
+  const scaleX = source.width / width;
+  const scaleY = source.height / height;
+  for (let y = 0; y < height; y++) {
+    const sy = (y + 0.5) * scaleY - 0.5;
+    const y0 = Math.max(0, Math.floor(sy));
+    const y1 = Math.min(source.height - 1, y0 + 1);
+    const wy = Math.max(0, Math.min(1, sy - y0));
+    for (let x = 0; x < width; x++) {
+      const sx = (x + 0.5) * scaleX - 0.5;
+      const x0 = Math.max(0, Math.floor(sx));
+      const x1 = Math.min(source.width - 1, x0 + 1);
+      const wx = Math.max(0, Math.min(1, sx - x0));
+      const top =
+        source.data[y0 * source.width + x0]! * (1 - wx) +
+        source.data[y0 * source.width + x1]! * wx;
+      const bottom =
+        source.data[y1 * source.width + x0]! * (1 - wx) +
+        source.data[y1 * source.width + x1]! * wx;
+      data[y * width + x] = top * (1 - wy) + bottom * wy;
+    }
+  }
+  return { data, width, height };
+}
+
+function detectFenshotBox(
+  gray: { data: Float32Array; width: number; height: number },
+  find: FenshotApi["findChessboardCorners"],
+): { x0: number; y0: number; x1: number; y1: number } | null {
+  const scale = Math.min(
+    1,
+    FENSHOT_MAX_DETECT_DIM / Math.max(gray.width, gray.height),
+  );
+  const detection =
+    scale < 1
+      ? resizeGray(
+          gray,
+          Math.round(gray.width * scale),
+          Math.round(gray.height * scale),
+        )
+      : gray;
+  const found = find(detection);
+  if (!found) return null;
+  return {
+    x0: found.x0 / scale,
+    y0: found.y0 / scale,
+    x1: found.x1 / scale,
+    y1: found.y1 / scale,
+  };
 }
 function rgbaToGrayLocal(
   rgba: Uint8ClampedArray,
