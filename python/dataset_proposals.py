@@ -353,7 +353,11 @@ def _run_child(run_id, sample_id):
 def child(run_id, sample_id):
     signal.alarm(40)
     resource.setrlimit(resource.RLIMIT_CPU, (35,35))
-    resource.setrlimit(resource.RLIMIT_AS, (4 * 1024**3, 4 * 1024**3))
+    # Node's ONNX Runtime Web WASM backend reserves a large virtual address
+    # range even for a small model.  A 4 GiB address-space ceiling makes the
+    # inference call fail with std::bad_alloc before it can produce a result;
+    # keep the bounded child but leave enough virtual space for the runtime.
+    resource.setrlimit(resource.RLIMIT_AS, (8 * 1024**3, 8 * 1024**3))
     resource.setrlimit(resource.RLIMIT_FSIZE, (64 * 1024**2, 64 * 1024**2))
     _run_child(run_id, sample_id)
 
