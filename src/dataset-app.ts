@@ -158,7 +158,8 @@ function filtered(): Page[] {
     (p) =>
       (!doc || doc === p.source) &&
       (filter === "all" ||
-        Boolean(p.accepted) === (filter === "accepted") ||
+        (filter === "pending" && !p.accepted) ||
+        (filter === "accepted" && Boolean(p.accepted)) ||
         (filter === "proposal" && p.proposal_count > 0) ||
         (filter === "deferred" && p.deferred_reason !== null) ||
         (filter === "ambiguous" &&
