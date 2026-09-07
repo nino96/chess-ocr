@@ -27,6 +27,7 @@
     "precision": "float32",
     "dependencies": {
       "numpy": "2.2.4",
+      "opencv-python-headless": "4.11.0.86",
       "pillow": "11.1.0",
       "safetensors": "0.5.3",
       "timm": "1.0.15"

@@ -292,7 +292,8 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
     if args.prior_run:
         prior = read_json(safe_directory(args.prior_run) / "state.json")
         require(prior.get("run_id") and prior.get("state") in {"failed", "budget-blocked", "interrupted", "stopped"}, "invalid prior training attempt")
-        prior_attempts = [{**attempt, "prior_run_id": prior["run_id"]} for attempt in prior.get("attempts", [])]
+        prior_attempts = [{**attempt, "prior_run_id": attempt.get("prior_run_id", prior["run_id"])}
+                          for attempt in prior.get("attempts", [])]
         prior_charge = float(prior.get("gpu_seconds_charged", 0))
         require(prior_charge < config["resources"]["gpu_seconds"], "prior attempt exhausted GPU budget")
     split = freeze_split(recipes, config)
@@ -351,8 +352,11 @@ def container_command(run: Path, frozen: dict[str, Any], segment: str) -> list[s
     config = frozen["recipe"]
     overlay = Path(frozen["dependency_overlay_root"])
     require(overlay.is_dir() and not overlay.is_symlink(), "verified GPU dependency overlay missing")
-    return [
-        "docker", "run", "--rm", "--name", container_name(frozen, segment), "--gpus", "all", "--network", "none", "--read-only",
+    command = ["docker", "run", "--rm", "--name", container_name(frozen, segment)]
+    if segment != "validate":
+        command.extend(("--gpus", "all"))
+    command.extend([
+        "--network", "none", "--read-only",
         "--user", f"{frozen['container_user']['uid']}:{frozen['container_user']['gid']}", "--entrypoint", "python",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,noexec,nosuid,size=2g",
         "-v", f"{frozen['repository_root']}:/repo:ro",
@@ -365,7 +369,32 @@ def container_command(run: Path, frozen: dict[str, Any], segment: str) -> list[s
         "--recipe", "/repo/recipes/synthetic-bootstrap-v1.json",
         "--dataset", "/dataset", "--native", "/native", "--run", "/output",
         "--split", "/output/split.json",
-    ]
+    ])
+    return command
+
+
+def validate_before_gpu(run: Path, frozen: dict[str, Any]) -> dict[str, Any]:
+    marker = run / "validation.complete.json"
+    log_path = run / "validation.log"
+    if marker.exists():
+        result = read_json(marker)
+        require(result.get("run_id") == frozen["run_id"] and result.get("log_sha256") == sha256(log_path),
+                "invalid CPU validation marker")
+        return result
+    started = time.monotonic()
+    try:
+        with log_path.open("ab") as log:
+            result = subprocess.run(container_command(run, frozen, "validate"), stdout=log,
+                                    stderr=subprocess.STDOUT, timeout=300)
+    except subprocess.TimeoutExpired:
+        stop_container(frozen, "validate")
+        raise Invalid("CPU prelaunch validation timed out; container stopped (no GPU charged)") from None
+    require(result.returncode == 0, "CPU prelaunch validation failed; inspect validation.log (no GPU charged)")
+    completed = {"run_id": frozen["run_id"], "segment": "validate", "state": "passed",
+                 "elapsed_seconds": time.monotonic() - started, "finished_at": time.time(),
+                 "log_sha256": sha256(log_path)}
+    write_json(marker, completed)
+    return completed
 
 
 def directory_size(root: Path) -> int:
@@ -483,11 +512,20 @@ def run_worker(run: Path) -> None:
 
 def start(run: Path) -> dict[str, Any]:
     run = safe_directory(run)
-    verify_frozen(run)
+    frozen, _ = verify_frozen(run)
     state = read_json(run / "state.json")
     live = state.get("pid") and process_start(state["pid"]) == state.get("process_start")
     require(not live, "training worker already active")
     require(state.get("state") not in {"complete", "budget-blocked"}, f"training is {state.get('state')}")
+    try:
+        validation = validate_before_gpu(run, frozen)
+    except (Invalid, OSError, subprocess.SubprocessError) as error:
+        state.update(state="validation-failed", error=str(error), finished_at=time.time())
+        write_json(run / "state.json", state)
+        raise
+    state["cpu_validation"] = validation
+    state.pop("error", None)
+    write_json(run / "state.json", state)
     (run / "stop").unlink(missing_ok=True)
     log = (run / "supervisor.log").open("ab")
     process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "run", "--run-root", str(run)],

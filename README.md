@@ -189,7 +189,9 @@ pnpm run training -- stop
 ```
 
 Initialization rejects dirty code, stale corpus/model hashes, an unavailable
-pinned container, unsafe paths and insufficient free space. `start` returns after
-the bounded background supervisor is live. Checkpoints, curves, exports and raw
-logs remain under ignored `work/training/`; do not publish them without the
-separate artifact rights review required by this repository.
+pinned container, unsafe paths and insufficient free space. Before allocating a
+GPU, `start` runs the frozen container's CPU-only input/dependency/output validation;
+failure is retained without a GPU charge. It returns after the bounded background
+supervisor is live. Checkpoints, curves, exports and raw logs remain under ignored
+`work/training/`; do not publish them without the separate artifact rights review
+required by this repository.

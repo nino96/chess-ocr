@@ -50,10 +50,18 @@ resume, deterministic execution or the complete schedule's measured projection
 fails, stop before the run and report the specific blocker.
 
 The container runs as the invoking host UID/GID, writes only through `/output`,
-and resolves NumPy 2.2.4, Pillow 11.1.0, safetensors 0.5.3 and timm 1.0.15 from a
-hash-frozen ignored overlay built from the existing local wheelhouse. A repaired
-attempt imports every prior attempt and charge; a new run directory cannot reset
-the cumulative reservation.
+and resolves NumPy 2.2.4, Pillow 11.1.0, OpenCV headless 4.11.0.86,
+safetensors 0.5.3 and timm 1.0.15 from a hash-frozen ignored overlay built from
+the existing local wheelhouse. A repaired attempt imports every prior attempt and
+charge; a new run directory cannot reset the cumulative reservation.
+
+Before `start` can allocate a GPU, the exact frozen, network-disabled container now
+runs a CPU-only validation segment. It verifies dependency pins and output writes,
+independently compares classifier tensors and labels for both orientations, and
+checks representative positive/negative detector pages against the pinned YOLOX
+resize, BGR/padding tensor and correct 416-pixel letterbox target frame. Failure
+leaves a retained validation log and consumes no GPU time; timeout cleanup stops
+the named validation container before returning control.
 
 The schedule is complete only after 10,000 classifier and 9,000 detector updates
 plus all frozen development/calibration evaluations. Do not shorten it to call a
@@ -88,3 +96,14 @@ no data, model or schedule: it adds the exact local Pillow/NumPy wheels to a
 training-specific hash-frozen overlay, runs as the invoking UID/GID, uses `/output`
 instead of the system `/run`, and imports the first attempt's charge into the
 repaired frozen run. The failed run and log remain retained.
+
+Attempt 2 (`387645f0c500f8c61ef7a853a49e44cc6844f28eba1c557a9b7103140909440b`)
+also stopped before optimization after 3.578 charged GPU-seconds, bringing the
+cumulative charge to 9.274 seconds. The gate incorrectly compared absolute
+416-pixel letterboxed YOLOX targets with normalized coordinates in the original
+non-square page frame. The bounded diagnosis keeps the data, models, seed and
+schedule unchanged. It converts the independent normalized reference into the
+continuous YOLOX letterbox frame, adds non-square and resize-rounding regression
+tests, broadens parity coverage, and moves all input-contract checks ahead of GPU
+allocation. A third run is authorized only if that CPU container validation and
+the repository gates pass; it inherits both failed attempts and their full charge.

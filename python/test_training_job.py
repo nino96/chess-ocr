@@ -2,7 +2,9 @@ import copy
 import importlib.util
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 
 PATH = Path(__file__).with_name("training_job.py")
@@ -79,6 +81,51 @@ class TrainingJobTest(unittest.TestCase):
             self.assertIn(f"{root}:/output:rw", command)
             self.assertNotIn(f"{root}:/run:rw", command)
             self.assertEqual(command[command.index("--entrypoint") + 1], "python")
+            validation = training_job.container_command(root, frozen, "validate")
+            self.assertNotIn("--gpus", validation)
+            self.assertIn("validate", validation)
+
+    def test_failed_cpu_validation_never_requests_gpu_or_writes_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            overlay = root / "overlay"; overlay.mkdir()
+            frozen = {"run_id": "b" * 64, "repository_root": str(root), "dataset_root": str(root),
+                      "native_root": str(root), "dependency_overlay_root": str(overlay),
+                      "container_user": {"uid": 123, "gid": 456}, "recipe": self.config()}
+            with mock.patch.object(training_job.subprocess, "run", return_value=SimpleNamespace(returncode=1)) as execute:
+                with self.assertRaisesRegex(training_job.Invalid, "no GPU charged"):
+                    training_job.validate_before_gpu(root, frozen)
+            self.assertNotIn("--gpus", execute.call_args.args[0])
+            self.assertFalse((root / "validation.complete.json").exists())
+
+    def test_cpu_validation_timeout_stops_its_container(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            overlay = root / "overlay"; overlay.mkdir()
+            frozen = {"run_id": "c" * 64, "repository_root": str(root), "dataset_root": str(root),
+                      "native_root": str(root), "dependency_overlay_root": str(overlay),
+                      "container_user": {"uid": 123, "gid": 456}, "recipe": self.config()}
+            timeout = training_job.subprocess.TimeoutExpired(["docker", "run"], 300)
+            with mock.patch.object(training_job.subprocess, "run", side_effect=timeout), \
+                 mock.patch.object(training_job, "stop_container") as stop:
+                with self.assertRaisesRegex(training_job.Invalid, "container stopped"):
+                    training_job.validate_before_gpu(root, frozen)
+            stop.assert_called_once_with(frozen, "validate")
+
+    def test_validation_failure_blocks_supervisor_and_persists_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            training_job.write_json(root / "state.json", {"state": "ready", "pid": None})
+            frozen = {"run_id": "d" * 64}
+            failure = training_job.Invalid("CPU prelaunch validation failed")
+            with mock.patch.object(training_job, "verify_frozen", return_value=(frozen, self.config())), \
+                 mock.patch.object(training_job, "validate_before_gpu", side_effect=failure), \
+                 mock.patch.object(training_job.subprocess, "Popen") as supervisor:
+                with self.assertRaisesRegex(training_job.Invalid, "validation failed"):
+                    training_job.start(root)
+            supervisor.assert_not_called()
+            state = training_job.read_json(root / "state.json")
+            self.assertEqual(state["state"], "validation-failed")
 
 
 if __name__ == "__main__":

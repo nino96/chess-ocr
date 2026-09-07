@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import importlib.metadata
+import importlib.util
 import json
 import math
 import os
@@ -21,6 +23,7 @@ from typing import Any, Iterable
 import numpy as np
 import PIL
 from PIL import Image
+import cv2
 import safetensors.torch
 import torch
 from torch import nn
@@ -104,6 +107,8 @@ def load_inputs(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str
     require(config.get("schema") == "chess-ocr-training-recipe/1", "recipe schema")
     dependencies = config["environment"]["dependencies"]
     require(np.__version__ == dependencies["numpy"] and PIL.__version__ == dependencies["pillow"], "training NumPy/Pillow versions")
+    require(importlib.metadata.version("opencv-python-headless") == dependencies["opencv-python-headless"],
+            "training OpenCV version")
     require(config["dataset"]["label_order"] == LABELS, "label order")
     require(sha256(args.dataset / "frozen.json") == config["dataset"]["frozen_sha256"], "dataset frozen hash")
     require(sha256(args.dataset / "recipes.json") == config["dataset"]["recipes_sha256"], "dataset recipes hash")
@@ -193,10 +198,10 @@ class DetectorPages:
             image = source.convert("RGB")
         width, height = image.size
         scale = min(416 / width, 416 / height)
-        resized = image.resize((round(width * scale), round(height * scale)), Image.Resampling.BICUBIC)
+        rgb = np.asarray(image, dtype=np.uint8)
+        resized = cv2.resize(rgb, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_LINEAR).astype(np.float32)
         canvas = np.full((416, 416, 3), 114, dtype=np.float32)
-        rgb = np.asarray(resized, dtype=np.float32)
-        canvas[:rgb.shape[0], :rgb.shape[1]] = rgb[:, :, ::-1]
+        canvas[:resized.shape[0], :resized.shape[1]] = resized[:, :, ::-1]
         targets = torch.zeros((8, 5), dtype=torch.float32)
         boxes = []
         require(len(page.get("boards", [])) <= 8, "detector target count")
@@ -210,6 +215,22 @@ class DetectorPages:
         metadata = {"page": page_index, "scale": scale, "boxes": boxes, "negative": not boxes,
                     "effect": page["condition"]["degradation"]["variant"], "layout": page["layout"]}
         return torch.from_numpy(np.ascontiguousarray(canvas.transpose(2, 0, 1))), targets, metadata
+
+
+def letterbox_targets(normalized: list[list[float]], width: int, height: int,
+                      size: int = 416) -> torch.Tensor:
+    """Convert source-relative xywh targets to YOLOX's uncentered letterbox frame."""
+    require(width > 0 and height > 0 and size > 0, "detector target dimensions")
+    require(len(normalized) <= 8, "detector target count")
+    scale = min(size / width, size / height)
+    result = torch.zeros((8, 5), dtype=torch.float32)
+    for index, target in enumerate(normalized):
+        require(len(target) == 4 and all(math.isfinite(float(value)) for value in target),
+                "detector normalized target")
+        cx, cy, box_width, box_height = map(float, target)
+        result[index] = torch.tensor((0, cx * width * scale, cy * height * scale,
+                                      box_width * width * scale, box_height * height * scale))
+    return result
 
 
 class CyclingOrder:
@@ -786,11 +807,109 @@ def export_detector(model: nn.Module, run: Path, config: dict[str, Any], metrics
                "nms_iou": config["detector"]["nms_iou"], "metrics": metrics, "publication": "not-authorized"})
 
 
+def dataset_record(dataset: Path, page_index: int) -> dict[str, Any]:
+    batch_start = page_index // 64 * 64
+    return read_json(dataset / f"batch-{batch_start:06d}.json")[page_index - batch_start]
+
+
+def pinned_yolox_preproc(native: Path):
+    """Load the reviewed preprocessing file without YOLOX's optional COCO imports."""
+    path = native / "cache/native/yolox/yolox/data/data_augment.py"
+    require(path.is_file() and not path.is_symlink(), "pinned YOLOX preprocessing source")
+    spec = importlib.util.spec_from_file_location("_chess_ocr_yolox_data_augment", path)
+    require(spec is not None and spec.loader is not None, "load pinned YOLOX preprocessing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.preproc
+
+
+def validate_preprocessing(args: argparse.Namespace, config: dict[str, Any], recipes: list[dict[str, Any]],
+                           page_split: dict[int, str]) -> dict[str, Any]:
+    """Run input-contract checks that must pass without allocating a GPU."""
+    classifier_data = ClassifierBoards(args.dataset, recipes, page_split, "train")
+    detector_data = DetectorPages(args.dataset, recipes, page_split, "train")
+    import synthetic_training as reference
+
+    # Exercise both image-relative orientations. The same tile order is required
+    # regardless of which player's pieces appear at the bottom of the source.
+    classifier_indices = []
+    for orientation in ("white-bottom", "black-bottom"):
+        classifier_indices.append(next(index for index, (page_index, board_index) in enumerate(classifier_data.boards)
+                                       if recipes[page_index]["boards"][board_index]["orientation"] == orientation))
+    classifier_max_abs = 0.0
+    for index in classifier_indices:
+        page_index, board_index = classifier_data.boards[index]
+        record = dataset_record(args.dataset, page_index)
+        candidate_tiles, candidate_labels, _ = classifier_data.get(index)
+        expected = reference.load_board(args.dataset / "images" / f"page-{page_index:06d}.png", record, board_index)
+        expected_tensor = torch.from_numpy(np.frombuffer(expected["tensor"], dtype="<f4").reshape(expected["shape"]))
+        classifier_max_abs = max(classifier_max_abs, float((candidate_tiles - expected_tensor).abs().max()))
+        require(candidate_labels.tolist() == expected["labels"], "classifier label/order parity")
+    require(classifier_max_abs <= 1e-6, "classifier preprocessing parity")
+
+    # Select one page for every frozen source-size/kind combination, bounded to
+    # keep this an operator-friendly CPU gate.
+    detector_indices: list[int] = []
+    seen: set[tuple[int, int, str]] = set()
+    for positive in (True, False):
+        index = next(index for index, page_index in enumerate(detector_data.pages)
+                     if bool(recipes[page_index].get("boards")) is positive)
+        page = recipes[detector_data.pages[index]]
+        seen.add((int(page["width"]), int(page["height"]), str(page["kind"])))
+        detector_indices.append(index)
+    for index, page_index in enumerate(detector_data.pages):
+        page = recipes[page_index]
+        key = (int(page["width"]), int(page["height"]), str(page["kind"]))
+        if key not in seen:
+            seen.add(key)
+            detector_indices.append(index)
+        if len(detector_indices) >= 32:
+            break
+    detector_max_abs = 0.0
+    detector_image_max_abs = 0.0
+    yolox_preproc = pinned_yolox_preproc(args.native)
+    for index in detector_indices:
+        candidate_image, candidate_targets, metadata = detector_data.get(index)
+        page_index = metadata["page"]
+        record = dataset_record(args.dataset, page_index)
+        with Image.open(args.dataset / "images" / f"page-{page_index:06d}.png") as source:
+            source.load()
+            source_rgb = np.asarray(source.convert("RGB"), dtype=np.uint8)
+        official_image, official_scale = yolox_preproc(source_rgb, (416, 416), None, None)
+        expected_image = torch.from_numpy(np.ascontiguousarray(official_image * 255.0))
+        normalized = reference.detector_targets(record)
+        expected_targets = letterbox_targets(normalized, record["recipe"]["width"], record["recipe"]["height"])
+        detector_max_abs = max(detector_max_abs, float((candidate_targets - expected_targets).abs().max()))
+        detector_image_max_abs = max(detector_image_max_abs, float((candidate_image - expected_image).abs().max()))
+        require(len(metadata["boxes"]) == len(normalized), "detector target count parity")
+        require(abs(float(metadata["scale"]) - float(official_scale)) < 1e-12,
+                "detector image scale parity")
+        require(candidate_image.shape == (3, 416, 416) and torch.isfinite(candidate_image).all(),
+                "detector image preprocessing")
+        require(float(candidate_image.min()) >= 0 and float(candidate_image.max()) <= 255,
+                "detector image range")
+    require(detector_max_abs / 416 < 1e-6, "detector target preprocessing parity")
+    require(detector_image_max_abs <= 2e-5, "detector image preprocessing parity")
+    report = {"state": "passed", "finished_at": time.time(),
+              "numpy": np.__version__, "pillow": PIL.__version__,
+              "classifier_examples": len(classifier_indices),
+              "classifier_orientations": ["white-bottom", "black-bottom"],
+              "classifier_preprocessing_max_abs": classifier_max_abs,
+              "detector_examples": len(detector_indices),
+              "detector_source_size_kinds": [list(value) for value in sorted(seen)[:len(detector_indices)]],
+              "detector_target_max_abs": detector_max_abs,
+              "detector_image_max_abs": detector_image_max_abs}
+    write_json(args.run / "validation" / "report.json", report)
+    resource_guard(args.run, config, time.process_time())
+    return report
+
+
 def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[dict[str, Any]],
               page_split: dict[int, str], device: torch.device) -> None:
     report: dict[str, Any] = {"started_at": time.time(), "device": torch.cuda.get_device_name(0),
                               "capability": list(torch.cuda.get_device_capability(0)), "torch": torch.__version__,
                               "cuda": torch.version.cuda, "cudnn_enabled": torch.backends.cudnn.enabled}
+    preprocessing = validate_preprocessing(args, config, recipes, page_split)
     classifier_data = ClassifierBoards(args.dataset, recipes, page_split, "train")
     detector_data = DetectorPages(args.dataset, recipes, page_split, "train")
     from types import SimpleNamespace
@@ -800,27 +919,6 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
                                   device="cuda", enable_cudnn=False)
     parity = [run_mobilenet(native_args), run_yolox(native_args)]
     require(all(result["finite"] and result["max_abs_from_cpu_reference"] <= 1e-3 for result in parity), "native GPU parity")
-
-    # Reproduce the candidate loader independently for an actual board and target.
-    import synthetic_training as reference
-    page_index, board_index = classifier_data.boards[0]
-    page = recipes[page_index]
-    batch_start = page_index // 64 * 64
-    record = read_json(args.dataset / f"batch-{batch_start:06d}.json")[page_index - batch_start]
-    candidate_tiles, candidate_labels, _ = classifier_data.get(0)
-    expected = reference.load_board(args.dataset / "images" / f"page-{page_index:06d}.png", record, board_index)
-    expected_tensor = torch.from_numpy(np.frombuffer(expected["tensor"], dtype="<f4").reshape(expected["shape"]))
-    preprocessing_max_abs = float((candidate_tiles - expected_tensor).abs().max())
-    require(preprocessing_max_abs <= 1e-6 and candidate_labels.tolist() == expected["labels"], "classifier preprocessing/order parity")
-    detector_index = next(index for index, page_number in enumerate(detector_data.pages) if recipes[page_number].get("boards"))
-    _, candidate_targets, detector_meta = detector_data.get(detector_index)
-    detector_page = detector_meta["page"]
-    detector_batch = detector_page // 64 * 64
-    detector_record = read_json(args.dataset / f"batch-{detector_batch:06d}.json")[detector_page - detector_batch]
-    expected_targets = reference.detector_targets(detector_record)
-    for candidate, target in zip(candidate_targets[:len(expected_targets)], expected_targets):
-        require(max(abs(float(candidate[index + 1]) / 416 - target[index]) for index in range(4)) < 1e-6,
-                "detector target preprocessing parity")
 
     classifier = classifier_model(args.native, device)
     set_trainable_classifier(classifier, ["conv_head", "classifier"])
@@ -902,7 +1000,7 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
     replay_loss = F.cross_entropy(classifier(inputs), labels); replay_loss.backward(); optimizer.step()
     maximum = max(float((expected[key] - value).abs().max()) for key, value in classifier.state_dict().items())
     require(maximum == 0, f"stochastic recovery mismatch: {maximum}")
-    report.update(native_parity=parity, preprocessing_max_abs=preprocessing_max_abs,
+    report.update(native_parity=parity, preprocessing=preprocessing,
                   classifier_loss=float(c_loss.detach()), classifier_tiny_accuracy=tiny_accuracy,
                   classifier_tiny_loss_ratio=float(tiny_loss.detach()) / tiny_initial,
                   detector_loss=float(d_loss.detach()), detector_negative_loss=float(negative_loss.detach()),
@@ -916,7 +1014,7 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
-    value.add_argument("segment", choices=("preflight", "classifier", "detector"))
+    value.add_argument("segment", choices=("validate", "preflight", "classifier", "detector"))
     value.add_argument("--recipe", type=Path, required=True)
     value.add_argument("--dataset", type=Path, required=True)
     value.add_argument("--native", type=Path, required=True)
@@ -930,6 +1028,9 @@ def main() -> None:
     started_wall, started_cpu = time.monotonic(), time.process_time()
     try:
         config, recipes, page_split = load_inputs(args)
+        if args.segment == "validate":
+            validate_preprocessing(args, config, recipes, page_split)
+            return
         device = configure(config["seed"])
         if args.segment == "preflight":
             preflight(args, config, recipes, page_split, device)
