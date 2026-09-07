@@ -25,6 +25,7 @@ test("connected review saves drafts, recovers reloads, rejects conflicts, accept
       "-c",
       `
 import signal
+import time
 from python.test_dataset_pipeline import PipelineTests
 from python import dataset_server as server
 fixture = PipelineTests()
@@ -36,7 +37,17 @@ try:
     for name in ('first', 'second', 'third'):
         fixture.sample(name, group=name)
     server.initialize()
-    app = server.Server(('127.0.0.1', 0))
+    class Candidate:
+        public_identity = {'name': 'test-candidate', 'version': '1', 'qualification': 'synthetic-development-only'}
+        calls = 0
+        def recognize(self, _image):
+            time.sleep(.5)
+            self.calls += 1
+            return {'boards': [{'corners': [[10, 10], [150, 10], [150, 150], [10, 150]],
+                                'labels': list('K' + '.' * 63), 'orientation': 'unknown'}],
+                    'model': self.public_identity,
+                    'warning': f'Synthetic-only test proposal {self.calls}.'}
+    app = server.Server(('127.0.0.1', 0), Candidate())
     print(app.server_port, flush=True)
     try:
         app.serve_forever()
@@ -90,9 +101,51 @@ finally:
       .click();
     let editor = page.frameLocator("#editor");
     await editor.locator("#app").waitFor({ state: "visible" });
-    await editor
-      .getByRole("button", { name: "Add board", exact: true })
+    await page
+      .getByRole("button", { name: "Generate model proposal", exact: true })
       .click();
+    assert.equal(
+      await page.locator("#editor").evaluate((element) => element.inert),
+      true,
+    );
+    await editor
+      .getByText(/Synthetic-only test proposal 1.*human inspection/)
+      .waitFor();
+    assert.equal(
+      await page.locator("#editor").evaluate((element) => element.inert),
+      false,
+    );
+    assert.equal(
+      await editor.getByLabel("Square a8", { exact: true }).inputValue(),
+      "K",
+    );
+    assert.equal(
+      await editor
+        .getByLabel("I am a human reviewer", { exact: true })
+        .isChecked(),
+      false,
+    );
+    await editor.getByLabel("Square b8", { exact: true }).selectOption("Q");
+    await editor.getByLabel("I am a human reviewer", { exact: true }).check();
+    await editor.locator("#complete-page").check();
+    page.once("dialog", (dialog) => void dialog.accept());
+    await page
+      .getByRole("button", { name: "Generate model proposal", exact: true })
+      .click();
+    await editor
+      .getByText(/Synthetic-only test proposal 2.*human inspection/)
+      .waitFor();
+    assert.equal(
+      await editor.getByLabel("Square b8", { exact: true }).inputValue(),
+      ".",
+    );
+    assert.equal(
+      await editor
+        .getByLabel("I am a human reviewer", { exact: true })
+        .isChecked(),
+      false,
+    );
+    assert.equal(await editor.locator("#complete-page").isChecked(), false);
     await editor.getByLabel("Square a8", { exact: true }).selectOption("K");
     await editor
       .getByLabel("Reviewer identity", { exact: true })

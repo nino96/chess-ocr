@@ -147,6 +147,11 @@ page thumbnails, and accepts a page after one human pixel review; model or agent
 proposals cannot accept it. `ingest` records explicit local-use authorization and
 a conservative source/artwork group. Validation and hashed train/dev exports are
 implemented; no real collection or recognition qualification is claimed.
+An explicitly configured, hash-bound local trained candidate can populate an
+editable starting proposal without accepting it; see
+[local candidate testing](docs/local-candidate.md). The browser demo likewise
+keeps FENShot as its default and loads candidate ONNX files only after the user
+selects and verifies them locally.
 Use **Archives** to see dated archive sizes and permanently delete an old recovery
 copy after confirmation. Active data, inbox PDFs and cumulative usage are retained.
 Reviewed public-source provenance is tracked for

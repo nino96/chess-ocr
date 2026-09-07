@@ -18,6 +18,11 @@ type Queue = {
   pages: Page[];
   duplicates: { a: string; b: string; reason: string }[];
   status: Record<string, unknown>;
+  candidate: {
+    name: string;
+    version: string;
+    qualification: "synthetic-development-only";
+  } | null;
 };
 type Draft = {
   sample_id: string;
@@ -55,6 +60,7 @@ let editorToken = "";
 let submitting = false;
 let profile: { reviewer: string; human: boolean } | undefined;
 let selectedArchive: Archive | undefined;
+let currentImageSha = "";
 const note = (message: string) => {
   el("message").textContent = message;
 };
@@ -71,7 +77,11 @@ async function api(
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    path === "/api/ingest" ? 240_000 : 30_000,
+    path === "/api/ingest"
+      ? 240_000
+      : path === "/api/candidate"
+        ? 120_000
+        : 30_000,
   );
   try {
     const response = await fetch(path, {
@@ -112,7 +122,14 @@ function queueResponse(value: Record<string, unknown>): Queue {
     !Array.isArray(value.pages) ||
     !Array.isArray(value.sources) ||
     !Array.isArray(value.duplicates) ||
-    !object(value.status)
+    !object(value.status) ||
+    !(
+      value.candidate === null ||
+      (object(value.candidate) &&
+        typeof value.candidate.name === "string" &&
+        typeof value.candidate.version === "string" &&
+        value.candidate.qualification === "synthetic-development-only")
+    )
   )
     throw new Error("Invalid queue response");
   const id = (x: unknown) =>
@@ -228,6 +245,12 @@ async function refresh(): Promise<void> {
   const result = queueResponse(await api("/api/queue"));
   if (sequence !== refreshSequence) return;
   data = result;
+  const proposal = el<HTMLButtonElement>("candidate-proposal");
+  proposal.hidden = !data.candidate;
+  proposal.disabled = !data.candidate || !ready;
+  el("candidate-status").textContent = data.candidate
+    ? `${data.candidate.name} ${data.candidate.version} is available for synthetic-only proposals.`
+    : "No local candidate configured.";
   const selected = input("document").value;
   el("document").replaceChildren(
     new Option("All documents", ""),
@@ -347,6 +370,7 @@ async function openPage(page: Page): Promise<void> {
   draft = undefined;
   generation = persisted = 0;
   ready = false;
+  currentImageSha = "";
   editorSession++;
   el("queue").hidden = true;
   el("editor-section").hidden = false;
@@ -368,6 +392,7 @@ function closeEditor(): void {
   current = undefined;
   draft = undefined;
   ready = false;
+  currentImageSha = "";
   editorSession++;
   el("editor-section").hidden = true;
   el("queue").hidden = false;
@@ -402,12 +427,16 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
     message.type === "ready" &&
     Number.isInteger(message.draft_version) &&
     Number.isInteger(message.revision) &&
-    Number(message.revision) >= 0
+    Number(message.revision) >= 0 &&
+    typeof message.image_sha256 === "string" &&
+    /^[a-f0-9]{64}$/.test(message.image_sha256)
   ) {
     // The page may have been reviewed in another tab since the queue was read.
     current.revision = Number(message.revision);
     ready = true;
+    currentImageSha = message.image_sha256;
     draftVersion = Number(message.draft_version);
+    el<HTMLButtonElement>("candidate-proposal").disabled = !data?.candidate;
     saved(message.restored ? "Saved draft restored" : "Ready to review");
     if (profile)
       frame.contentWindow?.postMessage(
@@ -514,6 +543,61 @@ el("refresh").addEventListener("click", () => {
 });
 el("retry-save").addEventListener("click", () => {
   void run(flush);
+});
+el("candidate-proposal").addEventListener("click", () => {
+  void run(async () => {
+    if (!current || !ready || !currentImageSha || !data?.candidate)
+      throw new Error("Open a page and wait for the editor before proposing.");
+    frame.inert = true;
+    try {
+      const session = editorSession;
+      const startingGeneration = generation;
+      const startingRevision = current.revision;
+      const startingImageSha = currentImageSha;
+      const response = await api("/api/candidate", {
+        sample_id: current.id,
+        revision: startingRevision,
+        image_sha256: startingImageSha,
+      });
+      if (
+        session !== editorSession ||
+        generation !== startingGeneration ||
+        current?.revision !== startingRevision ||
+        currentImageSha !== startingImageSha
+      )
+        throw new Error(
+          "The draft or page changed while inference was running. The stale proposal was not applied; your edits are preserved.",
+        );
+      if (
+        response.schema !== "chess-ocr-dataset-candidate/1" ||
+        !Array.isArray(response.boards) ||
+        response.boards.length > 64 ||
+        !object(response.model) ||
+        response.model.qualification !== "synthetic-development-only" ||
+        typeof response.warning !== "string"
+      )
+        throw new Error("Invalid or stale candidate proposal response");
+      if (!response.boards.length) {
+        note(response.warning);
+        return;
+      }
+      frame.contentWindow?.postMessage(
+        {
+          type: "candidate-proposal",
+          session: editorToken,
+          boards: response.boards,
+          model: response.model,
+          warning: response.warning,
+        },
+        location.origin,
+      );
+      note(
+        "Candidate proposal generated locally. It is not accepted evidence; inspect and correct every board and square.",
+      );
+    } finally {
+      frame.inert = false;
+    }
+  });
 });
 el("review-next").addEventListener("click", () => {
   void run(async () => {

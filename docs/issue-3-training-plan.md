@@ -171,3 +171,9 @@ at score thresholds 0.001, 0.01, 0.1 and 0.3, maximum decoded box drift was
 therefore uses the existing reviewed YOLOX native/browser raw-output ceiling of
 0.001 while the classifier keeps 0.0001. This changes no model, data, checkpoint
 selection or metric and does not by itself establish browser WASM parity.
+
+The retained classifier and detector ONNX exports can now be loaded explicitly
+into both local review surfaces through a hash-bound ignored candidate manifest;
+the operator commands and limitations are in [local candidate testing](local-candidate.md).
+FENShot remains the browser default. Dataset proposals remain drafts, and neither
+UI treats synthetic-only confidence as calibration or qualification.

@@ -9,14 +9,20 @@ import {
   manualBoard,
 } from "./contract.ts";
 import { Editor } from "./editor.ts";
-import { createBrowserClient } from "./browser.ts";
+import {
+  createBrowserClient,
+  createCandidateBrowserClient,
+} from "./browser.ts";
+import { loadCandidateFiles, type CandidateConfig } from "./candidate.ts";
 import { decodeRaster } from "./image.ts";
 const el = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
 const canvas = el<HTMLCanvasElement>("source"),
   ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 const editor = new Editor();
-const client = createBrowserClient();
+let client = createBrowserClient();
+let candidate: CandidateConfig | null = null;
+let backend: "baseline" | "candidate" = "baseline";
 let bitmap: ImageBitmap | null = null,
   selection: Rect | null = null,
   generation = 0,
@@ -30,6 +36,11 @@ function controls(): void {
   el<HTMLButtonElement>("cancel").disabled = !busy;
   el<HTMLFieldSetElement>("bounds").disabled = !bitmap;
   el<HTMLButtonElement>("export").disabled = !editor.board;
+  el<HTMLButtonElement>("load-candidate").disabled =
+    busy ||
+    !el<HTMLInputElement>("candidate-manifest").files?.[0] ||
+    !el<HTMLInputElement>("candidate-classifier").files?.[0] ||
+    !el<HTMLInputElement>("candidate-detector").files?.[0];
 }
 function draw(): void {
   if (!bitmap) {
@@ -241,7 +252,9 @@ async function run(manual: boolean): Promise<void> {
   editor.begin(requestId);
   busy = true;
   controls();
-  status("Recognizing locally with WASM CPU… You can keep editing or cancel.");
+  status(
+    `Recognizing locally with ${backend === "candidate" ? "the synthetic candidate" : "FENShot"} on WASM CPU… You can keep editing or cancel.`,
+  );
   try {
     const result = await client.recognize(request, rgba);
     if (token !== generation) return;
@@ -269,6 +282,59 @@ async function run(manual: boolean): Promise<void> {
 }
 el("detect").addEventListener("click", () => void run(false));
 el("recognize").addEventListener("click", () => void run(true));
+for (const id of [
+  "candidate-manifest",
+  "candidate-classifier",
+  "candidate-detector",
+])
+  el(id).addEventListener("change", controls);
+el("load-candidate").addEventListener("click", () => {
+  void (async () => {
+    try {
+      const manifest = el<HTMLInputElement>("candidate-manifest").files?.[0];
+      const classifier = el<HTMLInputElement>("candidate-classifier")
+        .files?.[0];
+      const detector = el<HTMLInputElement>("candidate-detector").files?.[0];
+      if (!manifest || !classifier || !detector) return;
+      status("Verifying local candidate files…");
+      const loaded = await loadCandidateFiles(manifest, classifier, detector);
+      stop();
+      candidate = loaded;
+      backend = "candidate";
+      client = createCandidateBrowserClient(candidate);
+      const select = el<HTMLSelectElement>("backend");
+      select.options[1]!.disabled = false;
+      select.value = "candidate";
+      status(
+        `Loaded ${candidate.manifest.name} ${candidate.manifest.version}. It is synthetic-only and unqualified; every square will remain marked for review.`,
+      );
+    } catch (error) {
+      status(
+        error instanceof Error
+          ? error.message
+          : "Could not load the local candidate files.",
+      );
+    } finally {
+      controls();
+    }
+  })();
+});
+el("backend").addEventListener("change", () => {
+  const selected = el<HTMLSelectElement>("backend").value;
+  stop();
+  if (selected === "candidate" && candidate) {
+    backend = "candidate";
+    client = createCandidateBrowserClient(candidate);
+    status(
+      "Synthetic candidate selected. Its outputs are unqualified and require full review.",
+    );
+  } else {
+    backend = "baseline";
+    client = createBrowserClient();
+    el<HTMLSelectElement>("backend").value = "baseline";
+    status("FENShot baseline selected. Review every result.");
+  }
+});
 el("cancel").addEventListener("click", () => {
   stop();
   status("Recognition cancelled. Your edits are preserved.");
@@ -298,7 +364,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
     .then(async () => {
       await navigator.serviceWorker.ready;
       el("offline").textContent =
-        "Offline ready · all application and model assets cached · no uploads";
+        "Offline ready · baseline assets cached · candidate files stay local and are loaded per session · no uploads";
     })
     .catch(() => {
       el("offline").textContent =

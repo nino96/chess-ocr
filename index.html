@@ -27,6 +27,43 @@
         ><button id="recognize" disabled>Read selection</button
         ><button id="cancel" disabled>Cancel</button>
       </section>
+      <details class="candidate-loader">
+        <summary>Test a trained local candidate</summary>
+        <p>
+          Load the candidate manifest and its matching classifier and detector
+          ONNX files. Files are hash-checked and stay in this browser session.
+          This synthetic-only model is not qualified for real pages.
+        </p>
+        <div class="candidate-files">
+          <label
+            >Candidate manifest<input
+              id="candidate-manifest"
+              type="file"
+              accept="application/json,.json"
+          /></label>
+          <label
+            >Classifier ONNX<input
+              id="candidate-classifier"
+              type="file"
+              accept=".onnx,application/octet-stream"
+          /></label>
+          <label
+            >Detector ONNX<input
+              id="candidate-detector"
+              type="file"
+              accept=".onnx,application/octet-stream"
+          /></label>
+          <button id="load-candidate" disabled>
+            Verify and load candidate
+          </button>
+          <label
+            >Recognition backend<select id="backend">
+              <option value="baseline">FENShot baseline</option>
+              <option value="candidate" disabled>Trained candidate</option>
+            </select></label
+          >
+        </div>
+      </details>
       <p id="status" role="status" aria-live="polite">
         Choose an image to begin. FENShot is an unqualified baseline; review
         every result.
@@ -104,8 +141,8 @@
         </section>
       </div>
       <footer>
-        Offline WASM CPU · FENShot 0.1.4 · One candidate at a time. Confidence
-        is not calibrated. No chess-legality corrections.
+        Offline WASM CPU · FENShot 0.1.4 or an explicitly loaded local candidate
+        · Confidence is not calibrated. No chess-legality corrections.
       </footer>
     </main>
     <script type="module" src="/src/main.ts"></script>

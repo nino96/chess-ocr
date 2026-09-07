@@ -22,6 +22,7 @@
     "dataset": "node scripts/dataset.mjs",
     "synthetic": "node scripts/synthetic.mjs",
     "training": "node scripts/training.mjs",
+    "candidate": "node scripts/candidate.mjs",
     "test:dataset-review": "node --test tests/dataset-review.browser.mjs tests/dataset-app.browser.mjs"
   },
   "dependencies": {

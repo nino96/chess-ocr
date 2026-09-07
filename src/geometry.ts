@@ -56,24 +56,31 @@ export function decodeYolox(
   raw: Float32Array,
   size = 416,
   scoreThreshold = 0.3,
+  classes = 80,
+  nmsThreshold = 0.45,
+  maxResults = 100,
 ): Detection[] {
   if (
     size !== 416 ||
     !Number.isFinite(scoreThreshold) ||
     scoreThreshold < 0 ||
-    scoreThreshold > 1
+    scoreThreshold > 1 ||
+    !Number.isInteger(classes) ||
+    classes < 1 ||
+    classes > 100
   )
     throw new Error("Unsupported YOLOX recipe");
   const strides = [8, 16, 32],
     count = strides.reduce((n, s) => n + (size / s) ** 2, 0);
-  if (raw.length !== count * 85) throw new Error("Invalid YOLOX tensor");
+  const columns = 5 + classes;
+  if (raw.length !== count * columns) throw new Error("Invalid YOLOX tensor");
   const detections: Detection[] = [];
   let row = 0;
   for (const stride of strides)
     for (let y = 0; y < size / stride; y++)
       for (let x = 0; x < size / stride; x++, row++) {
-        const offset = row * 85;
-        for (let j = 0; j < 85; j++)
+        const offset = row * columns;
+        for (let j = 0; j < columns; j++)
           if (!Number.isFinite(raw[offset + j]!))
             throw new Error("Nonfinite YOLOX output");
         const objectness = raw[offset + 4]!;
@@ -81,7 +88,7 @@ export function decodeYolox(
           throw new Error("Invalid objectness");
         let classId = 0,
           prob = 0;
-        for (let c = 0; c < 80; c++) {
+        for (let c = 0; c < classes; c++) {
           const p = raw[offset + 5 + c]!;
           if (p < 0 || p > 1) throw new Error("Invalid class probability");
           if (p > prob) {
@@ -108,7 +115,7 @@ export function decodeYolox(
             classId,
           });
       }
-  return nms(detections);
+  return nms(detections, nmsThreshold, maxResults);
 }
 /** Bounded on-demand windows; no whole-book acquisition or hidden inference fan-out. */
 export function pageTiles(

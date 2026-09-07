@@ -523,6 +523,50 @@
               state.human = event.data.human === true;
               render();
             }
+            if (event.data?.type === "candidate-proposal") {
+              const proposed = event.data.boards;
+              const model = event.data.model;
+              if (
+                event.data.session !==
+                  new URLSearchParams(location.search).get("session") ||
+                !Array.isArray(proposed) ||
+                proposed.length < 1 ||
+                proposed.length > 64 ||
+                !proposed.every((board) =>
+                  validBoard(board, data.width, data.height),
+                ) ||
+                !model ||
+                model.qualification !== "synthetic-development-only" ||
+                !plainString(model.name, 120) ||
+                !plainString(model.version, 120) ||
+                !plainString(event.data.warning, 300)
+              )
+                return;
+              if (
+                (state.boards.length || state.kind !== "boards") &&
+                !window.confirm(
+                  "Replace this draft's board geometry and labels with the unqualified model proposal? Reviewer identity is preserved, but human-review declarations and review time are cleared.",
+                )
+              )
+                return;
+              state.boards = proposed.map((board) => ({
+                corners: board.corners.map((point) => point.slice()),
+                labels: board.labels.slice(),
+                orientation: "unknown",
+              }));
+              state.kind = "boards";
+              state.human = false;
+              state.complete = false;
+              activeSeconds = 0;
+              lastActive = Date.now();
+              lastInteraction = lastActive;
+              selected = 0;
+              placing = -1;
+              changed();
+              $("status").textContent =
+                event.data.warning +
+                " This proposal is only a starting point; human inspection is still required.";
+            }
           });
         }
         selected = state.boards.length ? 0 : -1;
@@ -543,6 +587,7 @@
           post("ready", {
             draft_version: data.draft_version,
             restored: Boolean(data.draft),
+            image_sha256: data.image_sha256,
           });
         });
         img.addEventListener("error", () => fail("image cannot be decoded."));

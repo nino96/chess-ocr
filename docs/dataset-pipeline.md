@@ -176,7 +176,9 @@ the existing start/stop, validation, candidate export, inbox ingestion (with its
 explicit local-use checkbox), and duplicate inspection/resolution actions. It
 does not upload PDFs: add new intended PDFs to `work/dataset/inbox/` through VS
 Code/the local workspace, then ingest that existing inbox. There are no automatic
-board or label proposals.
+board or label proposals. An optional, explicitly configured local candidate can
+create an editable proposal, but cannot accept a page or set either human
+declaration; see [local candidate testing](local-candidate.md).
 
 Use **Stop job** for the separate acquisition/export worker; `Ctrl+C` stops only
 the web app. The app and worker share one writer lock, so active rendering can
