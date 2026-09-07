@@ -175,7 +175,10 @@ corrections create a new revision requiring a human review. The dashboard provid
 the existing start/stop, validation, candidate export, inbox ingestion (with its
 explicit local-use checkbox), and duplicate inspection/resolution actions. It
 does not upload PDFs: add new intended PDFs to `work/dataset/inbox/` through VS
-Code/the local workspace, then ingest that existing inbox.
+Code/the local workspace, then ingest that existing inbox. An optional, explicitly
+configured local candidate can create an editable on-demand proposal, but cannot
+accept a page or set either human declaration; see
+[local candidate testing](local-candidate.md).
 
 ### Assisted proposals
 

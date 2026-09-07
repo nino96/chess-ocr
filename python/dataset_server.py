@@ -102,7 +102,7 @@ def save_draft(data):
     return {"version": version + 1, "state": "saved"}
 
 
-def queue():
+def queue(candidate=None):
     with p.connect() as db:
         sources = []
         for number, row in enumerate(db.execute("SELECT id,body FROM sources WHERE id NOT IN (SELECT source FROM exclusions) ORDER BY id"), 1):
@@ -126,7 +126,35 @@ def queue():
             AND a.source NOT IN (SELECT source FROM exclusions)
             AND b.source NOT IN (SELECT source FROM exclusions)""")]
     return {"schema": "chess-ocr-dataset-app/1", "sources": sources, "pages": pages,
-            "duplicates": duplicates, "status": p.status(), "proposal_status": proposals.status()}
+            "duplicates": duplicates, "status": p.status(),
+            "proposal_status": proposals.status(),
+            "candidate": candidate.public_identity if candidate else None}
+
+
+def candidate_proposal(data, candidate):
+    p.require(candidate is not None, "no local candidate was configured")
+    p.require(isinstance(data, dict) and set(data) == {"sample_id", "revision", "image_sha256"},
+              "invalid candidate request")
+    with p.connect() as db:
+        row = sample_row(db, data["sample_id"])
+    p.require(type(data["revision"]) is int and data["revision"] == row["revision"]
+              and data["image_sha256"] == row["sha"], "page changed; reload before proposing")
+    path = p.local_path(row["image"])
+    p.require(p.digest(path) == row["sha"], "corrupt page")
+    image = p.load_image(path).convert("RGB")
+    result = candidate.recognize(image)
+    with p.connect() as db:
+        current = sample_row(db, data["sample_id"])
+    p.require(current["revision"] == row["revision"] and current["sha"] == row["sha"],
+              "page changed while proposing; proposal discarded")
+    p.require(isinstance(result, dict) and set(result) == {"boards", "model", "warning"}
+              and isinstance(result["boards"], list) and len(result["boards"]) <= 64
+              and isinstance(result["warning"], str) and len(result["warning"]) <= 300
+              and result["model"] == candidate.public_identity, "invalid candidate result")
+    if result["boards"]:
+        p.annotation_validate({"kind": "boards", "complete_page": True,
+                               "boards": result["boards"]}, row["width"], row["height"])
+    return {"schema": "chess-ocr-dataset-candidate/1", **result}
 
 
 def review_html(sample_id):
@@ -147,8 +175,9 @@ class Server(HTTPServer):
     # A single handler bounds concurrent decoding/writes; socket timeouts bound slow clients.
     request_queue_size = 8
 
-    def __init__(self, address):
+    def __init__(self, address, candidate=None):
         self.session = secrets.token_urlsafe(32)
+        self.candidate = candidate
         super().__init__(address, Handler)
 
     def get_request(self):
@@ -203,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/app.js":
                 self.reply(200, SCRIPT.read_bytes(), "text/javascript; charset=utf-8")
             elif self.path == "/api/queue":
-                self.reply(200, queue())
+                self.reply(200, queue(self.server.candidate))
             elif self.path == "/api/archives":
                 self.reply(200, reset.list_archives())
             elif self.path == "/api/providers":
@@ -269,6 +298,8 @@ class Handler(BaseHTTPRequestHandler):
                     result["assistance_metrics"] = "unavailable"
                 # Keep the old revision's draft as a retry receipt. It is not restored
                 # over the accepted revision; its monotonic version prevents tab races.
+            elif self.path == "/api/candidate":
+                result = candidate_proposal(data, self.server.candidate)
             elif self.path == "/api/action":
                 p.require(set(data) == {"action"}, "invalid action")
                 action = data["action"]
@@ -325,10 +356,25 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--candidate-manifest", type=Path)
+    parser.add_argument("--candidate-classifier", type=Path)
+    parser.add_argument("--candidate-detector", type=Path)
+    parser.add_argument("--candidate-overlay-root", type=Path, default=Path("work/training-overlay"))
     args = parser.parse_args()
     p.require(1024 <= args.port <= 65535, "invalid port")
+    candidate_arguments = (args.candidate_manifest, args.candidate_classifier, args.candidate_detector)
+    p.require(all(candidate_arguments) or not any(candidate_arguments),
+              "candidate manifest, classifier and detector must be supplied together")
+    candidate = None
+    if all(candidate_arguments):
+        if __package__:
+            from .local_candidate import LocalCandidate
+        else:
+            from local_candidate import LocalCandidate
+        candidate = LocalCandidate(args.candidate_manifest, args.candidate_classifier,
+                                   args.candidate_detector, args.candidate_overlay_root, p.REPO)
     initialize()
-    server = Server(("127.0.0.1", args.port))
+    server = Server(("127.0.0.1", args.port), candidate)
     print(f"Dataset review: http://127.0.0.1:{server.server_port} (forward this port in VS Code)", flush=True)
     try:
         server.serve_forever()

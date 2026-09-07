@@ -149,6 +149,11 @@ page thumbnails, and accepts a page after one human pixel review; model or agent
 proposals cannot accept it. `ingest` records explicit local-use authorization and
 a conservative source/artwork group. Validation and hashed train/dev exports are
 implemented; no real collection or recognition qualification is claimed.
+An explicitly configured, hash-bound local trained candidate can populate an
+editable starting proposal without accepting it; see
+[local candidate testing](docs/local-candidate.md). The browser demo likewise
+keeps FENShot as its default and loads candidate ONNX files only after the user
+selects and verifies them locally.
 Use **Archives** to see dated archive sizes and permanently delete an old recovery
 copy after confirmation. Active data, inbox PDFs and cumulative usage are retained.
 Proposal jobs are explicit, TRAIN-only, resumable, and bounded:
@@ -177,3 +182,66 @@ The reviewed seed was lost; the owner waived recovery and authorized continuatio
 Rebuilt real labels are unverified proposals. See the synthetic status command and
 current fidelity evidence below the pipeline documentation; no dataset-readiness
 or recognition gain is claimed.
+
+## First native training bootstrap (issue #3)
+
+The [frozen training decision](docs/issue-3-training-plan.md) authorizes one
+synthetic-only MobileNetV3 classifier plus YOLOX-Nano detector schedule. It is
+diagnostic and may assist annotation; it is not real-page qualification and does
+not replace the shipped FENShot baseline.
+
+Create the issue #3 worktree from merged `origin/main`, commit reviewed training
+code, then initialize it with explicit read-only roots for the completed corpus
+and admitted native artifacts:
+
+```sh
+pnpm run training -- init \
+  --dataset-root /absolute/path/to/chess-ocr/work/dataset/synthetic \
+  --native-root /absolute/path/to/chess-ocr \
+  --overlay-root /absolute/path/to/ignored/training-overlay
+pnpm run training -- start
+pnpm run training -- status
+pnpm run training -- stop
+```
+
+Initialization rejects dirty code, stale corpus/model hashes, an unavailable
+pinned container, unsafe paths and insufficient free space. Before allocating a
+GPU, `start` runs the frozen container's CPU-only input/dependency/output validation;
+failure is retained without a GPU charge. It returns after the bounded background
+supervisor is live. Checkpoints, curves, exports and raw logs remain under ignored
+`work/training/`; do not publish them without the separate artifact rights review
+required by this repository.
+
+Commands without `--run-root` always address the default
+`work/training/synthetic-bootstrap-v1` directory; they do not discover the
+newest repaired attempt. If initialization uses a repaired directory such as
+`work/training/synthetic-bootstrap-v1-repair-3`, pass that same `--run-root` to
+every later `status`, `start`, and `stop` command.
+
+Status reports the current run and a budget summary by default. GPU budget is
+measured in GPU-seconds: one second while a scheduled training container owns
+the GPU. It includes preflight and optimization segments, and a retry consumes
+the same frozen reservation. The summary shows total capacity, consumed time,
+remaining time, and each segment's allocation. Add `--history` when the full
+attempt ledger is needed for audit or diagnosis.
+
+If a completed classifier checkpoint needs to be reused after an export-only
+failure, initialize a fresh detector-only run without `--prior-run`. This gives
+the new run its own frozen reservation while retaining the old run as evidence:
+
+```sh
+pnpm run training -- init --detector-only \
+  --classifier-checkpoint /absolute/path/to/repair-3/classifier/checkpoint-010000.pt \
+  --dataset-root /absolute/path/to/chess-ocr/work/dataset/synthetic \
+  --native-root /absolute/path/to/chess-ocr \
+  --overlay-root /absolute/path/to/ignored/training-overlay \
+  --run-root work/training/synthetic-bootstrap-v1-detector-1
+pnpm run training -- start --run-root work/training/synthetic-bootstrap-v1-detector-1
+```
+
+The controller verifies the checkpoint schema, completed schedule, selected-candidate
+evidence and hash, exports it with native-to-ONNX parity before detector optimization,
+marks the classifier complete without classifier GPU charges, and then runs the
+detector schedule. It reuses retained development evidence instead of repeating a
+full CPU evaluation. Choose the new reservation in the reviewed
+recipe before initialization; omitting `--prior-run` is what makes it fresh.

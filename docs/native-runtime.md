@@ -139,7 +139,7 @@ docker run --rm \
   -v "$PWD/work/native/wheelhouse:/wheelhouse:ro" -v "$PWD/work/native/gpu-overlay:/overlay" \
   nvcr.io/nvidia/vllm@sha256:95c498a475142c20c989c65e5d223348c09fed83ba17ddf44f117610c0bd3268 \
   python -m pip install --no-index --find-links /wheelhouse --target /overlay --no-deps \
-  timm==1.0.15 safetensors==0.5.3 loguru==0.7.3 opencv-python-headless==4.11.0.86 \
+  onnx==1.17.0 onnxruntime==1.20.1 timm==1.0.15 safetensors==0.5.3 loguru==0.7.3 opencv-python-headless==4.11.0.86 \
   thop==0.1.1.post2209072238 tabulate==0.9.0 pyyaml==6.0.3
 ```
 

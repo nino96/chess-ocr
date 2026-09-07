@@ -40,14 +40,12 @@ test("manual selection, actual WASM inference, edits and cancellation", async ({
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const external: string[] = [];
+  await page.goto("/");
+  const origin = new URL(page.url()).origin;
   page.on("request", (r) => {
-    if (
-      !r.url().startsWith("http://127.0.0.1:4173") &&
-      !r.url().startsWith("blob:")
-    )
+    if (!r.url().startsWith(origin) && !r.url().startsWith("blob:"))
       external.push(r.url());
   });
-  await page.goto("/");
   await expect(page.locator("#offline")).toContainText("Offline ready");
   await loadSynthetic(page);
   const first = page.locator("#board select").first();

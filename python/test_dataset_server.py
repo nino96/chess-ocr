@@ -137,6 +137,51 @@ class DatasetServerTests(unittest.TestCase):
         status, _, _ = self.post("/api/action", {"action": "validate"}, headers)
         self.assertEqual(status, 409)
 
+    def test_candidate_proposal_is_explicit_stale_safe_and_does_not_accept(self):
+        class Candidate:
+            public_identity = {"name": "test", "version": "1",
+                               "qualification": "synthetic-development-only"}
+
+            def recognize(self, image):
+                self.size = image.size
+                return {"boards": [{"corners": [[10, 10], [150, 10], [150, 150], [10, 150]],
+                                    "labels": list("K" + "." * 63), "orientation": "unknown"}],
+                        "model": self.public_identity, "warning": "Human review required."}
+
+        candidate = Candidate()
+        self.server.candidate = candidate
+        cookie = self.handshake()
+        status, _, body = self.request("GET", "/api/queue", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        queue = json.loads(body)
+        self.assertEqual(queue["candidate"], candidate.public_identity)
+        self.assertIn("proposal_status", queue)
+        request = {"sample_id": self.sample, "revision": 0,
+                   "image_sha256": p.digest(p.local_path("pages/test-1.png"))}
+        status, _, body = self.post("/api/candidate", request, self.write_headers(cookie))
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result["schema"], "chess-ocr-dataset-candidate/1")
+        self.assertEqual(result["boards"][0]["labels"][0], "K")
+        self.assertEqual(candidate.size, (160, 160))
+        with p.connect() as db:
+            self.assertEqual(db.execute("SELECT accepted FROM samples WHERE id=?", (self.sample,)).fetchone()[0], 0)
+        self.assertEqual(self.post("/api/candidate", {**request, "revision": 1},
+                                   self.write_headers(cookie))[0], 409)
+
+        sample = self.sample
+        class ChangingCandidate(Candidate):
+            def recognize(self, image):
+                result = super().recognize(image)
+                with p.connect() as db:
+                    db.execute("UPDATE samples SET revision=revision+1 WHERE id=?", (sample,))
+                return result
+
+        self.server.candidate = ChangingCandidate()
+        status, _, body = self.post("/api/candidate", request, self.write_headers(cookie))
+        self.assertEqual(status, 409)
+        self.assertIn("page changed while proposing", json.loads(body)["error"])
+
     def test_queue_exposes_only_cross_split_duplicate_candidates(self):
         same_split = self.make_second_sample("same", "train")
         cross_split = self.make_second_sample("cross", "dev")

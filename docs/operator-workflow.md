@@ -270,12 +270,13 @@ not export qualification or establish production preprocessing parity. Preserve
 its hashes for #3. Keep generated data and private/operational metadata outside Git;
 commit reviewed public provenance and reconstruction recipes.
 
-## 7. Approve and run model training — planned, not implemented
+## 7. Run the bounded bootstrap; later adaptation remains planned
 
-There is currently **no training command** in this repository's dataset CLI.
-Issue #3 owns the training/evaluation implementation and its separate GPU budget.
-You will not need to invent model hyperparameters or continuously supervise logs.
-Before requesting approval, the agent must prepare a reviewable experiment plan:
+Issue #3 now provides the separate `pnpm run training -- init/start/status/stop`
+command surface for its first frozen synthetic bootstrap. It does not run through
+the dataset CLI and does not imply that later real adaptation is ready. You will
+not need to invent model hyperparameters or continuously supervise logs. Before
+initializing any later experiment, the agent must prepare a reviewable plan that:
 
 1. Freeze the accepted data/splits, starting checkpoints, preprocessing, task
    heads, recipe, sampling, seed, complete schedule and checkpoint-selection rule.

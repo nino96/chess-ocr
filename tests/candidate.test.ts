@@ -1,0 +1,108 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { File as NodeFile } from "node:buffer";
+import {
+  candidateManifestSchema,
+  loadCandidateFiles,
+} from "../src/candidate.ts";
+
+const manifest = {
+  schema: "chess-ocr-candidate-bundle/1",
+  name: "test candidate",
+  version: "classifier-1-detector-1",
+  qualification: "synthetic-development-only",
+  classifier: {
+    sha256: "a".repeat(64),
+    bytes: 1024,
+    input: "tiles",
+    output: "logits",
+    labels: [
+      "empty",
+      "P",
+      "N",
+      "B",
+      "R",
+      "Q",
+      "K",
+      "p",
+      "n",
+      "b",
+      "r",
+      "q",
+      "k",
+    ],
+  },
+  detector: {
+    sha256: "b".repeat(64),
+    bytes: 1024,
+    input: "images",
+    output: "predictions",
+    scoreThreshold: 0.3,
+    nmsIou: 0.65,
+  },
+};
+
+test("candidate manifest fixes roles, label order, provenance state and bounds", () => {
+  assert.equal(
+    candidateManifestSchema.parse(manifest).classifier.labels[0],
+    "empty",
+  );
+  assert.throws(
+    () =>
+      candidateManifestSchema.parse({
+        ...manifest,
+        qualification: "production",
+      }),
+    /synthetic-development-only/,
+  );
+  assert.throws(
+    () =>
+      candidateManifestSchema.parse({
+        ...manifest,
+        classifier: {
+          ...manifest.classifier,
+          labels: [...manifest.classifier.labels].reverse(),
+        },
+      }),
+    /label order/,
+  );
+});
+
+test("candidate files must match their manifest hashes and byte lengths", async () => {
+  const classifier = Buffer.from("classifier fixture");
+  const detector = Buffer.from("detector fixture");
+  const value = {
+    ...manifest,
+    classifier: {
+      ...manifest.classifier,
+      bytes: classifier.length,
+      sha256: createHash("sha256").update(classifier).digest("hex"),
+    },
+    detector: {
+      ...manifest.detector,
+      bytes: detector.length,
+      sha256: createHash("sha256").update(detector).digest("hex"),
+    },
+  };
+  const manifestFile = () =>
+    new NodeFile([JSON.stringify(value)], "candidate.json") as unknown as File;
+  const classifierFile = (bytes: Buffer) =>
+    new NodeFile([bytes], "classifier.onnx") as unknown as File;
+  const detectorFile = () =>
+    new NodeFile([detector], "detector.onnx") as unknown as File;
+  const loaded = await loadCandidateFiles(
+    manifestFile(),
+    classifierFile(classifier),
+    detectorFile(),
+  );
+  assert.equal(loaded.classifier.byteLength, classifier.length);
+  await assert.rejects(
+    loadCandidateFiles(
+      manifestFile(),
+      classifierFile(Buffer.from("wrong bytes")),
+      detectorFile(),
+    ),
+    /Classifier file does not match/,
+  );
+});
