@@ -86,7 +86,7 @@ def configuration(path: Path = DEFAULT_RECIPE) -> dict[str, Any]:
     require(ratios.get("algorithm") == "connected-page-parent-effect-greedy-v1", "split algorithm")
     require(abs(sum(float(ratios.get(k, 0)) for k in SPLITS) - 1) < 1e-9, "split ratios")
     resources = value.get("resources", {})
-    require(resources.get("gpu_seconds") == 28800, "GPU ceiling")
+    require(0 < resources.get("gpu_seconds", 0) <= 24 * 60 * 60, "GPU ceiling")
     require(sum(resources.get(k, 0) for k in (
         "preflight_gpu_seconds", "classifier_gpu_seconds", "detector_gpu_seconds",
         "diagnosis_gpu_seconds")) == resources["gpu_seconds"], "GPU allocation")
@@ -98,6 +98,27 @@ def configuration(path: Path = DEFAULT_RECIPE) -> dict[str, Any]:
     require(sum(s["updates"] for s in value["detector"]["stages"]) == 9000, "detector schedule")
     require(0 < value["detector"].get("gradient_clip_norm", 0) <= 100, "detector gradient clip")
     return value
+
+
+def classifier_checkpoint_record(path: Path, config: dict[str, Any]) -> dict[str, Any]:
+    path = path.resolve()
+    require(path.is_file() and not path.is_symlink(), "classifier checkpoint is missing or unsafe")
+    progress_path = path.parent / "progress.json"
+    curves_path = path.parent / "curves.json"
+    progress = read_json(progress_path)
+    curves = read_json(curves_path)
+    scheduled = sum(stage["updates"] for stage in config["classifier"]["stages"])
+    require(progress.get("global_step") == scheduled, "classifier checkpoint source is incomplete")
+    require(isinstance(curves, list) and curves, "classifier checkpoint curves")
+    best = max(curves, key=lambda row: (row["development"]["exact_board_accuracy"],
+                                        row["development"]["occupied_macro_f1"],
+                                        -row["development"]["nll"]))
+    selected_step = int(best["global_step"])
+    require(path.name == f"checkpoint-{selected_step:06d}.pt", "checkpoint is not the selected classifier candidate")
+    return {"path": str(path), "sha256": sha256(path), "selected_global_step": selected_step,
+            "scheduled_updates": scheduled, "development": best["development"],
+            "progress_path": str(progress_path), "progress_sha256": sha256(progress_path),
+            "curves_path": str(curves_path), "curves_sha256": sha256(curves_path)}
 
 
 class UnionFind:
@@ -281,6 +302,8 @@ def directory_identity(root: Path) -> dict[str, str]:
 
 def initialize(args: argparse.Namespace) -> dict[str, Any]:
     config = configuration(args.recipe)
+    recipe_path = args.recipe.resolve()
+    require(recipe_path.is_relative_to(REPO), "training recipe must be inside the repository")
     run = safe_directory(args.run_root, create=True)
     require(not (run / "frozen.json").exists(), "training run already initialized")
     dataset = safe_directory(args.dataset_root)
@@ -291,9 +314,9 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
     classifier_checkpoint = None
     if args.detector_only:
         require(args.classifier_checkpoint is not None, "detector-only mode requires --classifier-checkpoint")
-        classifier_checkpoint = args.classifier_checkpoint.resolve()
-        require(classifier_checkpoint.is_file() and not classifier_checkpoint.is_symlink(),
-                "classifier checkpoint is missing or unsafe")
+        classifier_checkpoint = classifier_checkpoint_record(args.classifier_checkpoint, config)
+    else:
+        require(args.classifier_checkpoint is None, "--classifier-checkpoint requires --detector-only")
     prior_attempts = []
     prior_charge = 0.0
     if args.prior_run:
@@ -310,7 +333,8 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
     frozen = {
         "schema": "chess-ocr-training-frozen/1",
         "recipe": config,
-        "recipe_sha256": sha256(args.recipe),
+        "recipe_path": str(recipe_path.relative_to(REPO)),
+        "recipe_sha256": sha256(recipe_path),
         "dataset_root": str(dataset),
         "native_root": str(native),
         "repository_root": str(REPO),
@@ -322,8 +346,7 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
         "container_user": {"uid": os.getuid(), "gid": os.getgid()},
         "prior_gpu_seconds_charged": prior_charge,
         "mode": "detector-only" if args.detector_only else "full",
-        "classifier_checkpoint": ({"path": str(classifier_checkpoint), "sha256": sha256(classifier_checkpoint)}
-                                   if classifier_checkpoint else None),
+        "classifier_checkpoint": classifier_checkpoint,
         "split_sha256": identity(split),
         "created_at": time.time(),
     }
@@ -340,8 +363,9 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
 
 def verify_frozen(run: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     frozen = read_json(run / "frozen.json")
-    config = configuration(DEFAULT_RECIPE)
-    require(frozen.get("recipe") == config and frozen.get("recipe_sha256") == sha256(DEFAULT_RECIPE), "training recipe changed")
+    recipe_path = REPO / frozen.get("recipe_path", "recipes/synthetic-bootstrap-v1.json")
+    config = configuration(recipe_path)
+    require(frozen.get("recipe") == config and frozen.get("recipe_sha256") == sha256(recipe_path), "training recipe changed")
     require(frozen.get("code") == code_identity(), "training code changed")
     require(frozen.get("git") == git_identity(), "training commit changed")
     require(frozen.get("container_id") == docker_identity(config["environment"]["image"]), "training image changed")
@@ -349,9 +373,8 @@ def verify_frozen(run: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     require(frozen.get("container_user") == {"uid": os.getuid(), "gid": os.getgid()}, "container user changed")
     if frozen.get("mode") == "detector-only":
         checkpoint = frozen.get("classifier_checkpoint") or {}
-        path = Path(checkpoint.get("path", ""))
-        require(path.is_file() and not path.is_symlink() and sha256(path) == checkpoint.get("sha256"),
-                "classifier checkpoint changed or missing")
+        require(classifier_checkpoint_record(Path(checkpoint.get("path", "")), config) == checkpoint,
+                "classifier checkpoint evidence changed or missing")
     verify_dataset(Path(frozen["dataset_root"]), config, verify_images=True)
     verify_native(Path(frozen["native_root"]), config)
     split = read_json(run / "split.json")
@@ -381,7 +404,7 @@ def container_command(run: Path, frozen: dict[str, Any], segment: str) -> list[s
         "-v", f"{overlay}:/overlay:ro",
         "-e", "PYTHONPATH=/overlay:/native/cache/native/yolox:/repo/python",
         config["environment"]["image"], "/repo/python/training.py", segment,
-        "--recipe", "/repo/recipes/synthetic-bootstrap-v1.json",
+        "--recipe", f"/repo/{frozen.get('recipe_path', 'recipes/synthetic-bootstrap-v1.json')}",
         "--dataset", "/dataset", "--native", "/native", "--run", "/output",
         "--split", "/output/split.json",
     ])
@@ -439,13 +462,24 @@ def stop_container(frozen: dict[str, Any], segment: str) -> None:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
 
 
-def materialize_classifier_checkpoint(run: Path, frozen: dict[str, Any]) -> None:
+def materialize_classifier_checkpoint(run: Path, frozen: dict[str, Any], state: dict[str, Any]) -> None:
     if frozen.get("mode") != "detector-only":
         return
     marker = run / "classifier.complete.json"
     if marker.exists():
-        require(read_json(marker).get("run_id") == frozen["run_id"], "invalid classifier export marker")
+        marker_value = read_json(marker)
+        log_path = run / "classifier-export.log"
+        model_path = run / "classifier" / "selected.onnx"
+        manifest_path = model_path.with_suffix(".manifest.json")
+        manifest = read_json(manifest_path)
+        require(marker_value.get("run_id") == frozen["run_id"] and
+                marker_value.get("segment") == "classifier-export" and
+                marker_value.get("log_sha256") == sha256(log_path) and
+                manifest.get("sha256") == sha256(model_path), "invalid classifier export marker")
         return
+    state.update(stage="classifier-export", operation={"name": "classifier-export", "started_at": time.time(),
+                                                        "resource": "CPU"})
+    write_json(run / "state.json", state)
     log_path = run / "classifier-export.log"
     try:
         with log_path.open("ab") as log:
@@ -457,6 +491,8 @@ def materialize_classifier_checkpoint(run: Path, frozen: dict[str, Any]) -> None
     require(result.returncode == 0, "classifier checkpoint export failed; inspect its retained log")
     write_json(marker, {"run_id": frozen["run_id"], "segment": "classifier-export",
                         "finished_at": time.time(), "log_sha256": sha256(log_path)})
+    state.pop("operation", None)
+    write_json(run / "state.json", state)
 
 
 def run_worker(run: Path) -> None:
@@ -473,7 +509,7 @@ def run_worker(run: Path) -> None:
         state.update(state="running", pid=os.getpid(), process_start=process_start(os.getpid()))
         write_json(run / "state.json", state)
         try:
-            materialize_classifier_checkpoint(run, frozen)
+            materialize_classifier_checkpoint(run, frozen, state)
             for segment, _ in segments:
                 marker = run / f"{segment}.complete.json"
                 if marker.exists():
@@ -483,6 +519,7 @@ def run_worker(run: Path) -> None:
                     state.update(state="stopped", stage=segment)
                     break
                 state["stage"] = segment
+                state["operation"] = {"name": segment, "started_at": time.time(), "resource": "GPU"}
                 ceiling = remaining_seconds(state, segment, resources)
                 require(ceiling > 0, f"{segment} and/or total GPU reservation exhausted")
                 require(directory_size(run) <= resources["storage_bytes"], "training output storage ceiling exceeded")
@@ -543,6 +580,7 @@ def run_worker(run: Path) -> None:
                 require(returncode == 0, f"{segment} failed; inspect its retained log")
                 write_json(marker, {"run_id": frozen["run_id"], "segment": segment,
                                     "finished_at": time.time(), "log_sha256": sha256(run / f"{segment}.log")})
+                state.pop("operation", None)
             else:
                 state.update(state="complete", stage="complete")
         except Exception as error:
@@ -602,18 +640,27 @@ def status(run: Path) -> dict[str, Any]:
     attempts = state.get("attempts", [])
     consumed_by_segment = {segment: sum(float(attempt.get("elapsed_seconds", 0)) for attempt in attempts
                                         if attempt.get("segment") == segment)
-                           for segment in ("preflight", "classifier", "detector")}
+                           for segment in ("preflight", "classifier", "detector", "diagnosis")}
     capacity = float(resources.get("gpu_seconds", 0))
+    active_gpu_seconds = 0.0
+    operation = state.get("operation") or {}
+    if live and operation.get("resource") == "GPU" and operation.get("started_at"):
+        active_gpu_seconds = max(0.0, time.time() - float(operation["started_at"]))
+    charged = float(state.get("gpu_seconds_charged", 0))
     reported = {key: value for key, value in state.items() if key != "attempts"}
     reported.update({"process_live": live,
                      "current_attempt": attempts[-1] if attempts else None,
                      "budget": {"unit": "GPU-seconds (one second of allocated active GPU-container wall time)",
                                 "capacity_seconds": capacity,
-                                "consumed_seconds": float(state.get("gpu_seconds_charged", 0)),
-                                "remaining_seconds": max(0.0, capacity - float(state.get("gpu_seconds_charged", 0))),
+                                "charged_seconds": charged,
+                                "active_unfinalized_seconds": active_gpu_seconds,
+                                "consumed_seconds": charged + active_gpu_seconds,
+                                "remaining_seconds": max(0.0, capacity - charged - active_gpu_seconds),
                                 "by_segment": {segment: {"capacity_seconds": float(resources.get(f"{segment}_gpu_seconds", 0)),
-                                                           "consumed_seconds": consumed_by_segment[segment],
-                                                           "remaining_seconds": max(0.0, float(resources.get(f"{segment}_gpu_seconds", 0)) - consumed_by_segment[segment])}
+                                                           "consumed_seconds": consumed_by_segment[segment] +
+                                                           (active_gpu_seconds if operation.get("name") == segment else 0),
+                                                           "remaining_seconds": max(0.0, float(resources.get(f"{segment}_gpu_seconds", 0)) - consumed_by_segment[segment] -
+                                                                                    (active_gpu_seconds if operation.get("name") == segment else 0))}
                                                 for segment in consumed_by_segment}}})
     if state.get("state") == "running" and not live:
         reported["state"] = "interrupted"

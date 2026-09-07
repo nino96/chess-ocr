@@ -108,8 +108,13 @@ def load_inputs(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str
     dependencies = config["environment"]["dependencies"]
     require(np.__version__ == dependencies["numpy"] and PIL.__version__ == dependencies["pillow"], "training NumPy/Pillow versions")
     require(importlib.metadata.version("onnx") == dependencies["onnx"], "training ONNX version")
+    require(importlib.metadata.version("onnxruntime") == dependencies["onnxruntime"],
+            "training ONNX Runtime version")
     require(importlib.metadata.version("opencv-python-headless") == dependencies["opencv-python-headless"],
             "training OpenCV version")
+    require(importlib.metadata.version("safetensors") == dependencies["safetensors"],
+            "training safetensors version")
+    require(importlib.metadata.version("timm") == dependencies["timm"], "training timm version")
     require(config["dataset"]["label_order"] == LABELS, "label order")
     require(sha256(args.dataset / "frozen.json") == config["dataset"]["frozen_sha256"], "dataset frozen hash")
     require(sha256(args.dataset / "recipes.json") == config["dataset"]["recipes_sha256"], "dataset recipes hash")
@@ -363,7 +368,9 @@ def evaluate_classifier(model: nn.Module, dataset: ClassifierBoards, device: tor
     confident_wrong = 0
     confidences = []
     correctness = []
-    orientation = {name: {"boards": 0, "exact_boards": 0, "squares": 0, "correct_squares": 0}
+    orientation = {name: {"boards": 0, "exact_boards": 0, "squares": 0, "correct_squares": 0,
+                          "nll_sum": 0.0, "confidence_sum": 0.0, "confident_wrong_squares_at_0_99": 0,
+                          "_confidences": [], "_correctness": []}
                    for name in ("white-bottom", "black-bottom")}
     for start in range(0, len(dataset), 8):
         indices = list(range(start, min(len(dataset), start + 8)))
@@ -384,6 +391,16 @@ def evaluate_classifier(model: nn.Module, dataset: ClassifierBoards, device: tor
             orientation[name]["exact_boards"] += int(board_correct[offset].all())
             orientation[name]["squares"] += 64
             orientation[name]["correct_squares"] += int(board_correct[offset].sum())
+            square_slice = slice(offset * 64, (offset + 1) * 64)
+            board_logits, board_labels = logits[square_slice], labels[square_slice]
+            board_confidence = confidence[square_slice]
+            board_predictions = predictions[square_slice]
+            orientation[name]["nll_sum"] += F.cross_entropy(board_logits, board_labels, reduction="sum").item()
+            orientation[name]["confidence_sum"] += float(board_confidence.sum())
+            orientation[name]["confident_wrong_squares_at_0_99"] += int(
+                ((board_predictions != board_labels) & (board_confidence >= 0.99)).sum())
+            orientation[name]["_confidences"].extend(board_confidence.cpu().tolist())
+            orientation[name]["_correctness"].extend((board_predictions == board_labels).cpu().tolist())
         confident_wrong += int(((predictions != labels) & (confidence >= 0.99)).sum())
         confidences.extend(confidence.cpu().tolist())
         correctness.extend((predictions == labels).cpu().tolist())
@@ -406,16 +423,28 @@ def evaluate_classifier(model: nn.Module, dataset: ClassifierBoards, device: tor
         accepted = [index for index, confidence in enumerate(confidences) if confidence >= threshold]
         coverage[str(threshold)] = {"coverage": len(accepted) / total,
                                     "wrong": sum(not correctness[index] for index in accepted)}
+    orientation_report = {}
+    for name, values in orientation.items():
+        orientation_coverage = {}
+        for threshold in (0.5, 0.7, 0.9, 0.95, 0.99):
+            accepted = [index for index, value in enumerate(values["_confidences"]) if value >= threshold]
+            orientation_coverage[str(threshold)] = {
+                "coverage": len(accepted) / values["squares"],
+                "wrong": sum(not values["_correctness"][index] for index in accepted)}
+        orientation_report[name] = {key: value for key, value in values.items()
+                                    if not key.startswith("_") and key not in {"nll_sum", "confidence_sum"}}
+        orientation_report[name].update({"exact_board_accuracy": values["exact_boards"] / values["boards"],
+                                         "square_accuracy": values["correct_squares"] / values["squares"],
+                                         "nll": values["nll_sum"] / values["squares"],
+                                         "mean_confidence": values["confidence_sum"] / values["squares"],
+                                         "confidence_coverage": orientation_coverage})
     return {"boards": len(dataset), "squares": total, "exact_boards": exact,
             "exact_board_accuracy": exact / len(dataset), "square_accuracy": int(confusion.diag().sum()) / total,
             "occupied_macro_f1": sum(occupied_f1) / len(occupied_f1), "nll": total_loss / total,
             "confident_wrong_squares_at_0_99": confident_wrong, "mean_confidence": sum(confidences) / len(confidences),
             "empty_occupied_errors": empty_errors, "color_errors": color_errors,
             "piece_class_errors": piece_class_errors, "confidence_coverage": coverage,
-            "orientation": {name: {**values,
-                "exact_board_accuracy": values["exact_boards"] / values["boards"],
-                "square_accuracy": values["correct_squares"] / values["squares"]}
-                for name, values in orientation.items()}, "confusion": confusion.tolist()}
+            "orientation": orientation_report, "confusion": confusion.tolist()}
 
 
 @torch.inference_mode()
@@ -461,6 +490,33 @@ def set_trainable_classifier(model: nn.Module, names: list[str]) -> list[dict[st
     return groups
 
 
+def classifier_optimizer(model: nn.Module, stage: dict[str, Any]) -> torch.optim.AdamW:
+    parameter_groups = []
+    for group in set_trainable_classifier(model, stage["trainable"]):
+        base = (stage.get("backbone_learning_rate", stage.get("learning_rate"))
+                if group["role"] == "backbone" else stage.get("head_learning_rate", stage.get("learning_rate")))
+        parameter_groups.append({"params": group["params"], "base_lr": base, "lr": base})
+    return torch.optim.AdamW(parameter_groups, weight_decay=stage["weight_decay"])
+
+
+def add_count(counts: dict[str, int], key: Any, amount: int = 1) -> None:
+    name = str(key)
+    counts[name] = counts.get(name, 0) + amount
+
+
+def validate_checkpoint_state(saved: dict[str, Any], stages: list[dict[str, Any]], role: str) -> None:
+    require(saved.get("schema") == "chess-ocr-training-checkpoint/1", f"{role} checkpoint schema")
+    stage_index = saved.get("stage")
+    require(type(stage_index) is int and 0 <= stage_index < len(stages), f"{role} checkpoint stage")
+    stage_step = saved.get("stage_step")
+    require(type(stage_step) is int and 0 <= stage_step <= stages[stage_index]["updates"],
+            f"{role} checkpoint stage step")
+    expected_global = sum(stage["updates"] for stage in stages[:stage_index]) + stage_step
+    require(saved.get("global_step") == expected_global, f"{role} checkpoint global step")
+    require(all(key in saved for key in ("model", "optimizer", "sampler", "rng", "extra")),
+            f"{role} checkpoint state")
+
+
 def train_classifier(args: argparse.Namespace, config: dict[str, Any], recipes: list[dict[str, Any]],
                      page_split: dict[int, str], device: torch.device) -> None:
     directory = args.run / "classifier"
@@ -472,19 +528,18 @@ def train_classifier(args: argparse.Namespace, config: dict[str, Any], recipes: 
     resume = latest_checkpoint(directory)
     resume_state = torch.load(resume, map_location="cpu", weights_only=True) if resume else None
     if resume_state:
+        validate_checkpoint_state(resume_state, stages, "classifier")
         model.load_state_dict(resume_state["model"], strict=True)
         restore_rng(resume_state["rng"])
     global_step = int(resume_state["global_step"]) if resume_state else 0
     curves = read_json(directory / "curves.json") if (directory / "curves.json").exists() else []
+    interval_loss = 0.0
+    interval_updates = 0
+    exposure = {"classes": {}, "sets": {}, "effects": {}, "orientations": {}}
     for stage_index, stage in enumerate(stages):
         if resume_state and stage_index < resume_state["stage"]:
             continue
-        groups = set_trainable_classifier(model, stage["trainable"])
-        parameter_groups = []
-        for group in groups:
-            base = stage.get("backbone_learning_rate", stage.get("learning_rate")) if group["role"] == "backbone" else stage.get("head_learning_rate", stage.get("learning_rate"))
-            parameter_groups.append({"params": group["params"], "base_lr": base, "lr": base})
-        optimizer = torch.optim.AdamW(parameter_groups, weight_decay=stage["weight_decay"])
+        optimizer = classifier_optimizer(model, stage)
         stage_step = 0
         sampler_state = None
         if resume_state and stage_index == resume_state["stage"]:
@@ -496,7 +551,8 @@ def train_classifier(args: argparse.Namespace, config: dict[str, Any], recipes: 
         freeze_batch_norm(model)
         while stage_step < stage["updates"]:
             board_count = config["classifier"]["batch_size"] // 64
-            inputs, labels = batch_classifier(train, sampler.take(board_count), device)
+            indices = sampler.take(board_count)
+            inputs, labels = batch_classifier(train, indices, device)
             optimizer.zero_grad(set_to_none=True)
             logits = model(inputs)
             loss = F.cross_entropy(logits, labels)
@@ -506,12 +562,24 @@ def train_classifier(args: argparse.Namespace, config: dict[str, Any], recipes: 
             for group in optimizer.param_groups:
                 group["lr"] = cosine_lr(group["base_lr"], stage_step, stage["updates"], stage["warmup_updates"])
             optimizer.step()
+            interval_loss += float(loss.detach())
+            interval_updates += 1
+            for class_index, count in enumerate(torch.bincount(labels.detach().cpu(), minlength=13).tolist()):
+                add_count(exposure["classes"], LABELS[class_index], count)
+            for index in indices:
+                page_index, board_index = train.boards[index]
+                board = recipes[page_index]["boards"][board_index]
+                add_count(exposure["sets"], board["set"])
+                add_count(exposure["effects"], recipes[page_index]["condition"]["degradation"]["variant"])
+                add_count(exposure["orientations"], board["orientation"])
             stage_step += 1
             global_step += 1
             if global_step % config["classifier"]["checkpoint_interval_updates"] == 0 or stage_step == stage["updates"]:
                 metrics = evaluate_classifier(model, development, device)
                 curves.append({"global_step": global_step, "stage": stage["name"], "stage_step": stage_step,
-                               "training_loss": float(loss.detach()), "learning_rates": [g["lr"] for g in optimizer.param_groups],
+                               "training_loss": interval_loss / interval_updates,
+                               "interval_updates": interval_updates, "exposure": exposure,
+                               "learning_rates": [g["lr"] for g in optimizer.param_groups],
                                "development": metrics})
                 write_json(directory / "curves.json", curves)
                 checkpoint(directory / f"checkpoint-{global_step:06d}.pt", model, optimizer, sampler,
@@ -521,6 +589,9 @@ def train_classifier(args: argparse.Namespace, config: dict[str, Any], recipes: 
                            "scheduled_updates": 10000, "stage": stage["name"], "development": metrics})
                 if (args.run / "stop").exists():
                     raise Stopped("operator stop requested")
+                interval_loss = 0.0
+                interval_updates = 0
+                exposure = {"classes": {}, "sets": {}, "effects": {}, "orientations": {}}
             model.train()
             freeze_batch_norm(model)
         resume_state = None
@@ -561,14 +632,41 @@ def decode_detector(output: torch.Tensor, confidence: float, nms_iou: float) -> 
         chosen = []
         order = scores.argsort(descending=True)
         while len(order):
-            current = order[0]
+            current = int(order[0])
             chosen.append(current)
             if len(order) == 1:
                 break
             ious = box_iou(boxes[current:current + 1], boxes[order[1:]])[0]
             order = order[1:][ious <= nms_iou]
-        results.append(torch.cat((boxes[chosen], scores[chosen, None]), 1) if chosen else boxes.new_zeros((0, 5)))
+        if chosen:
+            chosen_indices = torch.tensor(chosen, device=boxes.device, dtype=torch.long)
+            results.append(torch.cat((boxes[chosen_indices], scores[chosen_indices, None]), 1))
+        else:
+            results.append(boxes.new_zeros((0, 5)))
     return results
+
+
+def score_ordered_matches(predicted: torch.Tensor, truth: torch.Tensor,
+                          iou_threshold: float) -> list[tuple[int, int, float]]:
+    """Greedily match scored detections to one unused eligible target each."""
+    require(predicted.ndim == 2 and predicted.shape[1] == 5, "detector predictions")
+    require(truth.ndim == 2 and truth.shape[1] == 4, "detector truth boxes")
+    require(0 <= iou_threshold <= 1, "detector IoU threshold")
+    if not len(predicted) or not len(truth):
+        return []
+    ious = box_iou(predicted[:, :4], truth)
+    order = torch.argsort(predicted[:, 4], descending=True, stable=True)
+    used: set[int] = set()
+    matches = []
+    for prediction_index in order.tolist():
+        eligible = [(float(iou), truth_index) for truth_index, iou in enumerate(ious[prediction_index])
+                    if truth_index not in used and float(iou) >= iou_threshold]
+        if not eligible:
+            continue
+        iou, truth_index = max(eligible, key=lambda item: (item[0], -item[1]))
+        used.add(truth_index)
+        matches.append((prediction_index, truth_index, iou))
+    return matches
 
 
 @torch.inference_mode()
@@ -579,43 +677,53 @@ def evaluate_detector(model: nn.Module, dataset: DetectorPages, device: torch.de
     total_targets = 0
     negative_pages = 0
     false_on_negative = 0
-    matched_ious = []
+    matched_iou_sum = 0.0
     normalized_box_errors = []
     strata: dict[str, dict[str, dict[str, float]]] = {key: {} for key in ("effect", "layout", "board_count", "size")}
-    def observe(kind: str, name: str, targets: int, matched: int, false_positives: int, iou_sum: float) -> None:
-        row = strata[kind].setdefault(name, {"targets": 0, "matched_at_iou_0_5": 0, "false_positives": 0, "iou_sum": 0.0})
+    def observe(kind: str, name: str, targets: int, matched: int, false_positives: int,
+                iou_sum: float, error_sum: float = 0.0, error_matches: int = 0) -> None:
+        row = strata[kind].setdefault(name, {"targets": 0, "matched_at_iou_0_5": 0,
+                                            "false_positives": 0, "iou_sum": 0.0,
+                                            "normalized_box_error_sum": 0.0,
+                                            "normalized_box_error_matches": 0})
         row["targets"] += targets; row["matched_at_iou_0_5"] += matched
         row["false_positives"] += false_positives; row["iou_sum"] += iou_sum
+        row["normalized_box_error_sum"] += error_sum
+        row["normalized_box_error_matches"] += error_matches
     for start in range(0, len(dataset), 16):
         indices = range(start, min(len(dataset), start + 16))
         inputs, _, metadata = batch_detector(dataset, indices, device)
         output = model(inputs)
         decoded = decode_detector(output, 0.01, nms_iou)
         for result, meta in zip(decoded, metadata):
-            truth = torch.tensor(meta["boxes"], device=device)
+            truth = torch.tensor(meta["boxes"], device=device, dtype=torch.float32).reshape(-1, 4)
             total_targets += len(truth)
             negative_pages += int(meta["negative"])
             false_on_negative += len(result) if meta["negative"] else 0
             predictions.append((result.detach().cpu(), truth.detach().cpu()))
-            matched = 0
-            iou_sum = 0.0
-            if len(result) and len(truth):
-                ious = box_iou(result[:, :4], truth)
-                best_prediction = ious.max(0).indices
-                best_ious = ious.max(0).values
-                matched = int((best_ious >= 0.5).sum())
-                iou_sum = float(best_ious.sum())
-                matched_ious.extend(best_ious.cpu().tolist())
-                normalized_box_errors.extend(((result[best_prediction, :4] - truth).abs().mean(1) / 416).cpu().tolist())
-                for target in truth:
-                    relative = float(torch.sqrt((target[2] - target[0]) * (target[3] - target[1])) / 416)
-                    size = "small" if relative < 0.4 else "medium" if relative < 0.7 else "large"
-                    target_iou = float(box_iou(result[:, :4], target[None])[..., 0].max())
-                    observe("size", size, 1, int(target_iou >= 0.5), 0, target_iou)
+            matches = score_ordered_matches(result, truth, 0.5)
+            matched = len(matches)
+            iou_sum = sum(iou for _, _, iou in matches)
+            matched_iou_sum += iou_sum
+            errors_by_truth = {}
+            for prediction_index, truth_index, _ in matches:
+                error = float((result[prediction_index, :4] - truth[truth_index]).abs().mean() / 416)
+                normalized_box_errors.append(error)
+                errors_by_truth[truth_index] = error
+            matched_by_truth = {truth_index: iou for _, truth_index, iou in matches}
+            for truth_index, target in enumerate(truth):
+                relative = float(torch.sqrt((target[2] - target[0]) * (target[3] - target[1])) / 416)
+                size = "small" if relative < 0.4 else "medium" if relative < 0.7 else "large"
+                observe("size", size, 1, int(truth_index in matched_by_truth), 0,
+                        matched_by_truth.get(truth_index, 0.0), errors_by_truth.get(truth_index, 0.0),
+                        int(truth_index in errors_by_truth))
             false_positives = max(0, len(result) - matched)
+            error_sum = sum(errors_by_truth.values())
             for kind in ("effect", "layout"):
-                observe(kind, str(meta[kind]), len(truth), matched, false_positives, iou_sum)
-            observe("board_count", str(len(truth)), len(truth), matched, false_positives, iou_sum)
+                observe(kind, str(meta[kind]), len(truth), matched, false_positives, iou_sum,
+                        error_sum, len(errors_by_truth))
+            observe("board_count", str(len(truth)), len(truth), matched, false_positives, iou_sum,
+                    error_sum, len(errors_by_truth))
     recalls = {}
     precisions = {}
     aps = []
@@ -624,18 +732,13 @@ def evaluate_detector(model: nn.Module, dataset: DetectorPages, device: torch.de
         positives = 0
         for predicted, truth in predictions:
             positives += len(truth)
-            used = set()
-            for row in predicted[predicted[:, 4].argsort(descending=True)]:
-                if not len(truth):
-                    scored.append((float(row[4]), 0))
-                    continue
-                ious = box_iou(row[None, :4], truth)[0]
-                best = int(ious.argmax())
-                good = float(ious[best]) >= threshold and best not in used
-                if good:
-                    used.add(best)
-                scored.append((float(row[4]), int(good)))
-        scored.sort(reverse=True)
+            matches = score_ordered_matches(predicted, truth, threshold)
+            true_predictions = {prediction_index for prediction_index, _, _ in matches}
+            order = torch.argsort(predicted[:, 4], descending=True, stable=True)
+            for prediction_index in order.tolist():
+                scored.append((float(predicted[prediction_index, 4]),
+                               int(prediction_index in true_predictions)))
+        scored.sort(key=lambda item: -item[0])
         tp = 0
         precision_curve, recall_curve = [], []
         for rank, (_, good) in enumerate(scored, 1):
@@ -650,13 +753,16 @@ def evaluate_detector(model: nn.Module, dataset: DetectorPages, device: torch.de
         precisions[str(threshold)] = precision_curve[-1] if precision_curve else 0
     normalized_strata = {kind: {name: {**row,
         "recall_at_iou_0_5": row["matched_at_iou_0_5"] / max(1, row["targets"]),
-        "mean_best_iou": row["iou_sum"] / max(1, row["targets"])} for name, row in values.items()}
+        "mean_iou_at_0_5_including_misses": row["iou_sum"] / max(1, row["targets"]),
+        "mean_normalized_box_error_on_matches": row["normalized_box_error_sum"] /
+        max(1, row["normalized_box_error_matches"])} for name, row in values.items()}
         for kind, values in strata.items()}
     return {"pages": len(dataset), "targets": total_targets, "negative_pages": negative_pages,
             "ap50_95": sum(aps) / len(aps), "recall": recalls, "precision": precisions,
             "false_detections_on_negative_pages_at_0_01": false_on_negative,
-            "mean_best_target_iou": sum(matched_ious) / max(1, len(matched_ious)),
+            "mean_iou_at_0_5_including_misses": matched_iou_sum / max(1, total_targets),
             "mean_normalized_box_error": sum(normalized_box_errors) / max(1, len(normalized_box_errors)),
+            "normalized_box_error_definition": "mean coordinate MAE / 416 on one-to-one IoU>=0.5 matches only",
             "strata": normalized_strata}
 
 
@@ -669,7 +775,7 @@ def calibrate_detector(model: nn.Module, dataset: DetectorPages, device: torch.d
         inputs, _, metadata = batch_detector(dataset, range(start, min(len(dataset), start + 16)), device)
         raw = model(inputs)
         for result, meta in zip(decode_detector(raw, 0.001, nms_iou), metadata):
-            pages.append((result.cpu(), torch.tensor(meta["boxes"])))
+            pages.append((result.cpu(), torch.tensor(meta["boxes"], dtype=torch.float32).reshape(-1, 4)))
     candidates = sorted({float(row[4]) for result, _ in pages for row in result}, reverse=True)
     candidates = candidates[::max(1, len(candidates) // 1000)] + [1.0]
     negative_pages = sum(not len(truth) for _, truth in pages)
@@ -681,8 +787,8 @@ def calibrate_detector(model: nn.Module, dataset: DetectorPages, device: torch.d
             result = result[result[:, 4] >= threshold]
             if not len(truth):
                 negative_false += len(result)
-            elif len(result):
-                matched += int((box_iou(result[:, :4], truth).max(0).values >= 0.5).sum())
+            else:
+                matched += len(score_ordered_matches(result, truth, 0.5))
         fp_rate = negative_false / max(1, negative_pages)
         recall = matched / max(1, total_targets)
         if fp_rate <= 0.05 and recall > selected["recall"]:
@@ -716,6 +822,12 @@ def set_trainable_detector(model: nn.Module, stage: str) -> list[nn.Parameter]:
     return [parameter for parameter in model.parameters() if parameter.requires_grad]
 
 
+def detector_optimizer(model: nn.Module, config: dict[str, Any], stage: dict[str, Any]) -> torch.optim.SGD:
+    parameters = set_trainable_detector(model, stage["name"])
+    return torch.optim.SGD(parameters, lr=stage["learning_rate"], momentum=config["detector"]["momentum"],
+                           nesterov=True, weight_decay=config["detector"]["weight_decay"])
+
+
 def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: list[dict[str, Any]],
                    page_split: dict[int, str], device: torch.device) -> None:
     directory = args.run / "detector"
@@ -728,17 +840,21 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
     resume_state = torch.load(resume, map_location="cpu", weights_only=True) if resume else None
     ema = EMA(model, config["detector"]["ema_decay"])
     if resume_state:
+        validate_checkpoint_state(resume_state, stages, "detector")
         model.load_state_dict(resume_state["model"], strict=True)
         ema.state = {key: value.to(device) for key, value in resume_state["extra"]["ema"].items()}
         restore_rng(resume_state["rng"])
     global_step = int(resume_state["global_step"]) if resume_state else 0
     curves = read_json(directory / "curves.json") if (directory / "curves.json").exists() else []
+    interval_loss = 0.0
+    interval_updates = 0
+    exposure = {"effects": {}, "layouts": {}, "board_counts": {}, "positive_pages": 0,
+                "negative_pages": 0}
     for stage_index, stage in enumerate(stages):
         if resume_state and stage_index < resume_state["stage"]:
             continue
-        parameters = set_trainable_detector(model, stage["name"])
-        optimizer = torch.optim.SGD(parameters, lr=stage["learning_rate"], momentum=config["detector"]["momentum"],
-                                    nesterov=True, weight_decay=config["detector"]["weight_decay"])
+        optimizer = detector_optimizer(model, config, stage)
+        parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
         stage_step = 0
         sampler_state = None
         if resume_state and stage_index == resume_state["stage"]:
@@ -749,7 +865,7 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
         model.train()
         freeze_batch_norm(model)
         while stage_step < stage["updates"]:
-            inputs, targets, _ = batch_detector(train, sampler.take(config["detector"]["batch_size"]), device)
+            inputs, targets, metadata = batch_detector(train, sampler.take(config["detector"]["batch_size"]), device)
             optimizer.zero_grad(set_to_none=True)
             losses = model(inputs, targets)
             loss = losses["total_loss"]
@@ -761,6 +877,14 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
             optimizer.param_groups[0]["lr"] = cosine_lr(stage["learning_rate"], stage_step, stage["updates"], stage["warmup_updates"])
             optimizer.step()
             ema.update(model)
+            interval_loss += float(loss.detach())
+            interval_updates += 1
+            for item in metadata:
+                add_count(exposure["effects"], item["effect"])
+                add_count(exposure["layouts"], item["layout"])
+                add_count(exposure["board_counts"], len(item["boxes"]))
+                key = "negative_pages" if item["negative"] else "positive_pages"
+                exposure[key] += 1
             stage_step += 1
             global_step += 1
             if global_step % config["detector"]["checkpoint_interval_updates"] == 0 or stage_step == stage["updates"]:
@@ -769,7 +893,9 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
                 metrics = evaluate_detector(model, development, device, config["detector"]["nms_iou"])
                 model.load_state_dict(live, strict=True)
                 curves.append({"global_step": global_step, "stage": stage["name"], "stage_step": stage_step,
-                               "training_loss": float(loss.detach()), "losses": {key: float(value.detach()) if torch.is_tensor(value) else float(value) for key, value in losses.items()},
+                               "training_loss": interval_loss / interval_updates,
+                               "interval_updates": interval_updates, "exposure": exposure,
+                               "losses": {key: float(value.detach()) if torch.is_tensor(value) else float(value) for key, value in losses.items()},
                                "learning_rate": optimizer.param_groups[0]["lr"], "development": metrics})
                 write_json(directory / "curves.json", curves)
                 checkpoint(directory / f"checkpoint-{global_step:06d}.pt", model, optimizer, sampler,
@@ -779,6 +905,10 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
                            "scheduled_updates": 9000, "stage": stage["name"], "development": metrics})
                 if (args.run / "stop").exists():
                     raise Stopped("operator stop requested")
+                interval_loss = 0.0
+                interval_updates = 0
+                exposure = {"effects": {}, "layouts": {}, "board_counts": {}, "positive_pages": 0,
+                            "negative_pages": 0}
             model.train()
             freeze_batch_norm(model)
         resume_state = None
@@ -798,13 +928,29 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
     resource_guard(args.run, config, time.process_time())
 
 
+def verify_onnx(path: Path, inputs: dict[str, np.ndarray], expected: np.ndarray) -> float:
+    import onnx
+    import onnxruntime as ort
+    onnx.checker.check_model(onnx.load(path))
+    session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    actual = session.run(None, inputs)[0]
+    require(actual.shape == expected.shape and np.isfinite(actual).all(), "ONNX output shape/finite parity")
+    maximum = float(np.max(np.abs(actual - expected)))
+    require(maximum <= 1e-4, f"ONNX output parity mismatch: {maximum}")
+    return maximum
+
+
 def export_classifier(model: nn.Module, run: Path, config: dict[str, Any], metrics: dict[str, Any]) -> None:
     model.eval().cpu()
     (run / "classifier").mkdir(parents=True, exist_ok=True)
     destination = run / "classifier" / "selected.onnx"
-    torch.onnx.export(model, torch.zeros((1, 3, 96, 96)), destination, input_names=["tiles"],
+    example = torch.linspace(-2.0, 2.0, steps=2 * 3 * 96 * 96).reshape(2, 3, 96, 96)
+    with torch.inference_mode():
+        expected = model(example).numpy()
+    torch.onnx.export(model, example, destination, input_names=["tiles"],
                       output_names=["logits"], dynamic_axes={"tiles": {0: "squares"}, "logits": {0: "squares"}},
                       opset_version=17, dynamo=False)
+    metrics = {**metrics, "onnx_native_max_abs": verify_onnx(destination, {"tiles": example.numpy()}, expected)}
     write_json(destination.with_suffix(".manifest.json"), {"schema": "chess-ocr-model/1", "role": "square-classifier",
                "sha256": sha256(destination), "labels": LABELS, "preprocessing": config["classifier"]["input"],
                "metrics": metrics, "publication": "not-authorized"})
@@ -818,27 +964,47 @@ def export_classifier_checkpoint(args: argparse.Namespace, config: dict[str, Any
             "classifier checkpoint is missing or unsafe")
     model = classifier_model(args.native, torch.device("cpu"))
     saved = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    stages = config["classifier"]["stages"]
+    scheduled = sum(stage["updates"] for stage in stages)
+    validate_checkpoint_state(saved, stages, "classifier")
     model.load_state_dict(saved["model"], strict=True)
-    development = evaluate_classifier(model, ClassifierBoards(args.dataset, recipes, page_split, "development"),
-                                      torch.device("cpu"))
-    calibration = calibrate_classifier(model, ClassifierBoards(args.dataset, recipes, page_split, "calibration"),
-                                       torch.device("cpu"))
-    selected_step = int(saved.get("global_step", 0))
+    record = read_json(args.run / "frozen.json")["classifier_checkpoint"]
+    require(record["sha256"] == sha256(checkpoint_path) and
+            record["scheduled_updates"] == scheduled and
+            record["selected_global_step"] == saved["global_step"],
+            "classifier checkpoint frozen identity")
+    development = record["development"]
+    calibration = {"state": "not-recomputed", "reason": "source run failed before persisting calibration"}
+    selected_step = int(record["selected_global_step"])
     export_classifier(model, args.run, config, {"development": development, "calibration": calibration,
-                                                "selected_global_step": selected_step,
-                                                "source_checkpoint_sha256": sha256(checkpoint_path)})
-    write_json(args.run / "classifier" / "progress.json", {"state": "complete", "global_step": selected_step,
+                                               "selected_global_step": selected_step,
+                                               "source_checkpoint_sha256": sha256(checkpoint_path)})
+    write_json(args.run / "classifier" / "progress.json", {"state": "complete", "global_step": scheduled,
                "scheduled_updates": 10000, "selected_global_step": selected_step,
                "development": development, "calibration": calibration,
                "source_checkpoint": str(checkpoint_path), "source_checkpoint_sha256": sha256(checkpoint_path)})
+    resource_guard(args.run, config, time.process_time())
 
 
 def export_detector(model: nn.Module, run: Path, config: dict[str, Any], metrics: dict[str, Any]) -> None:
     model.eval().cpu()
     model.head.decode_in_inference = False
     destination = run / "detector" / "selected.onnx"
-    torch.onnx.export(model, torch.zeros((1, 3, 416, 416)), destination, input_names=["images"],
+    raw = torch.linspace(0.0, 255.0, steps=3 * 416 * 416).reshape(1, 3, 416, 416)
+    class RawDetector(nn.Module):
+        def __init__(self, detector: nn.Module):
+            super().__init__()
+            self.detector = detector
+
+        def forward(self, images: torch.Tensor) -> torch.Tensor:
+            return self.detector(images / 255.0)
+
+    exported = RawDetector(model).eval()
+    with torch.inference_mode():
+        expected = exported(raw).numpy()
+    torch.onnx.export(exported, raw, destination, input_names=["images"],
                       output_names=["predictions"], opset_version=13, do_constant_folding=True, dynamo=False)
+    metrics = {**metrics, "onnx_native_max_abs": verify_onnx(destination, {"images": raw.numpy()}, expected)}
     write_json(destination.with_suffix(".manifest.json"), {"schema": "chess-ocr-model/1", "role": "inner-grid-detector",
                "sha256": sha256(destination), "labels": ["inner-grid"], "preprocessing": config["detector"]["input"],
                "nms_iou": config["detector"]["nms_iou"], "metrics": metrics, "publication": "not-authorized"})
@@ -932,10 +1098,9 @@ def validate_preprocessing(args: argparse.Namespace, config: dict[str, Any], rec
     # CPU-only smoke catches raw-pixel/normalization mistakes before GPU spend.
     smoke_indices = detector_indices[:min(4, len(detector_indices))]
     smoke_model = detector_model(args.native, torch.device("cpu"))
-    set_trainable_detector(smoke_model, "head")
+    smoke_stage = config["detector"]["stages"][0]
     smoke_inputs, smoke_targets, _ = batch_detector(detector_data, smoke_indices, torch.device("cpu"))
-    smoke_optimizer = torch.optim.SGD([parameter for parameter in smoke_model.parameters() if parameter.requires_grad],
-                                      lr=5e-3, momentum=.9)
+    smoke_optimizer = detector_optimizer(smoke_model, config, smoke_stage)
     smoke_losses = []
     for _ in range(3):
         smoke_optimizer.zero_grad(set_to_none=True)
@@ -981,10 +1146,10 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
     require(all(result["finite"] and result["max_abs_from_cpu_reference"] <= 1e-3 for result in parity), "native GPU parity")
 
     classifier = classifier_model(args.native, device)
-    set_trainable_classifier(classifier, ["conv_head", "classifier"])
+    classifier_stage = config["classifier"]["stages"][0]
     c_inputs, c_labels = batch_classifier(classifier_data, range(8), device)
     c_before = classifier.classifier.weight.detach().clone()
-    c_optimizer = torch.optim.AdamW([p for p in classifier.parameters() if p.requires_grad], lr=1e-3)
+    c_optimizer = classifier_optimizer(classifier, classifier_stage)
     c_optimizer.zero_grad(set_to_none=True)
     c_loss = F.cross_entropy(classifier(c_inputs), c_labels)
     c_loss.backward()
@@ -1002,13 +1167,13 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
     require(tiny_accuracy >= 0.98 and float(tiny_loss.detach()) <= tiny_initial * 0.2, "classifier tiny known-label fit")
 
     detector = detector_model(args.native, device)
-    set_trainable_detector(detector, "head")
+    detector_stage = config["detector"]["stages"][0]
     positive = [index for index, page_number in enumerate(detector_data.pages) if recipes[page_number].get("boards")][:2]
     negative = [index for index, page_number in enumerate(detector_data.pages) if not recipes[page_number].get("boards")][:2]
     require(len(positive) == 2 and len(negative) == 2, "detector positive/negative preflight coverage")
     d_inputs, d_targets, metadata = batch_detector(detector_data, positive + negative, device)
     require(any(meta["negative"] for meta in metadata) and any(not meta["negative"] for meta in metadata), "detector mixed preflight batch")
-    d_optimizer = torch.optim.SGD([p for p in detector.parameters() if p.requires_grad], lr=5e-3, momentum=.9)
+    d_optimizer = detector_optimizer(detector, config, detector_stage)
     d_optimizer.zero_grad(set_to_none=True)
     d_loss = detector(d_inputs, d_targets)["total_loss"]
     d_loss.backward()
@@ -1027,52 +1192,130 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
         d_optimizer.step()
     require(float(tiny_detector_loss.detach()) <= tiny_detector_initial * 0.8, "detector tiny-set fit")
 
-    # Warm once, then project the exact frozen update counts from planned batch sizes.
+    # Time every scheduled stage with its exact trainable set, optimizer and batch.
+    classifier_timings = []
     c_inputs, c_labels = batch_classifier(classifier_data, range(8, 16), device)
-    torch.cuda.synchronize(); started = time.monotonic()
-    c_optimizer.zero_grad(set_to_none=True); timed_c_loss = F.cross_entropy(classifier(c_inputs), c_labels)
-    timed_c_loss.backward(); c_optimizer.step(); torch.cuda.synchronize()
-    classifier_step_seconds = time.monotonic() - started
+    for stage in config["classifier"]["stages"]:
+        timed_optimizer = classifier_optimizer(classifier, stage)
+        for group in timed_optimizer.param_groups:
+            group["lr"] = cosine_lr(group["base_lr"], 0, stage["updates"], stage["warmup_updates"])
+        torch.cuda.synchronize(); started = time.monotonic()
+        timed_optimizer.zero_grad(set_to_none=True)
+        timed_c_loss = F.cross_entropy(classifier(c_inputs), c_labels)
+        timed_c_loss.backward(); timed_optimizer.step(); torch.cuda.synchronize()
+        classifier_timings.append({"stage": stage["name"], "updates": stage["updates"],
+                                   "step_seconds": time.monotonic() - started})
+    classifier_projection = sum(row["step_seconds"] * row["updates"] for row in classifier_timings) * 1.5
+
+    detector_timings = []
     detector_indices = CyclingOrder(len(detector_data), config["seed"] + 700).take(config["detector"]["batch_size"])
     d_inputs, d_targets, _ = batch_detector(detector_data, detector_indices, device)
-    torch.cuda.synchronize(); started = time.monotonic()
-    d_optimizer.zero_grad(set_to_none=True); timed_d_loss = detector(d_inputs, d_targets)["total_loss"]
-    timed_d_loss.backward()
-    torch.nn.utils.clip_grad_norm_([p for p in detector.parameters() if p.requires_grad], config["detector"]["gradient_clip_norm"])
-    d_optimizer.step(); torch.cuda.synchronize()
-    detector_step_seconds = time.monotonic() - started
-    classifier_projection = classifier_step_seconds * 10000 * 1.5
-    detector_projection = detector_step_seconds * 9000 * 1.5
+    for stage in config["detector"]["stages"]:
+        timed_optimizer = detector_optimizer(detector, config, stage)
+        timed_optimizer.param_groups[0]["lr"] = cosine_lr(
+            stage["learning_rate"], 0, stage["updates"], stage["warmup_updates"])
+        timed_parameters = [parameter for parameter in detector.parameters() if parameter.requires_grad]
+        torch.cuda.synchronize(); started = time.monotonic()
+        timed_optimizer.zero_grad(set_to_none=True)
+        timed_d_loss = detector(d_inputs, d_targets)["total_loss"]
+        timed_d_loss.backward()
+        torch.nn.utils.clip_grad_norm_(timed_parameters, config["detector"]["gradient_clip_norm"])
+        timed_optimizer.step(); torch.cuda.synchronize()
+        detector_timings.append({"stage": stage["name"], "updates": stage["updates"],
+                                 "step_seconds": time.monotonic() - started})
+    detector_projection = sum(row["step_seconds"] * row["updates"] for row in detector_timings) * 1.5
     require(classifier_projection <= config["resources"]["classifier_gpu_seconds"], "classifier schedule does not fit allocation")
     require(detector_projection <= config["resources"]["detector_gpu_seconds"], "detector schedule does not fit allocation")
-    # Actual stochastic-path recovery: the saved sampler/RNG/model/optimizer state
-    # must reproduce the next classifier update exactly on this GPU configuration.
+    # Actual stochastic-path recovery: saved sampler/RNG/model/optimizer state
+    # must reproduce the next update in every frozen stage on this GPU.
     recovery_dir = args.run / "preflight"
-    sampler = CyclingOrder(len(classifier_data), config["seed"] + 999)
-    optimizer = torch.optim.AdamW([p for p in classifier.parameters() if p.requires_grad], lr=1e-3)
-    checkpoint(recovery_dir / "recovery.pt", classifier, optimizer, sampler, 0, 0, 0)
-    indices = sampler.take(2)
-    inputs, labels = batch_classifier(classifier_data, indices, device)
-    optimizer.zero_grad(set_to_none=True)
-    loss = F.cross_entropy(classifier(inputs), labels); loss.backward(); optimizer.step()
-    expected = {key: value.detach().clone() for key, value in classifier.state_dict().items()}
-    saved = torch.load(recovery_dir / "recovery.pt", map_location="cpu", weights_only=True)
-    classifier.load_state_dict(saved["model"]); optimizer.load_state_dict(saved["optimizer"])
-    sampler = CyclingOrder(len(classifier_data), config["seed"] + 999, saved["sampler"]); restore_rng(saved["rng"])
-    require(indices == sampler.take(2), "sampler recovery mismatch")
-    inputs, labels = batch_classifier(classifier_data, indices, device)
-    optimizer.zero_grad(set_to_none=True)
-    replay_loss = F.cross_entropy(classifier(inputs), labels); replay_loss.backward(); optimizer.step()
-    maximum = max(float((expected[key] - value).abs().max()) for key, value in classifier.state_dict().items())
-    require(maximum == 0, f"stochastic recovery mismatch: {maximum}")
+    classifier_recovery = []
+    for stage_index, stage in enumerate(config["classifier"]["stages"]):
+        seed = config["seed"] + 999 + stage_index
+        sampler = CyclingOrder(len(classifier_data), seed)
+        optimizer = classifier_optimizer(classifier, stage)
+        path = recovery_dir / f"classifier-recovery-stage-{stage_index}.pt"
+        global_step = sum(item["updates"] for item in config["classifier"]["stages"][:stage_index])
+        checkpoint(path, classifier, optimizer, sampler, stage_index, 0, global_step)
+        indices = sampler.take(2)
+        inputs, labels = batch_classifier(classifier_data, indices, device)
+        optimizer.zero_grad(set_to_none=True)
+        loss = F.cross_entropy(classifier(inputs), labels); loss.backward()
+        for group in optimizer.param_groups:
+            group["lr"] = cosine_lr(group["base_lr"], 0, stage["updates"], stage["warmup_updates"])
+        optimizer.step()
+        expected = {key: value.detach().clone() for key, value in classifier.state_dict().items()}
+        saved = torch.load(path, map_location="cpu", weights_only=True)
+        validate_checkpoint_state(saved, config["classifier"]["stages"], "classifier")
+        classifier.load_state_dict(saved["model"]); optimizer.load_state_dict(saved["optimizer"])
+        sampler = CyclingOrder(len(classifier_data), seed, saved["sampler"]); restore_rng(saved["rng"])
+        require(indices == sampler.take(2), "classifier sampler recovery mismatch")
+        inputs, labels = batch_classifier(classifier_data, indices, device)
+        optimizer.zero_grad(set_to_none=True)
+        replay_loss = F.cross_entropy(classifier(inputs), labels); replay_loss.backward()
+        for group in optimizer.param_groups:
+            group["lr"] = cosine_lr(group["base_lr"], 0, stage["updates"], stage["warmup_updates"])
+        optimizer.step()
+        maximum = max(float((expected[key] - value).abs().max())
+                      for key, value in classifier.state_dict().items())
+        require(maximum == 0, f"classifier stage {stage_index} recovery mismatch: {maximum}")
+        classifier_recovery.append({"stage": stage["name"], "max_abs": maximum})
+
+    detector_recovery = []
+    for stage_index, stage in enumerate(config["detector"]["stages"]):
+        seed = config["seed"] + 1999 + stage_index
+        detector_sampler = CyclingOrder(len(detector_data), seed)
+        detector_optimizer_state = detector_optimizer(detector, config, stage)
+        detector_ema = EMA(detector, config["detector"]["ema_decay"])
+        path = recovery_dir / f"detector-recovery-stage-{stage_index}.pt"
+        global_step = sum(item["updates"] for item in config["detector"]["stages"][:stage_index])
+        checkpoint(path, detector, detector_optimizer_state, detector_sampler,
+                   stage_index, 0, global_step, {"ema": detector_ema.state})
+        recovery_indices = detector_sampler.take(config["detector"]["batch_size"])
+        inputs, targets, _ = batch_detector(detector_data, recovery_indices, device)
+        detector_optimizer_state.zero_grad(set_to_none=True)
+        recovery_loss = detector(inputs, targets)["total_loss"]
+        recovery_loss.backward()
+        recovery_parameters = [parameter for parameter in detector.parameters() if parameter.requires_grad]
+        torch.nn.utils.clip_grad_norm_(recovery_parameters, config["detector"]["gradient_clip_norm"])
+        detector_optimizer_state.param_groups[0]["lr"] = cosine_lr(
+            stage["learning_rate"], 0, stage["updates"], stage["warmup_updates"])
+        detector_optimizer_state.step(); detector_ema.update(detector)
+        expected_detector = {key: value.detach().clone() for key, value in detector.state_dict().items()}
+        expected_ema = {key: value.detach().clone() for key, value in detector_ema.state.items()}
+        saved = torch.load(path, map_location="cpu", weights_only=True)
+        validate_checkpoint_state(saved, config["detector"]["stages"], "detector")
+        detector.load_state_dict(saved["model"]); detector_optimizer_state.load_state_dict(saved["optimizer"])
+        detector_sampler = CyclingOrder(len(detector_data), seed, saved["sampler"]); restore_rng(saved["rng"])
+        detector_ema.state = {key: value.to(device) for key, value in saved["extra"]["ema"].items()}
+        require(recovery_indices == detector_sampler.take(config["detector"]["batch_size"]),
+                "detector sampler recovery mismatch")
+        inputs, targets, _ = batch_detector(detector_data, recovery_indices, device)
+        detector_optimizer_state.zero_grad(set_to_none=True)
+        replay_detector_loss = detector(inputs, targets)["total_loss"]
+        replay_detector_loss.backward()
+        recovery_parameters = [parameter for parameter in detector.parameters() if parameter.requires_grad]
+        torch.nn.utils.clip_grad_norm_(recovery_parameters, config["detector"]["gradient_clip_norm"])
+        detector_optimizer_state.param_groups[0]["lr"] = cosine_lr(
+            stage["learning_rate"], 0, stage["updates"], stage["warmup_updates"])
+        detector_optimizer_state.step(); detector_ema.update(detector)
+        detector_maximum = max(float((expected_detector[key] - value).abs().max())
+                               for key, value in detector.state_dict().items())
+        ema_maximum = max(float((expected_ema[key] - value).abs().max())
+                          for key, value in detector_ema.state.items())
+        require(detector_maximum == 0 and ema_maximum == 0,
+                f"detector stage {stage_index} recovery mismatch: {detector_maximum}/{ema_maximum}")
+        detector_recovery.append({"stage": stage["name"], "model_max_abs": detector_maximum,
+                                  "ema_max_abs": ema_maximum})
     report.update(native_parity=parity, preprocessing=preprocessing,
                   classifier_loss=float(c_loss.detach()), classifier_tiny_accuracy=tiny_accuracy,
                   classifier_tiny_loss_ratio=float(tiny_loss.detach()) / tiny_initial,
                   detector_loss=float(d_loss.detach()), detector_negative_loss=float(negative_loss.detach()),
                   detector_tiny_loss_ratio=float(tiny_detector_loss.detach()) / tiny_detector_initial,
-                  classifier_step_seconds=classifier_step_seconds, classifier_projected_seconds=classifier_projection,
-                  detector_step_seconds=detector_step_seconds, detector_projected_seconds=detector_projection,
-                  recovery_max_abs=maximum, finished_at=time.time(), state="passed")
+                  classifier_stage_timings=classifier_timings, classifier_projected_seconds=classifier_projection,
+                  detector_stage_timings=detector_timings, detector_projected_seconds=detector_projection,
+                  classifier_recovery=classifier_recovery, detector_recovery=detector_recovery,
+                  finished_at=time.time(), state="passed")
     write_json(recovery_dir / "report.json", report)
     resource_guard(args.run, config, time.process_time())
 

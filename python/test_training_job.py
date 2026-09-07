@@ -69,6 +69,25 @@ class TrainingJobTest(unittest.TestCase):
         state["gpu_seconds_charged"] = resources["gpu_seconds"]
         self.assertEqual(training_job.remaining_seconds(state, "classifier", resources), 0)
 
+    def test_classifier_checkpoint_record_requires_complete_selected_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "checkpoint-009500.pt"
+            checkpoint.write_bytes(b"checkpoint")
+            development = {"exact_board_accuracy": 1.0, "occupied_macro_f1": 1.0, "nll": .01}
+            final = {"exact_board_accuracy": .9, "occupied_macro_f1": .9, "nll": .02}
+            training_job.write_json(root / "curves.json", [
+                {"global_step": 9500, "development": development},
+                {"global_step": 10000, "development": final},
+            ])
+            training_job.write_json(root / "progress.json", {"global_step": 10000})
+            record = training_job.classifier_checkpoint_record(checkpoint, self.config())
+            self.assertEqual(record["selected_global_step"], 9500)
+            self.assertEqual(record["development"], development)
+            training_job.write_json(root / "progress.json", {"global_step": 3500})
+            with self.assertRaisesRegex(training_job.Invalid, "incomplete"):
+                training_job.classifier_checkpoint_record(checkpoint, self.config())
+
     def test_container_uses_host_identity_and_dedicated_output_mount(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -118,6 +137,24 @@ class TrainingJobTest(unittest.TestCase):
             self.assertEqual(result["budget"]["capacity_seconds"], 1000)
             self.assertEqual(result["budget"]["consumed_seconds"], 125)
             self.assertEqual(result["budget"]["by_segment"]["classifier"]["remaining_seconds"], 200)
+
+    def test_status_includes_live_unfinalized_gpu_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            training_job.write_json(root / "state.json", {
+                "state": "running", "stage": "detector", "pid": 123, "process_start": "token",
+                "gpu_seconds_charged": 25, "attempts": [],
+                "operation": {"name": "detector", "resource": "GPU", "started_at": 900},
+            })
+            training_job.write_json(root / "frozen.json", {"recipe": {"resources": {
+                "gpu_seconds": 1000, "preflight_gpu_seconds": 100,
+                "classifier_gpu_seconds": 300, "detector_gpu_seconds": 600}}})
+            with mock.patch.object(training_job, "process_start", return_value="token"), \
+                 mock.patch.object(training_job.time, "time", return_value=1000):
+                result = training_job.status(root)
+            self.assertEqual(result["budget"]["charged_seconds"], 25)
+            self.assertEqual(result["budget"]["active_unfinalized_seconds"], 100)
+            self.assertEqual(result["budget"]["consumed_seconds"], 125)
 
     def test_failed_cpu_validation_never_requests_gpu_or_writes_marker(self):
         with tempfile.TemporaryDirectory() as directory:

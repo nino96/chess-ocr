@@ -223,7 +223,9 @@ pnpm run training -- init --detector-only \
 pnpm run training -- start --run-root work/training/synthetic-bootstrap-v1-detector-1
 ```
 
-The controller verifies the checkpoint hash, exports it before detector
-optimization, marks the classifier complete without classifier GPU charges, and
-then runs the detector schedule. Choose the new reservation in the reviewed
+The controller verifies the checkpoint schema, completed schedule, selected-candidate
+evidence and hash, exports it with native-to-ONNX parity before detector optimization,
+marks the classifier complete without classifier GPU charges, and then runs the
+detector schedule. It reuses retained development evidence instead of repeating a
+full CPU evaluation. Choose the new reservation in the reviewed
 recipe before initialization; omitting `--prior-run` is what makes it fresh.

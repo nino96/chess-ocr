@@ -1,6 +1,9 @@
 import importlib.util
+import json
 from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -56,6 +59,69 @@ class TrainingTest(unittest.TestCase):
         self.assertTrue(torch.equal(training.detector_training_tensor(raw), torch.tensor([[[[0.0, 1.0]]]])))
         with self.assertRaisesRegex(RuntimeError, "raw tensor range"):
             training.detector_training_tensor(torch.tensor([[[[256.0]]]]))
+
+    def test_classifier_export_creates_directory_before_onnx_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = torch.nn.Sequential(torch.nn.Flatten(), torch.nn.Linear(3 * 96 * 96, 13))
+            def fake_export(_model, _example, destination, **_kwargs):
+                self.assertTrue(Path(destination).parent.is_dir())
+                Path(destination).write_bytes(b"onnx")
+            with mock.patch.object(training.torch.onnx, "export", side_effect=fake_export), \
+                 mock.patch.object(training, "verify_onnx", return_value=0.0):
+                training.export_classifier(model, root, {"classifier": {"input": "test"}}, {})
+            self.assertTrue((root / "classifier" / "selected.onnx").is_file())
+
+    def test_checkpoint_export_reuses_frozen_metrics_without_dataset_evaluation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "checkpoint.pt"
+            checkpoint.write_bytes(b"checkpoint")
+            stages = [{"updates": 2}, {"updates": 8}]
+            model = torch.nn.Linear(1, 1)
+            saved = {"schema": "chess-ocr-training-checkpoint/1", "global_step": 8,
+                     "stage": 1, "stage_step": 6, "model": model.state_dict(),
+                     "optimizer": {}, "sampler": {}, "rng": {}, "extra": {}}
+            development = {"exact_board_accuracy": 1.0}
+            (root / "frozen.json").write_text(json.dumps({"classifier_checkpoint": {
+                "sha256": training.sha256(checkpoint), "selected_global_step": 8,
+                "scheduled_updates": 10,
+                "development": development}}))
+            args = type("Args", (), {"classifier_checkpoint": checkpoint, "native": root,
+                                      "run": root, "dataset": root})()
+            config = {"classifier": {"stages": stages}}
+            with mock.patch.object(training, "classifier_model", return_value=model), \
+                 mock.patch.object(training.torch, "load", return_value=saved), \
+                 mock.patch.object(training, "export_classifier") as export, \
+                 mock.patch.object(training, "evaluate_classifier", side_effect=AssertionError("full evaluation")), \
+                 mock.patch.object(training, "calibrate_classifier", side_effect=AssertionError("full calibration")), \
+                 mock.patch.object(training, "resource_guard"):
+                training.export_classifier_checkpoint(args, config, [], {})
+            self.assertEqual(export.call_args.args[3]["development"], development)
+
+    def test_detector_export_embeds_raw_pixel_normalization(self):
+        class Detector(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.head = type("Head", (), {"decode_in_inference": True})()
+
+            def forward(self, images):
+                return images.mean(dim=(2, 3))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "detector").mkdir()
+            captured = {}
+            def fake_export(model, example, destination, **_kwargs):
+                captured["example"] = example
+                captured["output"] = model(example)
+                Path(destination).write_bytes(b"onnx")
+            with mock.patch.object(training.torch.onnx, "export", side_effect=fake_export), \
+                 mock.patch.object(training, "verify_onnx", return_value=0.0):
+                training.export_detector(Detector(), root, {"detector": {"input": "raw", "nms_iou": .5}}, {})
+            expected = captured["example"].mean(dim=(2, 3)) / 255
+            self.assertGreater(float(captured["example"].max() - captured["example"].min()), 0)
+            self.assertTrue(torch.allclose(captured["output"], expected))
 
 
 if __name__ == "__main__":
