@@ -1,0 +1,150 @@
+{
+  "schema": "chess-ocr-training-recipe/2",
+  "run": "synthetic-bootstrap-v2",
+  "seed": 20260908,
+  "purpose": "Corrected synthetic-only detector diagnostic; annotation-assistance use only",
+  "dataset": {
+    "schema": "chess-ocr-synthetic-recipe/1",
+    "run_id": "ad630a4e8031713f541db1c471a17fbbdd3769f141dc2f9a4a2bd2ec5d06138a",
+    "frozen_sha256": "c273916125c24174c74503b47b42f064edfa541c4c81f8daa9e21ec97955cb36",
+    "recipes_sha256": "667dc73a7227ddaff9c5753858e654042735f20acdd9eede708ecb7afb0b4b31",
+    "coverage_sha256": "fc7d2fbba034129bc25ba737155c3d4bcda7c21dc7830c159076a2a33bf4ff95",
+    "expected_pages": 12000,
+    "expected_training_boards": 15923,
+    "label_order": ".PNBRQKpnbrqk",
+    "split": {
+      "algorithm": "connected-page-parent-effect-greedy-v1",
+      "train": 0.85,
+      "development": 0.1,
+      "calibration": 0.05
+    }
+  },
+  "environment": {
+    "image": "nvcr.io/nvidia/vllm@sha256:95c498a475142c20c989c65e5d223348c09fed83ba17ddf44f117610c0bd3268",
+    "device": "NVIDIA GB10",
+    "cudnn_enabled": false,
+    "deterministic_algorithms": true,
+    "precision": "float32",
+    "dependencies": {
+      "numpy": "2.2.4",
+      "onnx": "1.17.0",
+      "onnxruntime": "1.20.1",
+      "opencv-python-headless": "4.11.0.86",
+      "pillow": "11.1.0",
+      "safetensors": "0.5.3",
+      "timm": "1.0.15"
+    }
+  },
+  "starting_models": {
+    "classifier": {
+      "name": "timm/mobilenetv3_small_100.lamb_in1k",
+      "revision": "1824797e7887cbec1990e4adbd6675960a36c589",
+      "sha256": "46d2c063b18125884c48937afa4c49e18128869e52e8db96df48bf0a4d7ff697"
+    },
+    "detector": {
+      "name": "YOLOX-Nano",
+      "revision": "e1052df71842031413f6030723c3607b839c80ce",
+      "sha256": "cd28f55fbbc1829f99d9ac9b38a16d259a22889739c8728ea877610201feff7b"
+    }
+  },
+  "classifier": {
+    "input": "96x96 RGB ImageNet-normalized",
+    "batch_size": 512,
+    "label_smoothing": 0.0,
+    "class_weighting": "none-natural-board-exposure",
+    "augmentation": "none-beyond-frozen-rendered-pages",
+    "batch_norm": "running-statistics-and-affine-frozen",
+    "stages": [
+      {
+        "name": "head",
+        "updates": 2000,
+        "trainable": ["conv_head", "classifier"],
+        "optimizer": "adamw",
+        "learning_rate": 0.001,
+        "weight_decay": 0.0001,
+        "warmup_updates": 200,
+        "schedule": "cosine"
+      },
+      {
+        "name": "late-backbone",
+        "updates": 8000,
+        "trainable": ["blocks.4", "blocks.5", "conv_head", "classifier"],
+        "optimizer": "adamw",
+        "backbone_learning_rate": 0.0001,
+        "head_learning_rate": 0.0003,
+        "weight_decay": 0.0001,
+        "warmup_updates": 500,
+        "schedule": "cosine"
+      }
+    ],
+    "checkpoint_interval_updates": 500,
+    "selection": [
+      "development_exact_board_accuracy",
+      "development_occupied_macro_f1",
+      "development_nll"
+    ]
+  },
+  "detector": {
+    "preprocessing": "yolox-rgb-imagenet-v2",
+    "input": "416x416 aspect-fit RGB raw 0..255 pad-114; training tensor divides by 255, then ImageNet-normalizes",
+    "batch_size": 32,
+    "classes": 1,
+    "mosaic": false,
+    "mixup": false,
+    "random_resize": false,
+    "augmentation": "none-beyond-frozen-rendered-pages",
+    "batch_norm": "running-statistics-and-affine-frozen",
+    "momentum": 0.9,
+    "weight_decay": 0.0005,
+    "gradient_clip_norm": 10.0,
+    "ema_decay": 0.9998,
+    "ema_warmup": "0.9998 * (1 - exp(-updates / 2000))",
+    "ema_warmup_updates": 2000,
+    "nms_iou": 0.65,
+    "stages": [
+      {
+        "name": "head",
+        "updates": 1500,
+        "trainable": ["head"],
+        "learning_rate": 0.005,
+        "warmup_updates": 200,
+        "schedule": "cosine"
+      },
+      {
+        "name": "full-model",
+        "updates": 7500,
+        "trainable": ["backbone", "head"],
+        "learning_rate": 0.0005,
+        "warmup_updates": 500,
+        "schedule": "cosine"
+      }
+    ],
+    "checkpoint_interval_updates": 500,
+    "evaluation_steps": {
+      "live_and_ema": [1500, 2000, 9000],
+      "transition_gate": {
+        "step": 2000,
+        "prerequisite_step": 1500,
+        "prerequisite_live_recall_at_0_5_minimum": 0.1,
+        "stop_live_recall_at_0_5_below": 0.05,
+        "stop_on_non_finite": true
+      }
+    },
+    "selection": [
+      "development_ap50_95",
+      "development_recall",
+      "development_normalized_box_error"
+    ],
+    "calibration": "maximize-recall-with-negative-false-positives-per-page-at-most-0.05"
+  },
+  "resources": {
+    "gpu_seconds": 6000,
+    "preflight_gpu_seconds": 600,
+    "classifier_gpu_seconds": 0,
+    "detector_gpu_seconds": 5400,
+    "diagnosis_gpu_seconds": 0,
+    "cpu_seconds": 24000,
+    "storage_bytes": 17179869184,
+    "minimum_free_space_ratio": 0.3
+  }
+}

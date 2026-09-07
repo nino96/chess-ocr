@@ -9,7 +9,9 @@ import sys
 from PIL import Image
 
 
-SCHEMA = "chess-ocr-candidate-bundle/1"
+SCHEMA = "chess-ocr-candidate-bundle/2"
+LEGACY_PREPROCESSING = "legacy-bgr-div255-v1"
+V2_PREPROCESSING = "yolox-rgb-imagenet-v2"
 LABELS = ["empty", "P", "N", "B", "R", "Q", "K", "p", "n", "b", "r", "q", "k"]
 
 
@@ -84,13 +86,17 @@ class LocalCandidate:
 
     @staticmethod
     def _validate_manifest(value):
+        if isinstance(value, dict) and value.get("schema") == "chess-ocr-candidate-bundle/1":
+            raise Invalid("candidate bundle schema 1 has ambiguous preprocessing; regenerate it as schema 2")
         require(isinstance(value, dict) and set(value) == {
-            "schema", "name", "version", "qualification", "classifier", "detector"
+            "schema", "name", "version", "qualification", "preprocessing", "classifier", "detector"
         }, "invalid candidate manifest")
         require(value["schema"] == SCHEMA and value["qualification"] == "synthetic-development-only",
                 "unsupported candidate manifest")
         require(all(isinstance(value[key], str) and 0 < len(value[key]) <= 120
                     for key in ("name", "version")), "invalid candidate identity")
+        require(value["preprocessing"] in {LEGACY_PREPROCESSING, V2_PREPROCESSING},
+                "unsupported candidate preprocessing")
         for role, ceiling in (("classifier", 32 * 1024 * 1024), ("detector", 64 * 1024 * 1024)):
             model = value[role]
             expected = {"sha256", "bytes", "input", "output"}
@@ -138,7 +144,9 @@ class LocalCandidate:
         resized = cv2.resize(rgb, (max(1, int(width * scale)), max(1, int(height * scale))),
                              interpolation=cv2.INTER_LINEAR)
         canvas = np.full((416, 416, 3), 114, dtype=np.float32)
-        canvas[:resized.shape[0], :resized.shape[1]] = resized[:, :, ::-1]
+        if self.manifest["preprocessing"] == LEGACY_PREPROCESSING:
+            resized = resized[:, :, ::-1]
+        canvas[:resized.shape[0], :resized.shape[1]] = resized
         return np.ascontiguousarray(canvas.transpose(2, 0, 1)[None]), scale, resized.shape[1], resized.shape[0]
 
     def _decode_detector(self, raw, scale, resized_width, resized_height):

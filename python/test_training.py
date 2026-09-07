@@ -60,6 +60,48 @@ class TrainingTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "raw tensor range"):
             training.detector_training_tensor(torch.tensor([[[[256.0]]]]))
 
+    def test_corrected_detector_preprocessing_matches_pinned_upstream_helper(self):
+        bgr = np.zeros((173, 311, 3), dtype=np.uint8)
+        bgr[:, :103] = (251, 17, 43)
+        bgr[:, 103:207] = (7, 229, 83)
+        bgr[:, 207:] = (61, 101, 241)
+        helper = training.pinned_yolox_preproc(Path(__file__).parents[1])
+        maximum, scale = training.corrected_upstream_preprocessing_parity(helper, bgr)
+        self.assertLessEqual(maximum, 1e-6)
+        self.assertEqual(scale, 0)
+
+    def test_ramped_ema_formula_and_resume_are_exact(self):
+        model = torch.nn.Linear(1, 1, bias=False)
+        model.weight.data.fill_(0)
+        ema = training.EMA(model, 0.9998, 2000)
+        model.weight.data.fill_(1)
+        ema.update(model)
+        expected_decay = 0.9998 * (1 - np.exp(-1 / 2000))
+        self.assertEqual(ema.updates, 1)
+        self.assertAlmostEqual(ema.decay, expected_decay, places=15)
+        self.assertLess(ema.decay, .001)
+        expected_weight = torch.zeros((1, 1)).mul_(expected_decay).add_(
+            torch.ones((1, 1)), alpha=1 - expected_decay)
+        self.assertTrue(torch.equal(ema.state["weight"], expected_weight))
+        saved = ema.checkpoint_state()
+        resumed = training.EMA(model, 0.9998, 2000)
+        resumed.load_checkpoint_state(saved, torch.device("cpu"))
+        model.weight.data.fill_(2)
+        ema.update(model)
+        resumed.update(model)
+        self.assertEqual(resumed.updates, 2)
+        self.assertTrue(torch.equal(ema.state["weight"], resumed.state["weight"]))
+
+    def test_detector_stage_transition_gate_uses_live_weights(self):
+        curves = [{"global_step": 1500, "live_development": {"recall": {"0.5": .10}}}]
+        self.assertTrue(training.detector_transition_gate_failed(
+            curves, 2000, {"recall": {"0.5": .049}}))
+        self.assertFalse(training.detector_transition_gate_failed(
+            curves, 2000, {"recall": {"0.5": .05}}))
+        self.assertFalse(training.detector_transition_gate_failed(
+            [{"global_step": 1500, "live_development": {"recall": {"0.5": .099}}}],
+            2000, {"recall": {"0.5": 0}}))
+
     def test_classifier_export_creates_directory_before_onnx_write(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -123,6 +165,89 @@ class TrainingTest(unittest.TestCase):
             self.assertGreater(float(captured["example"].max() - captured["example"].min()), 0)
             self.assertTrue(torch.allclose(captured["output"], expected))
             self.assertEqual(verify.call_args.kwargs["maximum_absolute_difference"], 1e-3)
+
+    def test_v2_detector_export_embeds_rgb_imagenet_normalization(self):
+        class Detector(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.head = type("Head", (), {"decode_in_inference": True})()
+
+            def forward(self, images):
+                return images.mean(dim=(2, 3))
+
+        raw = torch.tensor([[[[255.]], [[127.5]], [[0.]]]])
+        wrapper = training.DetectorExportWrapper(
+            Detector(), training.V2_DETECTOR_PREPROCESSING)
+        expected = training.detector_training_tensor(
+            raw, training.V2_DETECTOR_PREPROCESSING).mean(dim=(2, 3))
+        self.assertTrue(torch.equal(wrapper(raw), expected))
+
+    def test_detector_export_retry_reuses_durable_evidence_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            detector = root / "detector"
+            detector.mkdir()
+            (detector / "checkpoint-009000.pt").write_bytes(b"checkpoint")
+            progress = {"state": "export_failed", "selected_global_step": 9000,
+                        "final": {"ap50_95": .5}, "calibration": {"threshold": .2}}
+            (detector / "progress.json").write_text(json.dumps(progress))
+            model = torch.nn.Linear(1, 1, bias=False)
+            model.head = type("Head", (), {"decode_in_inference": True})()
+            saved = {"extra": {"ema": {"weights": model.state_dict(), "updates": 9000,
+                                          "base_decay": .9998, "warmup_updates": 2000}}}
+            args = type("Args", (), {"run": root, "native": root})()
+            config = {"detector": {"preprocessing": training.V2_DETECTOR_PREPROCESSING}}
+            with mock.patch.object(training.torch, "load", return_value=saved), \
+                 mock.patch.object(training, "detector_model", return_value=model), \
+                 mock.patch.object(training, "export_detector") as export, \
+                 mock.patch.object(training, "evaluate_detector", side_effect=AssertionError("evaluation repeated")), \
+                 mock.patch.object(training, "calibrate_detector", side_effect=AssertionError("calibration repeated")):
+                training.export_detector_checkpoint(args, config)
+            self.assertEqual(export.call_args.args[3]["development"], progress["final"])
+            self.assertEqual(json.loads((detector / "progress.json").read_text())["state"], "complete")
+
+    def test_detector_export_failure_preserves_retryable_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            detector = root / "detector"
+            detector.mkdir()
+            (detector / "checkpoint-009000.pt").write_bytes(b"checkpoint")
+            (detector / "progress.json").write_text(json.dumps({
+                "state": "exporting", "selected_global_step": 9000,
+                "final": {"ap50_95": .5}, "calibration": {"threshold": .2}}))
+            model = torch.nn.Linear(1, 1, bias=False)
+            model.head = type("Head", (), {"decode_in_inference": True})()
+            saved = {"extra": {"ema": model.state_dict()}}
+            args = type("Args", (), {"run": root, "native": root})()
+            with mock.patch.object(training.torch, "load", return_value=saved), \
+                 mock.patch.object(training, "detector_model", return_value=model), \
+                 mock.patch.object(training, "export_detector", side_effect=RuntimeError("injected export")):
+                with self.assertRaisesRegex(RuntimeError, "injected export"):
+                    training.export_detector_checkpoint(args, {"detector": {}})
+            retained = json.loads((detector / "progress.json").read_text())
+            self.assertEqual(retained["state"], "export_failed")
+            self.assertEqual(retained["final"], {"ap50_95": .5})
+            self.assertEqual(retained["calibration"], {"threshold": .2})
+
+    def test_calibration_failure_retains_selected_and_final_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "detector").mkdir()
+            lifecycle = {"state": "trained", "global_step": 9000,
+                         "selected_global_step": 8500, "final": {"ap50_95": .4}}
+            args = type("Args", (), {"run": root})()
+            with mock.patch.object(training, "calibrate_detector",
+                                   side_effect=RuntimeError("injected calibration")), \
+                 mock.patch.object(training, "export_detector") as export:
+                with self.assertRaisesRegex(RuntimeError, "injected calibration"):
+                    training.finish_detector_lifecycle(
+                        torch.nn.Identity(), args, {"detector": {"nms_iou": .65}},
+                        object(), torch.device("cpu"), lifecycle)
+            export.assert_not_called()
+            retained = json.loads((root / "detector" / "progress.json").read_text())
+            self.assertEqual(retained["state"], "calibrating")
+            self.assertEqual(retained["selected_global_step"], 8500)
+            self.assertEqual(retained["final"], {"ap50_95": .4})
 
 
 if __name__ == "__main__":

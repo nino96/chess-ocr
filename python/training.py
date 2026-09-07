@@ -31,6 +31,10 @@ import torch.nn.functional as F
 
 
 LABELS = ".PNBRQKpnbrqk"
+LEGACY_DETECTOR_PREPROCESSING = "legacy-bgr-div255-v1"
+V2_DETECTOR_PREPROCESSING = "yolox-rgb-imagenet-v2"
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
 LOADERS = ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 1))
 
 
@@ -104,7 +108,8 @@ def freeze_batch_norm(model: nn.Module) -> None:
 
 def load_inputs(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[int, str]]:
     config = read_json(args.recipe)
-    require(config.get("schema") == "chess-ocr-training-recipe/1", "recipe schema")
+    require(config.get("schema") in {"chess-ocr-training-recipe/1", "chess-ocr-training-recipe/2"},
+            "recipe schema")
     dependencies = config["environment"]["dependencies"]
     require(np.__version__ == dependencies["numpy"] and PIL.__version__ == dependencies["pillow"], "training NumPy/Pillow versions")
     require(importlib.metadata.version("onnx") == dependencies["onnx"], "training ONNX version")
@@ -185,9 +190,13 @@ class ClassifierBoards:
         return torch.from_numpy(np.ascontiguousarray(tiles)), labels, metadata
 
 class DetectorPages:
-    def __init__(self, root: Path, recipes: list[dict[str, Any]], page_split: dict[int, str], split: str):
+    def __init__(self, root: Path, recipes: list[dict[str, Any]], page_split: dict[int, str], split: str,
+                 preprocessing: str = LEGACY_DETECTOR_PREPROCESSING):
         self.root = root
         self.recipes = recipes
+        require(preprocessing in {LEGACY_DETECTOR_PREPROCESSING, V2_DETECTOR_PREPROCESSING},
+                "detector preprocessing identifier")
+        self.preprocessing = preprocessing
         self.pages = [index for index, page in enumerate(recipes)
                       if page_split[index] == split and page.get("kind") in {"boards", "negative"}]
         require(self.pages, f"no detector pages in {split}")
@@ -203,11 +212,10 @@ class DetectorPages:
             source.load()
             image = source.convert("RGB")
         width, height = image.size
-        scale = min(416 / width, 416 / height)
         rgb = np.asarray(image, dtype=np.uint8)
-        resized = cv2.resize(rgb, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_LINEAR).astype(np.float32)
-        canvas = np.full((416, 416, 3), 114, dtype=np.float32)
-        canvas[:resized.shape[0], :resized.shape[1]] = resized[:, :, ::-1]
+        canvas, scale = detector_letterbox_rgb(rgb)
+        if self.preprocessing == LEGACY_DETECTOR_PREPROCESSING:
+            canvas = canvas[[2, 1, 0]]
         targets = torch.zeros((8, 5), dtype=torch.float32)
         boxes = []
         require(len(page.get("boards", [])) <= 8, "detector target count")
@@ -220,7 +228,20 @@ class DetectorPages:
             boxes.append([left, top, right, bottom])
         metadata = {"page": page_index, "scale": scale, "boxes": boxes, "negative": not boxes,
                     "effect": page["condition"]["degradation"]["variant"], "layout": page["layout"]}
-        return torch.from_numpy(np.ascontiguousarray(canvas.transpose(2, 0, 1))), targets, metadata
+        return torch.from_numpy(np.ascontiguousarray(canvas)), targets, metadata
+
+
+def detector_letterbox_rgb(rgb: np.ndarray, size: int = 416) -> tuple[np.ndarray, float]:
+    require(rgb.ndim == 3 and rgb.shape[2] == 3 and rgb.dtype == np.uint8,
+            "detector RGB source")
+    height, width = rgb.shape[:2]
+    require(width > 0 and height > 0 and size > 0, "detector source dimensions")
+    scale = min(size / width, size / height)
+    resized = cv2.resize(rgb, (int(width * scale), int(height * scale)),
+                         interpolation=cv2.INTER_LINEAR).astype(np.float32)
+    canvas = np.full((size, size, 3), 114, dtype=np.float32)
+    canvas[:resized.shape[0], :resized.shape[1]] = resized
+    return np.ascontiguousarray(canvas.transpose(2, 0, 1)), scale
 
 
 def letterbox_targets(normalized: list[list[float]], width: int, height: int,
@@ -315,17 +336,26 @@ def batch_classifier(dataset: ClassifierBoards, indices: Iterable[int], device: 
 
 def batch_detector(dataset: DetectorPages, indices: Iterable[int], device: torch.device):
     items = list(LOADERS.map(dataset.get, indices))
-    # DetectorPages retains raw BGR 0..255 for independent raster parity; the
-    # pinned YOLOX training path consumes the same tensor divided by 255.
-    inputs = detector_training_tensor(torch.stack([item[0] for item in items]).to(device))
+    inputs = detector_training_tensor(torch.stack([item[0] for item in items]).to(device),
+                                      getattr(dataset, "preprocessing", LEGACY_DETECTOR_PREPROCESSING))
     return inputs, torch.stack([item[1] for item in items]).to(device), [item[2] for item in items]
 
 
-def detector_training_tensor(raw: torch.Tensor) -> torch.Tensor:
+def detector_preprocessing(config: dict[str, Any]) -> str:
+    return config["detector"].get("preprocessing", LEGACY_DETECTOR_PREPROCESSING)
+
+
+def detector_training_tensor(raw: torch.Tensor,
+                             preprocessing: str = LEGACY_DETECTOR_PREPROCESSING) -> torch.Tensor:
     require(torch.is_floating_point(raw), "detector raw tensor dtype")
     require(torch.isfinite(raw).all() and float(raw.min()) >= 0 and float(raw.max()) <= 255,
             "detector raw tensor range")
-    return raw / 255.0
+    if preprocessing == LEGACY_DETECTOR_PREPROCESSING:
+        return raw / 255.0
+    require(preprocessing == V2_DETECTOR_PREPROCESSING, "detector preprocessing identifier")
+    mean = raw.new_tensor(IMAGENET_MEAN)[None, :, None, None]
+    std = raw.new_tensor(IMAGENET_STD)[None, :, None, None]
+    return (raw / 255.0 - mean) / std
 
 
 def rng_state() -> dict[str, Any]:
@@ -799,17 +829,46 @@ def calibrate_detector(model: nn.Module, dataset: DetectorPages, device: torch.d
 
 
 class EMA:
-    def __init__(self, model: nn.Module, decay: float):
-        self.decay = decay
+    def __init__(self, model: nn.Module, decay: float, warmup_updates: int | None = None):
+        require(0 <= decay < 1, "EMA decay")
+        require(warmup_updates is None or warmup_updates > 0, "EMA warmup updates")
+        self.base_decay = decay
+        self.warmup_updates = warmup_updates
+        self.updates = 0
         self.state = {key: value.detach().clone() for key, value in model.state_dict().items()}
+
+    @property
+    def decay(self) -> float:
+        if self.warmup_updates is None:
+            return self.base_decay
+        return self.base_decay * (1 - math.exp(-self.updates / self.warmup_updates))
 
     @torch.no_grad()
     def update(self, model: nn.Module) -> None:
+        self.updates += 1
+        decay = self.decay
         for key, value in model.state_dict().items():
             if value.is_floating_point():
-                self.state[key].mul_(self.decay).add_(value.detach(), alpha=1 - self.decay)
+                self.state[key].mul_(decay).add_(value.detach(), alpha=1 - decay)
             else:
                 self.state[key].copy_(value)
+
+    def checkpoint_state(self) -> dict[str, Any]:
+        return {"weights": self.state, "updates": self.updates,
+                "base_decay": self.base_decay, "warmup_updates": self.warmup_updates}
+
+    def load_checkpoint_state(self, value: dict[str, Any], device: torch.device) -> None:
+        # Retained v1 checkpoints stored the weight mapping directly.
+        if "weights" not in value:
+            self.state = {key: tensor.to(device) for key, tensor in value.items()}
+            self.updates = 0
+            return
+        require(value.get("base_decay") == self.base_decay and
+                value.get("warmup_updates") == self.warmup_updates and
+                type(value.get("updates")) is int and value["updates"] >= 0,
+                "EMA checkpoint configuration")
+        self.state = {key: tensor.to(device) for key, tensor in value["weights"].items()}
+        self.updates = value["updates"]
 
 
 def set_trainable_detector(model: nn.Module, stage: str) -> list[nn.Parameter]:
@@ -828,21 +887,62 @@ def detector_optimizer(model: nn.Module, config: dict[str, Any], stage: dict[str
                            nesterov=True, weight_decay=config["detector"]["weight_decay"])
 
 
+def detector_transition_gate_failed(curves: list[dict[str, Any]], global_step: int,
+                                    live_metrics: dict[str, Any] | None,
+                                    gate: dict[str, Any] | None = None) -> bool:
+    gate = gate or {"step": 2000, "prerequisite_step": 1500,
+                    "prerequisite_live_recall_at_0_5_minimum": .10,
+                    "stop_live_recall_at_0_5_below": .05}
+    if global_step != gate["step"] or live_metrics is None:
+        return False
+    head = next((item.get("live_development") for item in curves
+                 if item.get("global_step") == gate["prerequisite_step"]), None)
+    return bool(head is not None and
+                head["recall"]["0.5"] >= gate["prerequisite_live_recall_at_0_5_minimum"] and
+                live_metrics["recall"]["0.5"] < gate["stop_live_recall_at_0_5_below"])
+
+
+def finish_detector_lifecycle(model: nn.Module, args: argparse.Namespace, config: dict[str, Any],
+                              calibration_data: DetectorPages, device: torch.device,
+                              lifecycle: dict[str, Any]) -> None:
+    directory = args.run / "detector"
+    lifecycle["state"] = "calibrating"
+    write_json(directory / "progress.json", lifecycle)
+    calibration = calibrate_detector(model, calibration_data, device, config["detector"]["nms_iou"])
+    lifecycle.update(state="exporting", calibration=calibration)
+    write_json(directory / "progress.json", lifecycle)
+    try:
+        export_detector(model, args.run, config, {
+            "development": lifecycle["final"], "calibration": calibration,
+            "selected_global_step": lifecycle["selected_global_step"]})
+    except Exception as error:
+        lifecycle.update(state="export_failed", export_error=str(error))
+        write_json(directory / "progress.json", lifecycle)
+        raise
+    lifecycle["state"] = "complete"
+    lifecycle.pop("export_error", None)
+    write_json(directory / "progress.json", lifecycle)
+
+
 def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: list[dict[str, Any]],
                    page_split: dict[int, str], device: torch.device) -> None:
     directory = args.run / "detector"
     directory.mkdir(parents=True, exist_ok=True)
-    train = DetectorPages(args.dataset, recipes, page_split, "train")
-    development = DetectorPages(args.dataset, recipes, page_split, "development")
+    preprocessing = detector_preprocessing(config)
+    train = DetectorPages(args.dataset, recipes, page_split, "train", preprocessing)
+    development = DetectorPages(args.dataset, recipes, page_split, "development", preprocessing)
     model = detector_model(args.native, device)
     stages = config["detector"]["stages"]
+    dual_evaluation_steps = set(config["detector"].get("evaluation_steps", {}).get(
+        "live_and_ema", []))
     resume = latest_checkpoint(directory)
     resume_state = torch.load(resume, map_location="cpu", weights_only=True) if resume else None
-    ema = EMA(model, config["detector"]["ema_decay"])
+    ema = EMA(model, config["detector"]["ema_decay"],
+              config["detector"].get("ema_warmup_updates"))
     if resume_state:
         validate_checkpoint_state(resume_state, stages, "detector")
         model.load_state_dict(resume_state["model"], strict=True)
-        ema.state = {key: value.to(device) for key, value in resume_state["extra"]["ema"].items()}
+        ema.load_checkpoint_state(resume_state["extra"]["ema"], device)
         restore_rng(resume_state["rng"])
     global_step = int(resume_state["global_step"]) if resume_state else 0
     curves = read_json(directory / "curves.json") if (directory / "curves.json").exists() else []
@@ -889,20 +989,32 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
             global_step += 1
             if global_step % config["detector"]["checkpoint_interval_updates"] == 0 or stage_step == stage["updates"]:
                 live = {key: value.detach().clone() for key, value in model.state_dict().items()}
+                live_metrics = (evaluate_detector(model, development, device, config["detector"]["nms_iou"])
+                                if global_step in dual_evaluation_steps else None)
                 model.load_state_dict(ema.state, strict=True)
                 metrics = evaluate_detector(model, development, device, config["detector"]["nms_iou"])
                 model.load_state_dict(live, strict=True)
-                curves.append({"global_step": global_step, "stage": stage["name"], "stage_step": stage_step,
-                               "training_loss": interval_loss / interval_updates,
-                               "interval_updates": interval_updates, "exposure": exposure,
-                               "losses": {key: float(value.detach()) if torch.is_tensor(value) else float(value) for key, value in losses.items()},
-                               "learning_rate": optimizer.param_groups[0]["lr"], "development": metrics})
+                row = {"global_step": global_step, "stage": stage["name"], "stage_step": stage_step,
+                       "training_loss": interval_loss / interval_updates,
+                       "interval_updates": interval_updates, "exposure": exposure,
+                       "losses": {key: float(value.detach()) if torch.is_tensor(value) else float(value) for key, value in losses.items()},
+                       "learning_rate": optimizer.param_groups[0]["lr"], "development": metrics,
+                       "ema_development": metrics, "ema_updates": ema.updates,
+                       "ema_decay": ema.decay}
+                if live_metrics is not None:
+                    row["live_development"] = live_metrics
+                curves.append(row)
                 write_json(directory / "curves.json", curves)
                 checkpoint(directory / f"checkpoint-{global_step:06d}.pt", model, optimizer, sampler,
-                           stage_index, stage_step, global_step, {"ema": ema.state})
+                           stage_index, stage_step, global_step, {"ema": ema.checkpoint_state()})
                 resource_guard(args.run, config, time.process_time())
                 write_json(directory / "progress.json", {"state": "running", "global_step": global_step,
-                           "scheduled_updates": 9000, "stage": stage["name"], "development": metrics})
+                           "scheduled_updates": sum(item["updates"] for item in stages),
+                           "stage": stage["name"], "development": metrics,
+                           "live_development": live_metrics, "ema_updates": ema.updates})
+                gate = config["detector"].get("evaluation_steps", {}).get("transition_gate")
+                if detector_transition_gate_failed(curves, global_step, live_metrics, gate):
+                    raise Stopped("detector stage-transition gate: live recall collapsed below 5% at step 2000")
                 if (args.run / "stop").exists():
                     raise Stopped("operator stop requested")
                 interval_loss = 0.0
@@ -915,17 +1027,57 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
     best = max(curves, key=lambda row: (row["development"]["ap50_95"],
                                        row["development"]["recall"]["0.5"],
                                        -row["development"]["mean_normalized_box_error"]))
+    scheduled = sum(item["updates"] for item in stages)
+    lifecycle = {"state": "trained", "global_step": global_step,
+                 "scheduled_updates": scheduled, "selected_global_step": best["global_step"],
+                 "selection_development": best["development"]}
+    write_json(directory / "progress.json", lifecycle)
     selected = torch.load(directory / f"checkpoint-{best['global_step']:06d}.pt", map_location="cpu", weights_only=True)
-    model.load_state_dict({key: value.to(device) for key, value in selected["extra"]["ema"].items()}, strict=True)
+    selected_ema = selected["extra"]["ema"]
+    selected_weights = selected_ema.get("weights", selected_ema)
+    model.load_state_dict({key: value.to(device) for key, value in selected_weights.items()}, strict=True)
     final = evaluate_detector(model, development, device, config["detector"]["nms_iou"])
-    calibration = calibrate_detector(model, DetectorPages(args.dataset, recipes, page_split, "calibration"),
-                                     device, config["detector"]["nms_iou"])
-    export_detector(model, args.run, config, {"development": final, "calibration": calibration,
-                                             "selected_global_step": best["global_step"]})
-    write_json(directory / "progress.json", {"state": "complete", "global_step": global_step,
-               "scheduled_updates": 9000, "selected_global_step": best["global_step"],
-               "development": final, "calibration": calibration})
+    lifecycle["final"] = final
+    write_json(directory / "progress.json", lifecycle)
+    finish_detector_lifecycle(
+        model, args, config,
+        DetectorPages(args.dataset, recipes, page_split, "calibration", preprocessing),
+        device, lifecycle)
     resource_guard(args.run, config, time.process_time())
+
+
+def export_detector_checkpoint(args: argparse.Namespace, config: dict[str, Any]) -> None:
+    """Retry only ONNX export from durable selection/evaluation/calibration evidence."""
+    directory = args.run / "detector"
+    progress = read_json(directory / "progress.json")
+    require(progress.get("state") in {"exporting", "export_failed"},
+            "detector export retry requires exporting/export_failed state")
+    require(type(progress.get("selected_global_step")) is int,
+            "detector export retry selected checkpoint")
+    require(isinstance(progress.get("final"), dict), "detector export retry final evaluation")
+    require(isinstance(progress.get("calibration"), dict), "detector export retry calibration")
+    selected_path = directory / f"checkpoint-{progress['selected_global_step']:06d}.pt"
+    require(selected_path.is_file() and not selected_path.is_symlink(),
+            "detector export retry checkpoint")
+    selected = torch.load(selected_path, map_location="cpu", weights_only=True)
+    selected_ema = selected.get("extra", {}).get("ema")
+    require(isinstance(selected_ema, dict), "detector export retry EMA checkpoint")
+    selected_weights = selected_ema.get("weights", selected_ema)
+    model = detector_model(args.native, torch.device("cpu"))
+    model.load_state_dict(selected_weights, strict=True)
+    progress["state"] = "exporting"
+    progress.pop("export_error", None)
+    write_json(directory / "progress.json", progress)
+    try:
+        export_detector(model, args.run, config, {
+            "development": progress["final"], "calibration": progress["calibration"],
+            "selected_global_step": progress["selected_global_step"]})
+    except Exception as error:
+        progress.update(state="export_failed", export_error=str(error))
+        write_json(directory / "progress.json", progress)
+        raise
+    progress["state"] = "complete"
+    write_json(directory / "progress.json", progress)
 
 
 def verify_onnx(path: Path, inputs: dict[str, np.ndarray], expected: np.ndarray,
@@ -989,20 +1141,30 @@ def export_classifier_checkpoint(args: argparse.Namespace, config: dict[str, Any
     resource_guard(args.run, config, time.process_time())
 
 
+class DetectorExportWrapper(nn.Module):
+    def __init__(self, detector: nn.Module, contract: str):
+        super().__init__()
+        require(contract in {LEGACY_DETECTOR_PREPROCESSING, V2_DETECTOR_PREPROCESSING},
+                "detector export preprocessing")
+        self.detector = detector
+        self.contract = contract
+        self.register_buffer("mean", torch.tensor(IMAGENET_MEAN)[None, :, None, None])
+        self.register_buffer("std", torch.tensor(IMAGENET_STD)[None, :, None, None])
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        values = images / 255.0
+        if self.contract == V2_DETECTOR_PREPROCESSING:
+            values = (values - self.mean) / self.std
+        return self.detector(values)
+
+
 def export_detector(model: nn.Module, run: Path, config: dict[str, Any], metrics: dict[str, Any]) -> None:
     model.eval().cpu()
     model.head.decode_in_inference = False
     destination = run / "detector" / "selected.onnx"
     raw = torch.linspace(0.0, 255.0, steps=3 * 416 * 416).reshape(1, 3, 416, 416)
-    class RawDetector(nn.Module):
-        def __init__(self, detector: nn.Module):
-            super().__init__()
-            self.detector = detector
-
-        def forward(self, images: torch.Tensor) -> torch.Tensor:
-            return self.detector(images / 255.0)
-
-    exported = RawDetector(model).eval()
+    preprocessing = detector_preprocessing(config)
+    exported = DetectorExportWrapper(model, preprocessing).eval()
     with torch.inference_mode():
         expected = exported(raw).numpy()
     torch.onnx.export(exported, raw, destination, input_names=["images"],
@@ -1013,7 +1175,7 @@ def export_detector(model: nn.Module, run: Path, config: dict[str, Any], metrics
     metrics = {**metrics, "onnx_native_max_abs": verify_onnx(
         destination, {"images": raw.numpy()}, expected, maximum_absolute_difference=1e-3)}
     write_json(destination.with_suffix(".manifest.json"), {"schema": "chess-ocr-model/1", "role": "inner-grid-detector",
-               "sha256": sha256(destination), "labels": ["inner-grid"], "preprocessing": config["detector"]["input"],
+               "sha256": sha256(destination), "labels": ["inner-grid"], "preprocessing": preprocessing,
                "nms_iou": config["detector"]["nms_iou"], "metrics": metrics, "publication": "not-authorized"})
 
 
@@ -1026,6 +1188,10 @@ def pinned_yolox_preproc(native: Path):
     """Load the reviewed preprocessing file without YOLOX's optional COCO imports."""
     path = native / "cache/native/yolox/yolox/data/data_augment.py"
     require(path.is_file() and not path.is_symlink(), "pinned YOLOX preprocessing source")
+    import sys
+    source = str(native / "cache/native/yolox")
+    if source not in sys.path:
+        sys.path.insert(0, source)
     spec = importlib.util.spec_from_file_location("_chess_ocr_yolox_data_augment", path)
     require(spec is not None and spec.loader is not None, "load pinned YOLOX preprocessing")
     module = importlib.util.module_from_spec(spec)
@@ -1033,11 +1199,24 @@ def pinned_yolox_preproc(native: Path):
     return module.preproc
 
 
+def corrected_upstream_preprocessing_parity(yolox_preproc, source_bgr: np.ndarray) -> tuple[float, float]:
+    """Compare the v2 RGB tensor with the pinned helper from an OpenCV BGR source."""
+    require(source_bgr.ndim == 3 and source_bgr.shape[2] == 3 and source_bgr.dtype == np.uint8,
+            "OpenCV BGR source")
+    official, official_scale = yolox_preproc(
+        source_bgr, (416, 416), np.asarray(IMAGENET_MEAN, dtype=np.float32),
+        np.asarray(IMAGENET_STD, dtype=np.float32))
+    raw_rgb, candidate_scale = detector_letterbox_rgb(np.ascontiguousarray(source_bgr[:, :, ::-1]))
+    candidate = detector_training_tensor(torch.from_numpy(raw_rgb)[None],
+                                         V2_DETECTOR_PREPROCESSING)[0].numpy()
+    return float(np.max(np.abs(candidate - official))), abs(candidate_scale - float(official_scale))
+
+
 def validate_preprocessing(args: argparse.Namespace, config: dict[str, Any], recipes: list[dict[str, Any]],
                            page_split: dict[int, str]) -> dict[str, Any]:
     """Run input-contract checks that must pass without allocating a GPU."""
     classifier_data = ClassifierBoards(args.dataset, recipes, page_split, "train")
-    detector_data = DetectorPages(args.dataset, recipes, page_split, "train")
+    detector_data = DetectorPages(args.dataset, recipes, page_split, "train", detector_preprocessing(config))
     import synthetic_training as reference
 
     # Exercise both image-relative orientations. The same tile order is required
@@ -1078,6 +1257,7 @@ def validate_preprocessing(args: argparse.Namespace, config: dict[str, Any], rec
     detector_max_abs = 0.0
     detector_image_max_abs = 0.0
     yolox_preproc = pinned_yolox_preproc(args.native)
+    preprocessing = detector_preprocessing(config)
     for index in detector_indices:
         candidate_image, candidate_targets, metadata = detector_data.get(index)
         page_index = metadata["page"]
@@ -1085,21 +1265,40 @@ def validate_preprocessing(args: argparse.Namespace, config: dict[str, Any], rec
         with Image.open(args.dataset / "images" / f"page-{page_index:06d}.png") as source:
             source.load()
             source_rgb = np.asarray(source.convert("RGB"), dtype=np.uint8)
-        official_image, official_scale = yolox_preproc(source_rgb, (416, 416), None, None)
-        expected_image = torch.from_numpy(np.ascontiguousarray(official_image * 255.0))
+        if preprocessing == V2_DETECTOR_PREPROCESSING:
+            image_difference, scale_difference = corrected_upstream_preprocessing_parity(
+                yolox_preproc, np.ascontiguousarray(source_rgb[:, :, ::-1]))
+            expected_image = detector_training_tensor(candidate_image[None], preprocessing)[0]
+        else:
+            official_image, official_scale = yolox_preproc(source_rgb, (416, 416), None, None)
+            expected_image = torch.from_numpy(np.ascontiguousarray(official_image * 255.0))
+            image_difference = float((candidate_image - expected_image).abs().max())
+            scale_difference = abs(float(metadata["scale"]) - float(official_scale))
         normalized = reference.detector_targets(record)
         expected_targets = letterbox_targets(normalized, record["recipe"]["width"], record["recipe"]["height"])
         detector_max_abs = max(detector_max_abs, float((candidate_targets - expected_targets).abs().max()))
-        detector_image_max_abs = max(detector_image_max_abs, float((candidate_image - expected_image).abs().max()))
+        detector_image_max_abs = max(detector_image_max_abs, image_difference)
         require(len(metadata["boxes"]) == len(normalized), "detector target count parity")
-        require(abs(float(metadata["scale"]) - float(official_scale)) < 1e-12,
+        require(scale_difference < 1e-12,
                 "detector image scale parity")
         require(candidate_image.shape == (3, 416, 416) and torch.isfinite(candidate_image).all(),
                 "detector image preprocessing")
         require(float(candidate_image.min()) >= 0 and float(candidate_image.max()) <= 255,
                 "detector image range")
     require(detector_max_abs / 416 < 1e-6, "detector target preprocessing parity")
-    require(detector_image_max_abs <= 2e-5, "detector image preprocessing parity")
+    tolerance = 1e-6 if preprocessing == V2_DETECTOR_PREPROCESSING else 2e-5
+    require(detector_image_max_abs <= tolerance, "detector image preprocessing parity")
+
+    # A fixed non-square OpenCV BGR raster catches accidental RGB/BGR symmetry
+    # even if the selected dataset pages happen to be nearly grayscale.
+    sentinel_bgr = np.zeros((173, 311, 3), dtype=np.uint8)
+    sentinel_bgr[:, :103] = (251, 17, 43)
+    sentinel_bgr[:, 103:207] = (7, 229, 83)
+    sentinel_bgr[:, 207:] = (61, 101, 241)
+    sentinel_max_abs, sentinel_scale_abs = corrected_upstream_preprocessing_parity(
+        yolox_preproc, sentinel_bgr)
+    require(sentinel_max_abs <= 1e-6 and sentinel_scale_abs < 1e-12,
+            "detector colored-sentinel upstream preprocessing parity")
 
     # The first optimizer update must not make the YOLOX loss non-finite. This
     # CPU-only smoke catches raw-pixel/normalization mistakes before GPU spend.
@@ -1129,6 +1328,7 @@ def validate_preprocessing(args: argparse.Namespace, config: dict[str, Any], rec
               "detector_source_size_kinds": [list(value) for value in sorted(seen)[:len(detector_indices)]],
               "detector_target_max_abs": detector_max_abs,
               "detector_image_max_abs": detector_image_max_abs,
+              "detector_colored_sentinel_max_abs": sentinel_max_abs,
               "detector_cpu_smoke_losses": smoke_losses,
               "detector_training_input_range": [float(smoke_inputs.min()), float(smoke_inputs.max())]}
     write_json(args.run / "validation" / "report.json", report)
@@ -1143,7 +1343,7 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
                               "cuda": torch.version.cuda, "cudnn_enabled": torch.backends.cudnn.enabled}
     preprocessing = validate_preprocessing(args, config, recipes, page_split)
     classifier_data = ClassifierBoards(args.dataset, recipes, page_split, "train")
-    detector_data = DetectorPages(args.dataset, recipes, page_split, "train")
+    detector_data = DetectorPages(args.dataset, recipes, page_split, "train", detector_preprocessing(config))
     from types import SimpleNamespace
     from native_gpu_reference import run_mobilenet, run_yolox
     native_args = SimpleNamespace(weights=args.native / "cache/native", inputs=args.native / "work/native",
@@ -1231,7 +1431,9 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
         detector_timings.append({"stage": stage["name"], "updates": stage["updates"],
                                  "step_seconds": time.monotonic() - started})
     detector_projection = sum(row["step_seconds"] * row["updates"] for row in detector_timings) * 1.5
-    require(classifier_projection <= config["resources"]["classifier_gpu_seconds"], "classifier schedule does not fit allocation")
+    if config["resources"]["classifier_gpu_seconds"]:
+        require(classifier_projection <= config["resources"]["classifier_gpu_seconds"],
+                "classifier schedule does not fit allocation")
     require(detector_projection <= config["resources"]["detector_gpu_seconds"], "detector schedule does not fit allocation")
     # Actual stochastic-path recovery: saved sampler/RNG/model/optimizer state
     # must reproduce the next update in every frozen stage on this GPU.
@@ -1273,11 +1475,12 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
         seed = config["seed"] + 1999 + stage_index
         detector_sampler = CyclingOrder(len(detector_data), seed)
         detector_optimizer_state = detector_optimizer(detector, config, stage)
-        detector_ema = EMA(detector, config["detector"]["ema_decay"])
+        detector_ema = EMA(detector, config["detector"]["ema_decay"],
+                           config["detector"].get("ema_warmup_updates"))
         path = recovery_dir / f"detector-recovery-stage-{stage_index}.pt"
         global_step = sum(item["updates"] for item in config["detector"]["stages"][:stage_index])
         checkpoint(path, detector, detector_optimizer_state, detector_sampler,
-                   stage_index, 0, global_step, {"ema": detector_ema.state})
+                   stage_index, 0, global_step, {"ema": detector_ema.checkpoint_state()})
         recovery_indices = detector_sampler.take(config["detector"]["batch_size"])
         inputs, targets, _ = batch_detector(detector_data, recovery_indices, device)
         detector_optimizer_state.zero_grad(set_to_none=True)
@@ -1294,7 +1497,7 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
         validate_checkpoint_state(saved, config["detector"]["stages"], "detector")
         detector.load_state_dict(saved["model"]); detector_optimizer_state.load_state_dict(saved["optimizer"])
         detector_sampler = CyclingOrder(len(detector_data), seed, saved["sampler"]); restore_rng(saved["rng"])
-        detector_ema.state = {key: value.to(device) for key, value in saved["extra"]["ema"].items()}
+        detector_ema.load_checkpoint_state(saved["extra"]["ema"], device)
         require(recovery_indices == detector_sampler.take(config["detector"]["batch_size"]),
                 "detector sampler recovery mismatch")
         inputs, targets, _ = batch_detector(detector_data, recovery_indices, device)
@@ -1329,7 +1532,8 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
-    value.add_argument("segment", choices=("validate", "preflight", "classifier-export", "classifier", "detector"))
+    value.add_argument("segment", choices=("validate", "preflight", "classifier-export", "detector-export",
+                                           "classifier", "detector"))
     value.add_argument("--recipe", type=Path, required=True)
     value.add_argument("--dataset", type=Path, required=True)
     value.add_argument("--native", type=Path, required=True)
@@ -1349,6 +1553,9 @@ def main() -> None:
             return
         if args.segment == "classifier-export":
             export_classifier_checkpoint(args, config, recipes, page_split)
+            return
+        if args.segment == "detector-export":
+            export_detector_checkpoint(args, config)
             return
         device = configure(config["seed"])
         if args.segment == "preflight":

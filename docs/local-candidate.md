@@ -10,10 +10,11 @@ SHA-256 values, tensor names, label order and detector thresholds. No model,
 checkpoint or generated manifest is committed or published.
 
 The currently retained detector is `legacy-bgr-div255-v1`, synthetic-only and
-uncalibrated. Its schema-1 bundle does not identify preprocessing and is therefore
-ambiguous. Corrected loaders reject it with a regeneration instruction; regenerate
-the ignored bundle under schema 2 with the legacy identifier for diagnostic use.
-Do not relabel the existing weights as corrected or qualified.
+uncalibrated. Its original schema-1 bundle did not identify preprocessing and was
+therefore ambiguous. Corrected loaders reject schema 1 with a regeneration
+instruction; the retained ignored local bundle has been regenerated under schema 2
+with the legacy identifier for diagnostic use. Do not relabel the existing weights
+as corrected or qualified.
 
 ## Prepare the ignored manifest
 
@@ -23,6 +24,7 @@ From the repository/worktree containing the run:
 pnpm run candidate -- prepare \
   --run-root work/training/synthetic-bootstrap-v1-detector-3 \
   --output work/candidates/synthetic-bootstrap-v1-detector-3.json \
+  --preprocessing legacy-bgr-div255-v1 \
   --score-threshold 0.3
 ```
 

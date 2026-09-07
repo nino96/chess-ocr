@@ -39,6 +39,19 @@ class TrainingJobTest(unittest.TestCase):
         self.assertEqual(config["resources"]["cpu_seconds"], 24000)
         self.assertFalse(config["environment"]["cudnn_enabled"])
 
+    def test_v2_recipe_freezes_corrected_detector_only_contract(self):
+        config = training_job.configuration(Path(__file__).parents[1] / "recipes/synthetic-bootstrap-v2.json")
+        self.assertEqual(config["detector"]["preprocessing"], "yolox-rgb-imagenet-v2")
+        self.assertEqual(config["detector"]["ema_decay"], .9998)
+        self.assertEqual(config["detector"]["ema_warmup_updates"], 2000)
+        self.assertEqual(config["detector"]["evaluation_steps"]["live_and_ema"], [1500, 2000, 9000])
+        self.assertEqual(sum(stage["updates"] for stage in config["detector"]["stages"]), 9000)
+        self.assertEqual(config["resources"]["gpu_seconds"], 6000)
+        self.assertEqual(config["resources"]["preflight_gpu_seconds"], 600)
+        self.assertEqual(config["resources"]["classifier_gpu_seconds"], 0)
+        self.assertEqual(config["resources"]["detector_gpu_seconds"], 5400)
+        self.assertEqual(config["resources"]["cpu_seconds"], 24000)
+
     def test_split_is_deterministic_and_keeps_effect_groups_together(self):
         recipes, config = self.recipes(), self.config()
         left = training_job.freeze_split(recipes, config)
@@ -120,6 +133,48 @@ class TrainingJobTest(unittest.TestCase):
             self.assertIn("/classifier-checkpoint.pt", command)
             self.assertIn("classifier-export", command)
 
+    def test_detector_export_retry_is_cpu_only_and_uses_persisted_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            overlay = root / "overlay"; overlay.mkdir()
+            detector = root / "detector"; detector.mkdir()
+            model = detector / "selected.onnx"; model.write_bytes(b"onnx")
+            training_job.write_json(detector / "progress.json", {"state": "export_failed", "selected_global_step": 9000,
+                "final": {"ap50_95": .5}, "calibration": {"threshold": .1}})
+            training_job.write_json(detector / "selected.manifest.json", {"sha256": training_job.sha256(model)})
+            frozen = {"run_id": "f" * 64, "repository_root": str(root), "dataset_root": str(root),
+                      "native_root": str(root), "dependency_overlay_root": str(overlay),
+                      "container_user": {"uid": 123, "gid": 456}, "recipe": self.config()}
+            training_job.write_json(root / "state.json", {"state": "export_failed", "lifecycle_state": "export_failed",
+                                                           "pid": None, "process_start": None, "attempts": []})
+            with mock.patch.object(training_job, "verify_frozen", return_value=(frozen, self.config())), \
+                 mock.patch.object(training_job.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as execute:
+                result = training_job.export(root, "detector")
+            self.assertEqual(result["state"], "complete")
+            command = execute.call_args.args[0]
+            self.assertNotIn("--gpus", command)
+            self.assertIn("detector-export", command)
+            self.assertEqual(training_job.read_json(root / "state.json")["lifecycle_state"], "complete")
+
+    def test_detector_export_retry_rejects_missing_durable_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "detector").mkdir()
+            training_job.write_json(root / "detector" / "progress.json", {"state": "export_failed", "selected_global_step": 9000})
+            with self.assertRaisesRegex(training_job.Invalid, "final evaluation"):
+                training_job.detector_export_evidence(root)
+
+    def test_start_refuses_to_repeat_work_after_export_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            training_job.write_json(root / "state.json", {
+                "state": "export_failed", "pid": None, "process_start": None})
+            with mock.patch.object(training_job, "verify_frozen", return_value=({}, self.config())), \
+                 mock.patch.object(training_job, "validate_before_gpu") as validate:
+                with self.assertRaisesRegex(training_job.Invalid, "export-only retry"):
+                    training_job.start(root)
+            validate.assert_not_called()
+
     def test_status_defaults_to_current_attempt_and_reports_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -156,6 +211,28 @@ class TrainingJobTest(unittest.TestCase):
             self.assertEqual(result["budget"]["charged_seconds"], 25)
             self.assertEqual(result["budget"]["active_unfinalized_seconds"], 100)
             self.assertEqual(result["budget"]["consumed_seconds"], 125)
+
+    def test_status_hides_inherited_attempts_and_history_deduplicates_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            training_job.write_json(root / "state.json", {"state": "ready", "pid": None, "process_start": None,
+                "gpu_seconds_charged": 150, "attempts": [
+                    {"segment": "detector", "elapsed_seconds": 100, "inherited": True, "ledger_id": "old:0"},
+                    {"segment": "detector", "elapsed_seconds": 100, "inherited": True, "ledger_id": "old:0"},
+                    {"segment": "preflight", "elapsed_seconds": 50, "ledger_id": "new:0"},
+                ]})
+            training_job.write_json(root / "frozen.json", {"mode": "detector-only", "classifier_checkpoint": {
+                "sha256": "checkpoint", "selected_global_step": 10000, "development": {"nll": .1}}, "recipe": {"resources": {
+                "gpu_seconds": 1000, "preflight_gpu_seconds": 100, "classifier_gpu_seconds": 300,
+                "detector_gpu_seconds": 600, "diagnosis_gpu_seconds": 0}}})
+            training_job.write_json(root / "classifier" / "progress.json", {"state": "complete"})
+            current = training_job.status(root)
+            self.assertEqual(current["budget"]["charged_seconds"], 50)
+            self.assertNotIn("classifier", current["budget"]["by_segment"])
+            self.assertEqual(current["classifier"]["state"], "reused")
+            history = training_job.status(root, history=True)
+            self.assertEqual(len(history["attempts"]), 2)
+            self.assertEqual(history["history_budget"]["charged_seconds"], 150)
 
     def test_failed_cpu_validation_never_requests_gpu_or_writes_marker(self):
         with tempfile.TemporaryDirectory() as directory:

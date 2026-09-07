@@ -38,6 +38,11 @@ the progress file still said `running`. V2 must persist `trained`, `calibrating`
 retry that cannot repeat optimization, final development evaluation or
 calibration.
 
+The corrected machine-readable source of truth is
+[`synthetic-bootstrap-v2.json`](../recipes/synthetic-bootstrap-v2.json). The v1
+recipe remains immutable evidence for retained runs and must not be reused for
+the corrected detector.
+
 The first corrected run keeps the 9,000-update detector schedule, seed, batch
 size, BN policy and learning rates. It starts from the original COCO checkpoint,
 reuses the completed classifier checkpoint, and does not continue the legacy
