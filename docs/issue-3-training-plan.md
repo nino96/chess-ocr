@@ -63,6 +63,17 @@ resize, BGR/padding tensor and correct 416-pixel letterbox target frame. Failure
 leaves a retained validation log and consumes no GPU time; timeout cleanup stops
 the named validation container before returning control.
 
+The detector loader retains raw pixels for parity evidence, then `batch_detector`
+divides the training tensor by 255 to match pinned YOLOX's official training
+transform. The CPU barrier runs three mixed-page loss/gradient/update steps and
+rejects non-finite behavior before GPU allocation.
+
+The detector recipe clips its head/full-model gradient norm at 10.0. This is a
+mechanics-stability guard justified by the bounded diagnosis: the configured
+0.005 head learning rate produced non-finite gradients after one un-clipped
+synthetic update, while the clipped path remained finite and reduced loss across
+five CPU updates. No seed, model family, corpus or schedule length changed.
+
 The schedule is complete only after 10,000 classifier and 9,000 detector updates
 plus all frozen development/calibration evaluations. Do not shorten it to call a
 mechanics pilot successful. One failed comparison permits one bounded causal
@@ -107,3 +118,16 @@ continuous YOLOX letterbox frame, adds non-square and resize-rounding regression
 tests, broadens parity coverage, and moves all input-contract checks ahead of GPU
 allocation. A third run is authorized only if that CPU container validation and
 the repository gates pass; it inherits both failed attempts and their full charge.
+
+Attempt 3 (`8b1bd10d3df35c30c26ac4a362d052cf0c9d23c22daba45a8b783c060aa9817e`)
+passed the new CPU barrier, then failed GPU preflight after 7.750 charged
+GPU-seconds during the detector tiny-set fit. The retained CUDA log showed a
+device-side BCE assertion after the first optimizer update; no scheduled model
+training ran. The bounded diagnosis reproduced finite first-step CPU loss but
+non-finite gradients after the next update, even with official 0..1 input scale.
+The configured 0.005 detector head rate required the explicit norm-10 gradient
+clip now bound in the recipe. The repair applies that clip to preflight, timed
+projection and both detector stages, and extends the CPU barrier to three
+mixed-page updates. It changes no data, seed, model family, schedule length or
+GPU allocation; a replacement run must inherit all three attempts and their
+17.023 charged GPU-seconds.

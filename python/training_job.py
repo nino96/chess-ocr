@@ -96,6 +96,7 @@ def configuration(path: Path = DEFAULT_RECIPE) -> dict[str, Any]:
     require(value["environment"].get("precision") == "float32", "training precision")
     require(sum(s["updates"] for s in value["classifier"]["stages"]) == 10000, "classifier schedule")
     require(sum(s["updates"] for s in value["detector"]["stages"]) == 9000, "detector schedule")
+    require(0 < value["detector"].get("gradient_clip_norm", 0) <= 100, "detector gradient clip")
     return value
 
 

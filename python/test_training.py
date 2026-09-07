@@ -51,6 +51,12 @@ class TrainingTest(unittest.TestCase):
                                  .5 * 1001 * scale, .25 * 333 * scale])
         self.assertTrue(torch.allclose(result[0], expected, atol=1e-5, rtol=0))
 
+    def test_detector_training_tensor_normalizes_raw_pixels(self):
+        raw = torch.tensor([[[[0.0, 255.0]]]])
+        self.assertTrue(torch.equal(training.detector_training_tensor(raw), torch.tensor([[[[0.0, 1.0]]]])))
+        with self.assertRaisesRegex(RuntimeError, "raw tensor range"):
+            training.detector_training_tensor(torch.tensor([[[[256.0]]]]))
+
 
 if __name__ == "__main__":
     unittest.main()

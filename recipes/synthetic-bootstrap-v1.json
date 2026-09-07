@@ -83,7 +83,7 @@
     ]
   },
   "detector": {
-    "input": "416x416 aspect-fit BGR float32 0..255 pad-114",
+    "input": "416x416 aspect-fit BGR raw 0..255 pad-114; training tensor divides by 255 to 0..1",
     "batch_size": 32,
     "classes": 1,
     "mosaic": false,
@@ -93,6 +93,7 @@
     "batch_norm": "running-statistics-and-affine-frozen",
     "momentum": 0.9,
     "weight_decay": 0.0005,
+    "gradient_clip_norm": 10.0,
     "ema_decay": 0.9998,
     "nms_iou": 0.65,
     "stages": [

@@ -309,7 +309,17 @@ def batch_classifier(dataset: ClassifierBoards, indices: Iterable[int], device: 
 
 def batch_detector(dataset: DetectorPages, indices: Iterable[int], device: torch.device):
     items = list(LOADERS.map(dataset.get, indices))
-    return torch.stack([item[0] for item in items]).to(device), torch.stack([item[1] for item in items]).to(device), [item[2] for item in items]
+    # DetectorPages retains raw BGR 0..255 for independent raster parity; the
+    # pinned YOLOX training path consumes the same tensor divided by 255.
+    inputs = detector_training_tensor(torch.stack([item[0] for item in items]).to(device))
+    return inputs, torch.stack([item[1] for item in items]).to(device), [item[2] for item in items]
+
+
+def detector_training_tensor(raw: torch.Tensor) -> torch.Tensor:
+    require(torch.is_floating_point(raw), "detector raw tensor dtype")
+    require(torch.isfinite(raw).all() and float(raw.min()) >= 0 and float(raw.max()) <= 255,
+            "detector raw tensor range")
+    return raw / 255.0
 
 
 def rng_state() -> dict[str, Any]:
@@ -745,6 +755,8 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
             require(torch.isfinite(loss).item(), "non-finite detector loss")
             loss.backward()
             require(all(torch.isfinite(parameter.grad).all() for parameter in parameters if parameter.grad is not None), "non-finite detector gradients")
+            torch.nn.utils.clip_grad_norm_(parameters, config["detector"]["gradient_clip_norm"])
+            require(all(torch.isfinite(parameter.grad).all() for parameter in parameters if parameter.grad is not None), "non-finite clipped detector gradients")
             optimizer.param_groups[0]["lr"] = cosine_lr(stage["learning_rate"], stage_step, stage["updates"], stage["warmup_updates"])
             optimizer.step()
             ema.update(model)
@@ -890,6 +902,27 @@ def validate_preprocessing(args: argparse.Namespace, config: dict[str, Any], rec
                 "detector image range")
     require(detector_max_abs / 416 < 1e-6, "detector target preprocessing parity")
     require(detector_image_max_abs <= 2e-5, "detector image preprocessing parity")
+
+    # The first optimizer update must not make the YOLOX loss non-finite. This
+    # CPU-only smoke catches raw-pixel/normalization mistakes before GPU spend.
+    smoke_indices = detector_indices[:min(4, len(detector_indices))]
+    smoke_model = detector_model(args.native, torch.device("cpu"))
+    set_trainable_detector(smoke_model, "head")
+    smoke_inputs, smoke_targets, _ = batch_detector(detector_data, smoke_indices, torch.device("cpu"))
+    smoke_optimizer = torch.optim.SGD([parameter for parameter in smoke_model.parameters() if parameter.requires_grad],
+                                      lr=5e-3, momentum=.9)
+    smoke_losses = []
+    for _ in range(3):
+        smoke_optimizer.zero_grad(set_to_none=True)
+        smoke_loss = smoke_model(smoke_inputs, smoke_targets)["total_loss"]
+        require(torch.isfinite(smoke_loss), "detector CPU smoke loss")
+        smoke_loss.backward()
+        require(all(torch.isfinite(parameter.grad).all() for parameter in smoke_model.parameters()
+                    if parameter.grad is not None), "detector CPU smoke gradients")
+        torch.nn.utils.clip_grad_norm_([parameter for parameter in smoke_model.parameters() if parameter.requires_grad],
+                                       config["detector"]["gradient_clip_norm"])
+        smoke_optimizer.step()
+        smoke_losses.append(float(smoke_loss.detach()))
     report = {"state": "passed", "finished_at": time.time(),
               "numpy": np.__version__, "pillow": PIL.__version__,
               "classifier_examples": len(classifier_indices),
@@ -898,7 +931,9 @@ def validate_preprocessing(args: argparse.Namespace, config: dict[str, Any], rec
               "detector_examples": len(detector_indices),
               "detector_source_size_kinds": [list(value) for value in sorted(seen)[:len(detector_indices)]],
               "detector_target_max_abs": detector_max_abs,
-              "detector_image_max_abs": detector_image_max_abs}
+              "detector_image_max_abs": detector_image_max_abs,
+              "detector_cpu_smoke_losses": smoke_losses,
+              "detector_training_input_range": [float(smoke_inputs.min()), float(smoke_inputs.max())]}
     write_json(args.run / "validation" / "report.json", report)
     resource_guard(args.run, config, time.process_time())
     return report
@@ -953,6 +988,7 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
     d_loss = detector(d_inputs, d_targets)["total_loss"]
     d_loss.backward()
     require(torch.isfinite(d_loss) and all(torch.isfinite(p.grad).all() for p in detector.parameters() if p.grad is not None), "detector preflight gradients")
+    torch.nn.utils.clip_grad_norm_([p for p in detector.parameters() if p.requires_grad], config["detector"]["gradient_clip_norm"])
     d_optimizer.step()
     negative_inputs, negative_targets, _ = batch_detector(detector_data, negative, device)
     negative_loss = detector(negative_inputs, negative_targets)["total_loss"]
@@ -961,7 +997,9 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
     for _ in range(30):
         d_optimizer.zero_grad(set_to_none=True)
         tiny_detector_loss = detector(d_inputs, d_targets)["total_loss"]
-        tiny_detector_loss.backward(); d_optimizer.step()
+        tiny_detector_loss.backward()
+        torch.nn.utils.clip_grad_norm_([p for p in detector.parameters() if p.requires_grad], config["detector"]["gradient_clip_norm"])
+        d_optimizer.step()
     require(float(tiny_detector_loss.detach()) <= tiny_detector_initial * 0.8, "detector tiny-set fit")
 
     # Warm once, then project the exact frozen update counts from planned batch sizes.
@@ -974,7 +1012,9 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
     d_inputs, d_targets, _ = batch_detector(detector_data, detector_indices, device)
     torch.cuda.synchronize(); started = time.monotonic()
     d_optimizer.zero_grad(set_to_none=True); timed_d_loss = detector(d_inputs, d_targets)["total_loss"]
-    timed_d_loss.backward(); d_optimizer.step(); torch.cuda.synchronize()
+    timed_d_loss.backward()
+    torch.nn.utils.clip_grad_norm_([p for p in detector.parameters() if p.requires_grad], config["detector"]["gradient_clip_norm"])
+    d_optimizer.step(); torch.cuda.synchronize()
     detector_step_seconds = time.monotonic() - started
     classifier_projection = classifier_step_seconds * 10000 * 1.5
     detector_projection = detector_step_seconds * 9000 * 1.5
