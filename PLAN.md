@@ -456,3 +456,18 @@ authorized continuation without those labels. Preserve remaining evidence and
 prior charges; do not substitute new proposals for lost human truth. Synthetic
 bulk remains conditional on current independently checked fidelity evidence.
 Commit reviewed changes before every unattended launch, as required by the owner.
+
+## Owner decision: joint issue #3 synthetic bootstrap — 2026-09-07
+
+The completed synthetic seed may train both pinned browser candidates in one
+frozen schedule: MobileNetV3 for 13 image-relative square classes and YOLOX-Nano
+for one-class inner-grid localization. This supersedes the earlier classifier-only
+bootstrap wording, but does not add another model family, seed, sweep or GPU time.
+The exact recipe, gates and limitations are in
+[the issue #3 training decision](docs/issue-3-training-plan.md).
+
+Synthetic development/calibration remains TRAIN-purpose diagnostic evidence. A
+successful run may improve annotation proposals but cannot establish real-page
+promotion, touch qualification, replace the classical-detector comparison or
+complete issue #3. Keep FENShot as the shipped default until the existing paired
+real-development, qualification, WASM and browser gates pass.

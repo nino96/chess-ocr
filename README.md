@@ -166,3 +166,29 @@ The reviewed seed was lost; the owner waived recovery and authorized continuatio
 Rebuilt real labels are unverified proposals. See the synthetic status command and
 current fidelity evidence below the pipeline documentation; no dataset-readiness
 or recognition gain is claimed.
+
+## First native training bootstrap (issue #3)
+
+The [frozen training decision](docs/issue-3-training-plan.md) authorizes one
+synthetic-only MobileNetV3 classifier plus YOLOX-Nano detector schedule. It is
+diagnostic and may assist annotation; it is not real-page qualification and does
+not replace the shipped FENShot baseline.
+
+Create the issue #3 worktree from merged `origin/main`, commit reviewed training
+code, then initialize it with explicit read-only roots for the completed corpus
+and admitted native artifacts:
+
+```sh
+pnpm run training -- init \
+  --dataset-root /absolute/path/to/chess-ocr/work/dataset/synthetic \
+  --native-root /absolute/path/to/chess-ocr
+pnpm run training -- start
+pnpm run training -- status
+pnpm run training -- stop
+```
+
+Initialization rejects dirty code, stale corpus/model hashes, an unavailable
+pinned container, unsafe paths and insufficient free space. `start` returns after
+the bounded background supervisor is live. Checkpoints, curves, exports and raw
+logs remain under ignored `work/training/`; do not publish them without the
+separate artifact rights review required by this repository.

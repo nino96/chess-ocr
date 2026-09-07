@@ -21,6 +21,7 @@
     "test:smoke": "playwright test --project=chromium --grep \"manual selection, actual WASM\"",
     "dataset": "node scripts/dataset.mjs",
     "synthetic": "node scripts/synthetic.mjs",
+    "training": "node scripts/training.mjs",
     "test:dataset-review": "node --test tests/dataset-review.browser.mjs tests/dataset-app.browser.mjs"
   },
   "dependencies": {

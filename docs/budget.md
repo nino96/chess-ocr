@@ -125,15 +125,24 @@ Initial suballocations within those totals:
 | Real acquisition increment | Up to 12 newly reviewed source families and 500 selected pages initially; source/lineage decisions before download; later increments by measured coverage benefit within global limits |
 | Proposal comparison | One bounded identical-input screen, up to 100 non-qualification pages, 2 CPU hours; assess misses and review-time benefit, not just confidence |
 
-Issue #3 may reserve up to **8 local GX10 GPU hours** for one frozen synthetic
+Issue #3 may reserve up to **8 local GB10 GPU hours** for one frozen synthetic
 bootstrap schedule plus its recovery check and bounded diagnosis, under this owner
-approval. No training starts until its data/renderer checks, merged dependencies,
-exact recipe and GPU attempt ledger are ready. This is not permission for seeds,
-model-family sweeps or truncating a meaningful schedule to fit a mechanics test.
+approval. The 2026-09-07 owner update permits that schedule to train both the
+pinned MobileNetV3 classifier and YOLOX-Nano detector; it does not add another
+seed, model family, sweep or GPU time. No training starts until its data/renderer
+checks, merged dependencies, exact recipe and GPU attempt ledger are ready. This
+is not permission for seeds, model-family sweeps or truncating a meaningful
+schedule to fit a mechanics test.
 Keep this GPU reservation separate from the CPU acquisition ledger; record actual
 attempts in the same project's local status artifact. No GPU time is spent by the
 kickoff acquisition itself. If the measured schedule cannot fit, resize the plan
 prospectively and report it rather than silently overrun.
+
+The joint schedule further reserves at most four CPU hours and 16 GiB of ignored
+training output while preserving the existing 30% free-space floor. Its allocation
+is 20 GPU minutes for required preflight/recovery evidence, 100 minutes for the
+classifier, 340 minutes for the detector and 20 minutes for one bounded diagnosis.
+Unused time is not authority for another experiment.
 
 The concrete sequence and acceptance boundaries are in
 [dataset kickoff](dataset-kickoff.md). Reviewed public inventories/URLs/hashes and
