@@ -179,7 +179,7 @@ function button(text: string, action: () => Promise<void>): HTMLButtonElement {
 function renderQueue(): void {
   const pages = filtered();
   el("queue-count").textContent =
-    `${pages.length} pages · ${data?.sources.map((s) => `${s.label}: ${s.split}, ${s.selected_pages} selected pages`).join("; ") ?? ""}`;
+    `${pages.length} matching pages of ${data?.pages.length ?? 0} total · ${data?.sources.map((s) => `${s.label}: ${s.split}, ${s.selected_pages} selected pages`).join("; ") ?? ""}`;
   el<HTMLButtonElement>("review-next").disabled = pages.length === 0;
   el("pages").replaceChildren(
     ...pages.slice(0, limit).map((p) => {
