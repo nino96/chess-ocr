@@ -95,6 +95,10 @@ user corrections. Side-to-move, castling, en passant and counters are not inferr
 
 ## Status and boundaries
 
+For a plain-language explanation of the completed training audit, paired browser
+diagnostic, shared runtime, privacy model, and remaining gates, start with
+[understanding the v2 evaluation work](docs/v2-evaluation-guide.md).
+
 Issue [#1](https://github.com/nino96/chess-ocr/issues/1) implements the runnable
 baseline; see [evidence and remaining gates](docs/issue-1-evidence.md).
 [#2](https://github.com/nino96/chess-ocr/issues/2) owns real source-diverse data,
