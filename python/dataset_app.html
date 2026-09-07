@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dataset review · Chess OCR</title>
+    <style>
+      :root {
+        font-family: system-ui, sans-serif;
+        color: #233c3b;
+        background: #f3f5f2;
+      }
+      body {
+        margin: 0;
+      }
+      header,
+      main {
+        padding: 20px;
+        max-width: 1600px;
+        margin: auto;
+      }
+      header {
+        border-bottom: 1px solid #b7cac0;
+      }
+      h1 {
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 1.15rem;
+      }
+      p {
+        line-height: 1.5;
+      }
+      button,
+      select,
+      input {
+        font: inherit;
+        padding: 10px;
+        margin: 4px;
+        min-height: 44px;
+      }
+      button {
+        background: white;
+        color: #233c3b;
+        border: 1px solid #8aaba0;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button.primary {
+        background: #17594c;
+        color: white;
+      }
+      :focus-visible {
+        outline: 3px solid #cd8a19;
+        outline-offset: 2px;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+      .panel {
+        background: white;
+        border: 1px solid #c8d5cd;
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      #summary {
+        font-size: 1.05rem;
+      }
+      #message {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      #pages {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+        gap: 12px;
+      }
+      .page-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+      .page-card img {
+        width: 120px;
+        height: 145px;
+        object-fit: contain;
+        background: #f5f5f5;
+      }
+      .accepted {
+        border-color: #17594c;
+      }
+      iframe {
+        width: 100%;
+        min-height: 1150px;
+        border: 0;
+        background: white;
+      }
+      #editor-nav {
+        position: sticky;
+        top: 0;
+        background: #f3f5f2;
+        padding: 8px;
+        z-index: 3;
+        border-bottom: 1px solid #c8d5cd;
+      }
+      .danger {
+        color: #9d2525;
+        border-color: #9d2525;
+      }
+      details > summary {
+        cursor: pointer;
+        padding: 12px 0;
+      }
+      dialog {
+        border: 1px solid #8aaba0;
+        border-radius: 12px;
+        max-width: 560px;
+      }
+      dialog::backdrop {
+        background: #102c2690;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1>Dataset review</h1>
+      <p>
+        Review your pages, save your edits, and move to the next page. One human
+        review accepts a page.
+      </p>
+      <p id="summary" role="status">Loading local dataset…</p>
+      <div class="row">
+        <button id="refresh">Refresh status</button>
+        <button data-action="start">Start / resume rendering</button>
+        <button data-action="stop">Stop job</button>
+        <button data-action="validate">Validate dataset</button>
+        <button data-action="export">Export candidate dataset</button>
+      </div>
+      <p id="message" role="status" aria-live="polite"></p>
+    </header>
+    <main>
+      <section id="queue" class="panel">
+        <div class="row">
+          <h2>Pages</h2>
+          <label
+            >Document
+            <select id="document">
+              <option value="">All documents</option>
+            </select></label
+          >
+          <label
+            >Show
+            <select id="filter">
+              <option value="pending">Needs review</option>
+              <option value="all">All pages</option>
+              <option value="accepted">Accepted</option>
+            </select></label
+          >
+          <button id="review-next" class="primary">Review next page</button>
+        </div>
+        <p id="queue-count"></p>
+        <div id="pages"></div>
+        <button id="more" hidden>Show more pages</button>
+      </section>
+      <section id="editor-section" hidden>
+        <div id="editor-nav" class="row">
+          <button id="back">Back to pages</button>
+          <button id="previous">Previous page</button>
+          <button id="next">Next page</button>
+          <strong id="editing"></strong>
+          <span id="save-status" role="status">Loading editor…</span>
+          <button id="retry-save">Retry saving draft</button>
+        </div>
+        <iframe id="editor" title="Page annotation editor"></iframe>
+      </section>
+      <details class="panel" id="duplicates-panel">
+        <summary>Cross-split leakage candidates</summary>
+        <p>
+          Same-split similarities are retained automatically and do not need
+          owner adjudication. Investigate cross-split candidates before export;
+          do not use an arbitrary “distinct” decision to clear a leakage issue.
+          Exact byte matches cannot be marked distinct.
+        </p>
+        <div id="duplicates"></div>
+      </details>
+      <details class="panel">
+        <summary>Ingest PDFs from the local inbox</summary>
+        <p>
+          Place intended PDFs in <code>work/dataset/inbox/</code> using VS Code.
+          This ingests every PDF currently there as one related artwork family.
+          Existing identical sources are reused. Remove already ingested inbox
+          copies before adding a different family; managed originals remain.
+        </p>
+        <label
+          >Family / group
+          <input id="group" maxlength="80" placeholder="family-a"
+        /></label>
+        <label
+          >Split
+          <select id="split">
+            <option value="train">Training</option>
+            <option value="dev">Development</option>
+          </select></label
+        >
+        <label
+          >Pages per PDF
+          <input id="page-count" type="number" min="1" max="2000" value="5"
+        /></label>
+        <label
+          >Your name
+          <input id="ingest-reviewer" maxlength="80" autocomplete="name"
+        /></label>
+        <p>
+          <label
+            ><input id="authorize" type="checkbox" /> I am authorized to use
+            these inbox PDFs for the selected local training/evaluation
+            purpose.</label
+          >
+        </p>
+        <p>
+          This selects uniformly spaced pages, including pages without boards.
+          Page selection is fixed at admission; it does not automatically locate
+          all diagrams.
+        </p>
+        <button id="ingest">Ingest inbox PDFs</button>
+      </details>
+      <details class="panel">
+        <summary>Start over</summary>
+        <p>
+          Archive the current dataset and begin with an empty queue. Your inbox
+          PDFs remain available. Approved limits and cumulative usage are
+          retained; archived files still use local storage.
+        </p>
+        <button id="reset" class="danger">Start over…</button>
+      </details>
+      <details class="panel" id="archives-panel">
+        <summary>Archives</summary>
+        <p>
+          Old datasets kept by Start over. Deleting an archive permanently
+          removes its recovery copy and frees storage. Your active dataset,
+          inbox and cumulative usage remain unchanged.
+        </p>
+        <button id="refresh-archives">Refresh archives</button>
+        <p id="archive-status" role="status"></p>
+        <div id="archives"></div>
+      </details>
+      <p>
+        Private local workspace. Pages and annotations are served through your
+        SSH tunnel; no external service receives them. Automatic board and piece
+        proposals are not yet implemented.
+      </p>
+    </main>
+    <dialog id="reset-dialog" aria-labelledby="reset-title">
+      <h2 id="reset-title">Archive this dataset and start over?</h2>
+      <p>
+        This clears the active documents, rendered pages, annotations, drafts
+        and exports by moving them into a recoverable local archive. Inbox PDFs
+        are retained. Stop any running job first.
+      </p>
+      <p>
+        It does not refund consumed compute, downloads or review decisions. The
+        archive remains private and counts toward storage.
+      </p>
+      <label
+        >Type START OVER <input id="reset-confirmation" autocomplete="off"
+      /></label>
+      <div class="row">
+        <button id="reset-cancel">Cancel</button
+        ><button id="reset-confirm" class="danger">
+          Archive and start over
+        </button>
+      </div>
+    </dialog>
+    <dialog id="archive-delete-dialog" aria-labelledby="archive-delete-title">
+      <h2 id="archive-delete-title">Permanently delete this archive?</h2>
+      <p id="archive-delete-target"></p>
+      <p>
+        This cannot be undone. It deletes the archived originals, pages,
+        annotations and exports. It does not delete your active dataset or
+        inbox, or refund past compute and review usage.
+      </p>
+      <label
+        >Type DELETE <input id="archive-delete-confirmation" autocomplete="off"
+      /></label>
+      <p id="archive-delete-error" role="alert"></p>
+      <div class="row">
+        <button id="archive-delete-cancel">Cancel</button>
+        <button id="archive-delete-confirm" class="danger">
+          Permanently delete archive
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

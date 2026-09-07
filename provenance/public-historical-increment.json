@@ -1,0 +1,107 @@
+{
+  "schema": "chess-ocr-public-provenance/1",
+  "public": true,
+  "review_date": "2026-09-07",
+  "scope": "public-input-reacquisition-only",
+  "records": [
+    {
+      "id": "capablanca-rights",
+      "kind": "license-evidence",
+      "url": "https://commons.wikimedia.org/wiki/Special:PermanentLink/966530114",
+      "revision": "Commons oldid 966530114; rendered HTML captured 2026-09-07",
+      "sha256": "59b2683d1bb16c36f200a0e95759c49370b65cab35350519bd50473c1b61b6e7",
+      "bytes": 157132,
+      "max_bytes": 2097152,
+      "attribution": "Wikimedia Commons contributors; Jose Raul Capablanca",
+      "license": "Evidence page: Commons terms; original and mechanical scan marked public domain, author died 1942, US publication 1921",
+      "evidence_ids": []
+    },
+    {
+      "id": "capablanca-1921",
+      "kind": "pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/c/ca/Chess_fundamentals_%28IA_chessfundamental00capa%29.pdf",
+      "revision": "1921 Harcourt Brace edition; IA chessfundamental00capa; byte-pinned scan",
+      "sha256": "e4c5693a3f3ee3d89c0321a4092557fca721b01351effee0f8bb7d6c8fde4a78",
+      "bytes": 11941046,
+      "max_bytes": 16777216,
+      "attribution": "Jose Raul Capablanca; Harcourt Brace; Internet Archive digitization",
+      "license": "Public-domain historical work and mechanical scan; local page-pixel training only reviewed, no font extraction or payload publication authorized",
+      "evidence_ids": ["capablanca-rights"],
+      "pages": [
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+        38, 39, 40, 41, 42, 43
+      ],
+      "split": "train",
+      "lineage": [
+        "capablanca-fundamentals-editions",
+        "capablanca-harcourt-1921-diagrams"
+      ]
+    },
+    {
+      "id": "dewitt-rights",
+      "kind": "license-evidence",
+      "url": "https://commons.wikimedia.org/wiki/Special:PermanentLink/1124807361",
+      "revision": "Commons oldid 1124807361; rendered HTML captured 2026-09-07",
+      "sha256": "ff98a3538b66ec1c5c640f8eef4e7d8b89340b7b2152f24f3acaa5209e91700b",
+      "bytes": 107548,
+      "max_bytes": 2097152,
+      "attribution": "Wikimedia Commons contributors; Henry Chadwick and Charles Henry Stanley",
+      "license": "Evidence page: Commons terms; original historical US work marked public domain, publication 1880",
+      "evidence_ids": []
+    },
+    {
+      "id": "dewitt-1880",
+      "kind": "pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/6/65/De_Witt%27s_American_chess_manual._Containing_full_instructions_for_young_players_%28IA_dewittsamericanc00chad%29.pdf",
+      "revision": "1880 De Witt edition; IA dewittsamericanc00chad; byte-pinned scan",
+      "sha256": "d1a3540b545ac4c5d5f6aaee44bf17d1b2c159226c43fc14723777212e6bb004",
+      "bytes": 7060620,
+      "max_bytes": 8388608,
+      "attribution": "Henry Chadwick and Charles Henry Stanley; De Witt; Internet Archive digitization",
+      "license": "Public-domain historical work; local page-pixel evaluation only reviewed, no font extraction or payload publication authorized",
+      "evidence_ids": ["dewitt-rights"],
+      "pages": [
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+        38, 39, 40, 41, 42, 43
+      ],
+      "split": "qualification",
+      "lineage": [
+        "dewitt-american-manual-editions",
+        "legacy-dewitt-staunton-engraved-family"
+      ]
+    },
+    {
+      "id": "staunton-rights",
+      "kind": "license-evidence",
+      "url": "https://commons.wikimedia.org/wiki/Special:PermanentLink/1245072527",
+      "revision": "Commons oldid 1245072527; rendered HTML captured 2026-09-07",
+      "sha256": "044fee61f21c497fcc2d9f96d24cca636650d23beb5d3f54ffa30545050604c4",
+      "bytes": 113589,
+      "max_bytes": 2097152,
+      "attribution": "Wikimedia Commons contributors; Howard Staunton",
+      "license": "Evidence page: Commons terms; historical work marked public domain in origin and life-plus-100 countries, author died 1874, publication 1848",
+      "evidence_ids": []
+    },
+    {
+      "id": "staunton-1848",
+      "kind": "pdf",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/a/a5/The_chess-player%27s_handbook_-_a_popular_and_scientific_introduction_to_the_game_of_chess%2C_exemplified_in_games_actually_played_by_the_greatest_masters_and_illustrated_by_num_%28IA_chessplayershand00stau%29.pdf",
+      "revision": "1848 Henry G Bohn edition; IA chessplayershand00stau; byte-pinned scan",
+      "sha256": "806c92594a9ff6d9e08c4b30c69f08c3f427cce0fe2e9283e4a52f7ff81b806e",
+      "bytes": 33799670,
+      "max_bytes": 41943040,
+      "attribution": "Howard Staunton; Henry G Bohn; unsigned historical wood engravings; Internet Archive digitization",
+      "license": "Public-domain historical work; local page-pixel evaluation only reviewed, no font extraction or payload publication authorized",
+      "evidence_ids": ["staunton-rights"],
+      "pages": [
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+        38, 39, 40, 41, 42, 43
+      ],
+      "split": "qualification",
+      "lineage": [
+        "staunton-bohn-related-editions",
+        "legacy-dewitt-staunton-engraved-family"
+      ]
+    }
+  ]
+}

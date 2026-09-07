@@ -117,3 +117,52 @@ originals, datasets, weights, exports and generated runs under ignored
 `data/`, `cache/`, `work/` or `artifacts/`. Never commit payloads, private positions
 or credentials. No paid service, telemetry, runtime CDN or server upload is part
 of this baseline.
+
+## Dataset collection (issue #2)
+
+The current [synthetic-first kickoff](docs/dataset-kickoff.md) starts asset
+collection and an audited synthetic seed alongside real-source acquisition.
+It replaces bulk manual labeling as the collection strategy. Generation now has
+an executable fidelity gate; annotation assistance remains pending its comparison
+and workflow checks.
+Same-split duplicate candidates are retained with an export audit, not a required
+human task. Cross-split leakage remains blocking.
+
+Start with the [operator workflow](docs/operator-workflow.md) for the sequence
+from feasibility collection to larger-budget approval and planned model training,
+including your review/approval checkpoints and the agent's responsibilities.
+
+The [local dataset pipeline](docs/dataset-pipeline.md) accepts PDFs placed in
+ignored `work/dataset/inbox/`, uses explicit resource limits, and runs resumable
+background acquisition/rendering with `pnpm run dataset start`, `status` and
+`stop`. For review, start the primary local dashboard with:
+
+```sh
+pnpm run dataset serve --port 8766
+```
+
+It binds to loopback only. In VS Code use **Ports** → **Forward a Port** → `8766`
+→ **Open Browser**. The dashboard keeps server-side drafts, presents the queue and
+page thumbnails, and accepts a page after one human pixel review; model or agent
+proposals cannot accept it. `ingest` records explicit local-use authorization and
+a conservative source/artwork group. Validation and hashed train/dev exports are
+implemented; no real collection or recognition qualification is claimed.
+Use **Archives** to see dated archive sizes and permanently delete an old recovery
+copy after confirmation. Active data, inbox PDFs and cumulative usage are retained.
+Reviewed public-source provenance is tracked for
+[reproducibility](docs/reproducibility.md). Private source details, operational
+history, downloaded assets and generated datasets remain local and ignored.
+
+The [synthetic renderer and job controller](docs/synthetic-dataset.md) implement
+deterministic recipes, independent fidelity gating, bounded generation, lazy
+training inputs and resumable `pnpm run synthetic start/status/stop` commands.
+Bulk use requires current fidelity evidence. Coverage and recognition limitations
+remain explicit. The [public dataset screen](docs/public-dataset-review.md)
+distinguishes physical-board datasets from the printed-page collection.
+
+Dataset work suffered a
+[test-isolation and recovery incident](docs/dataset-incident-2026-09-07.md).
+The reviewed seed was lost; the owner waived recovery and authorized continuation.
+Rebuilt real labels are unverified proposals. See the synthetic status command and
+current fidelity evidence below the pipeline documentation; no dataset-readiness
+or recognition gain is claimed.

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFile, lstat } from "node:fs/promises";
+import { publicProvenance } from "./public-provenance.ts";
 const paths = execFileSync(
   "git",
   ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -27,6 +28,28 @@ for (const path of paths) {
     failures.push(`${path}: symlink or oversized source`);
   else if ((await readFile(path)).includes(0))
     failures.push(`${path}: binary payload`);
+  if (/\.(sqlite3(?:-.*)?|evidence|f32)$|\.(review|dataset)\.json$/i.test(path))
+    failures.push(`${path}: local dataset metadata/payload`);
+  if (path.endsWith(".json") && stat.isFile() && stat.size <= 1024 * 1024) {
+    const value = JSON.parse(await readFile(path, "utf8"));
+    if (
+      path.startsWith("provenance/") ||
+      value?.schema === "chess-ocr-public-provenance/1"
+    ) {
+      if (
+        !/^provenance\/[a-z0-9-]+\.json$/.test(path) ||
+        !publicProvenance.safeParse(value).success
+      )
+        failures.push(`${path}: invalid reviewed public provenance`);
+    }
+    if (
+      typeof value?.schema === "string" &&
+      value.schema.startsWith("chess-ocr-dataset")
+    )
+      failures.push(
+        `${path}: dataset records must remain local, including metadata`,
+      );
+  }
 }
 if (failures.length)
   throw new Error(

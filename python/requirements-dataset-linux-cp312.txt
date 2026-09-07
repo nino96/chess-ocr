@@ -1,0 +1,6 @@
+# CPython 3.12 Linux ARM64 and x86_64 wheels already used by native tooling.
+# Other OS/Python combinations require a separately verified wheel lock.
+--only-binary=:all:
+pillow==11.1.0 \
+    --hash=sha256:93a18841d09bcdd774dcdc308e4537e1f867b3dec059c131fde0327899734aa1 \
+    --hash=sha256:7fdadc077553621911f27ce206ffcbec7d3f8d7b50e0da39f10997e8e2bb7f6a

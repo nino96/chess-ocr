@@ -175,8 +175,10 @@ source page/crop/grid and a board freshly rendered from proposed labels together
 Review actual geometry, orientation and all 64 squares, preserve accepted edits,
 and quarantine conflicts. Independent checks must cover each new glyph design,
 all uncertainty and a stratified sample of accepted training data. Qualification
-truth requires independent human checking. Time the first 20 reviews and report
-disagreement rates and review cost; model agreement/legality are not ground truth.
+truth requires a human check independent of model/agent proposals; one such human
+review accepts a page. Time the first 20 reviews and report review cost and
+observed corrections/ambiguities honestly; do not report a disagreement rate from
+one reviewer. Model agreement/legality are not ground truth.
 
 Synthetic position specifications supply intended labels, not proof that a
 renderer drew them correctly. Verify every renderer/design against an independent
@@ -294,3 +296,163 @@ pnpm 11.11.0; `pnpm-lock.yaml` is authoritative and CI uses frozen installs.
 The npm lock was imported without changing any package/version identities.
 Historical evidence retains the original command names rather than relabeling
 previous npm runs as pnpm runs. Current commands are in README.
+
+## Issue #2 pipeline and owner privacy direction — 2026-09-06
+
+Dataset implementation can proceed independently of the deferred physical-device
+checks. The 2026-09-07 owner update supersedes the original blanket metadata ban:
+reviewed public-source URLs, revisions, hashes, rights, selection and reconstruction
+recipes belong in Git; private source details and operational/mixed records remain
+ignored. Downloaded originals and generated datasets/weights are never committed.
+See [public provenance and reconstruction limits](docs/reproducibility.md).
+
+The [implemented pipeline](docs/dataset-pipeline.md) provides a local PDF inbox,
+explicit local-use ingestion, bounded background rendering/acquisition, status,
+stop/resume, hash/revision checks, one-human acceptance independent of model
+proposals, and candidate train/dev
+exports. Complete-page targets preserve negatives and exclude unsupported cases.
+Artwork independence remains a reviewed property, not a count of downloaded files.
+The first real tranche, verified coverage/lineage, measured human audit, approved
+synthetic fidelity, and downstream #3 preprocessing parity remain undelivered.
+Pipeline mechanics do not establish the dataset or recognition outcome.
+
+## Owner decision: review dashboard and managed reset — 2026-09-06
+
+The loopback dashboard is the primary dataset-review workflow: it presents the
+local queue/page thumbnails, retains server-side drafts, submits human reviews and
+advances the queue. One human pixel review independent of any model/agent proposal
+accepts a matching annotation; a second review is optional for every split,
+including qualification. This does not relax the frozen #3 recognition metrics or
+the requirement that qualification truth be independently human checked.
+
+The confirmation-required **Start over** action archives managed state under
+ignored `work/dataset/archives/<timestamp-id>/`, retains the inbox and approved
+budget, and carries cumulative acquisition/review use forward. An archive remains
+storage usage; reset is not a budget refund and has no automated restore command.
+The **Archives** panel lists dated sizes and supports explicitly confirmed permanent
+deletion of one unchanged archive. Deletion reclaims storage without changing
+active data, inbox files or cumulative usage; unsafe paths and links are rejected.
+These are local workflow controls, not a real collection, qualification result or
+browser-test claim.
+
+## Planned dashboard enhancements before larger collection
+
+Owner direction, 2026-09-06; all work stays in issue #2. The current dashboard
+supports a small manual feasibility batch; successful synthetic workflow tests
+do not establish large-collection throughput. The following are delivery work,
+not implemented capabilities or approval for more acquisition/compute/reviews:
+
+- **Annotation assistance:** deliver the bounded board-proposal and label-prefill
+  comparison below. Measure total human time per board, missed/false boards and
+  geometry/piece corrections; preserve one-human acceptance and edited labels.
+- **Focused review queues:** add filters for page kind, draft/annotation issues,
+  ambiguity and source/condition coverage gaps, with resumable batch progress.
+  Prioritization must not silently exclude negatives, difficult pages or misses.
+- **Concurrent acquisition and review:** remove the whole-job writer-lock conflict
+  so rendering does not block saving reviews. Retain transactional revision guards,
+  request cancellation/recovery, bounded concurrency and budget accounting. Test
+  simultaneous saves, worker stop/resume, reset exclusion and stale results.
+- **Append-only page selection:** allow additional explicitly selected pages of an
+  admitted PDF without changing source identity, prior annotations or frozen split
+  membership. Preview incremental costs, enforce remaining limits, and make retry
+  idempotent; test restart/recovery and duplicate selection.
+- **Acquisition control in the app:** clearly distinguish local PDF admission,
+  source discovery/rights review, and execution of an admitted source queue.
+  Add a UI for reviewing and admitting prepared public-source manifests with their
+  pinned hashes and rights evidence, plus queued/running/failed counts, progress,
+  remaining budget, actionable stop reasons and explicit repaired-job retry.
+  This does not authorize an unattended crawler, new rights decisions or spending.
+- **Measured scale gate:** under a recorded bounded test allocation, measure queue
+  responsiveness, draft-save latency, memory and recovery with representative
+  larger queues. Agree acceptable limits before the run and report distributions,
+  dataset/code hashes and untested conditions; use original synthetic fixtures
+  for tooling load tests and authorized real reviews for human-throughput evidence.
+
+Use the initial manual reviews to estimate annotation effort. The owner approved
+the larger bounded [kickoff allocation](docs/budget.md#issue-2-synthetic-first-kickoff--2026-09-07);
+reset/archive deletion cannot replenish it. Deliver these usability/scale checks
+before claiming readiness for hundreds of
+boards. This roadmap does not complete issue #2's real dataset outcome.
+
+## Decision: automatic annotation proposals after feasibility
+
+Owner direction, 2026-09-06; owned by issue #2. After the initial manual feasibility
+batch, implement automatic board proposals and piece-label prefilling before
+scaling annotation to the larger collection. This is committed follow-up scope,
+not an already implemented feature. No board detector has been selected.
+
+- Use the feasibility batch's reviewed pages and measured manual-review effort
+  to define one bounded comparison of a classical multi-board grid detector and
+  the existing FENShot detection path. Preserve full-page negatives, missed boards,
+  small/multiple boards and difficult geometry; do not select only successes.
+- Choose localization separately from square-label proposals. The unchanged
+  chess-trained FENShot classifier is an initial label-prefilling candidate,
+  not a mandated detector or teacher. The unadapted YOLOX/ImageNet checkpoints
+  are not assumed to provide useful chess annotations.
+- Select the proposal workflow by total human annotation time, missed and false
+  board proposals, grid corrections and piece corrections on identical pages.
+  Record a measured advance/defer/reject decision rather than assuming either
+  approach wins. Qualification inputs remain untouched.
+- Implement bounded resumable proposal jobs, source/model/preprocessing identity,
+  editable candidate outlines and labels, and preservation of human corrections
+  across retries, geometry edits and late results. Provide executable tests and
+  documented start/status/stop/review commands before larger-scale use.
+- Predictions remain proposals: confidence cannot replace independent human
+  verification or admit labels automatically. One human pixel review, independent
+  of the proposal/model, accepts a matching annotation; a second review is
+  optional, never mandatory. Keep all input-specific evidence
+  and private-derived metadata local; commit reviewed public recipes/provenance.
+  Freeze the comparison limits within an approved
+  allocation; this decision does not increase the current collection/GPU budget.
+
+Handoff gate: report the selected method, measured review-time benefit and failure
+coverage, or the specific reason neither method advances. The operator workflow
+must reflect the implemented behavior before the larger annotation phase begins.
+
+## Owner decision: synthetic-first kickoff — 2026-09-07
+
+Follow [the concrete kickoff plan](docs/dataset-kickoff.md) and its bounded local
+resource ledger. Preserve existing human labels as-is; same-split duplicate
+candidates stay in candidate exports with a multiplicity audit, not mandatory
+human decisions. Cross-split leakage still blocks export and is the agent's
+investigation task. Do not silently mark candidates distinct or alter labels.
+
+Begin rights-reviewed asset acquisition and deterministic synthetic rendering
+before the large real tranche. After per-design renderer fidelity and training
+gates, #3 may run a synthetic-only bootstrap to improve proposal assistance before
+the 300–500-real-board tranche exists. This prospectively supersedes the earlier
+real-tranche-first learning sequence, not real-data delivery or qualification.
+The later real adaptation mix remains a separately frozen hypothesis. Acquire
+diverse real pages in parallel without requiring immediate manual annotation.
+
+The owner should review short confirmation/correction batches, not manufacture
+the bulk labels or adjudicate same-split similarity. Qualification still needs
+one human pixel check and real source separation; synthetic counts do not replace
+those gates. No training accuracy or five-minute total review guarantee is implied.
+Use existing issues #2/#3 and the dataset branch; no independent workstream was added.
+
+## Dataset generation implementation — 2026-09-07
+
+The [synthetic pipeline](docs/synthetic-dataset.md) now supplies deterministic
+page recipes, independent renderer controls, persisted bounded start/status/stop,
+durable attempt accounting and candidate lazy training interfaces. Actual bulk
+launch requires a current passing fidelity report; implementation is not proof
+of recognition improvement. Partial stress records remain outside usable targets.
+
+The [historical increment and public dataset screen](docs/public-dataset-review.md)
+adds explicit public provenance and fixed page selections. Closely related De Witt
+and Staunton artwork remains one reserved group. Modern-document diversity,
+development groups, accepted real annotations, assisted-review measurements and
+the full first-real-tranche outcome remain incomplete.
+
+The owner permits justified, bounded local budget increases at lead discretion;
+retain prior charges and record reasons. Preserve at least 30% filesystem free
+space. Paid/cloud services and asset/model publication remain unauthorized.
+
+The
+[test-isolation incident](docs/dataset-incident-2026-09-07.md) removed the active
+reviewed seed and its recovery archive. The owner explicitly waived recovery and
+authorized continuation without those labels. Preserve remaining evidence and
+prior charges; do not substitute new proposals for lost human truth. Synthetic
+bulk remains conditional on current independently checked fidelity evidence.
+Commit reviewed changes before every unattended launch, as required by the owner.

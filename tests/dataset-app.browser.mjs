@@ -1,0 +1,281 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { chromium } from "@playwright/test";
+
+test("connected review saves drafts, recovers reloads, rejects conflicts, accepts one human and archives reset", async () => {
+  const build = spawnSync(
+    process.execPath,
+    [
+      "node_modules/typescript/bin/tsc",
+      "--project",
+      "tsconfig.dataset-app.json",
+    ],
+    { stdio: "pipe" },
+  );
+  assert.equal(
+    build.status,
+    0,
+    build.stderr.toString() + build.stdout.toString(),
+  );
+  const fixture = spawn(
+    process.env.DATASET_PYTHON || "work/dataset-venv/bin/python",
+    [
+      "-u",
+      "-c",
+      `
+import signal
+from python.test_dataset_pipeline import PipelineTests
+from python import dataset_server as server
+fixture = PipelineTests()
+fixture.setUp()
+def stop(*_):
+    raise KeyboardInterrupt()
+signal.signal(signal.SIGTERM, stop)
+try:
+    for name in ('first', 'second', 'third'):
+        fixture.sample(name, group=name)
+    server.initialize()
+    app = server.Server(('127.0.0.1', 0))
+    print(app.server_port, flush=True)
+    try:
+        app.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        app.server_close()
+finally:
+    fixture.tearDown()
+`,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let browser;
+  let stderr = "";
+  fixture.stderr.on("data", (part) => {
+    stderr += part.toString();
+  });
+  try {
+    const port = await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(new Error("Synthetic review server did not start: " + stderr)),
+        15_000,
+      );
+      fixture.once("exit", () => {
+        clearTimeout(timer);
+        reject(new Error("Synthetic server exited: " + stderr));
+      });
+      fixture.stdout.once("data", (part) => {
+        clearTimeout(timer);
+        resolve(Number(part.toString().trim()));
+      });
+    });
+    const origin = `http://127.0.0.1:${port}`;
+    browser = await chromium.launch();
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const errors = [];
+    const external = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    context.on("request", (r) => {
+      if (!r.url().startsWith(origin) && !r.url().startsWith("data:"))
+        external.push(r.url());
+    });
+    await page.goto(origin);
+    await page.locator(".page-card").first().waitFor();
+    assert.equal(await page.locator(".page-card").count(), 3);
+    await page
+      .getByRole("button", { name: "Review next page", exact: true })
+      .click();
+    let editor = page.frameLocator("#editor");
+    await editor.locator("#app").waitFor({ state: "visible" });
+    await editor
+      .getByRole("button", { name: "Add board", exact: true })
+      .click();
+    await editor.getByLabel("Square a8", { exact: true }).selectOption("K");
+    await editor
+      .getByLabel("Reviewer identity", { exact: true })
+      .fill("owner-test");
+    await editor.getByLabel("I am a human reviewer", { exact: true }).check();
+    await page.getByText("Draft saved on GX10", { exact: true }).waitFor();
+    await page.reload();
+    await page.locator(".page-card").first().click();
+    editor = page.frameLocator("#editor");
+    await page.getByText("Saved draft restored", { exact: true }).waitFor();
+    assert.equal(
+      await editor.getByLabel("Square a8", { exact: true }).inputValue(),
+      "K",
+    );
+    assert.equal(
+      await editor
+        .getByLabel("Reviewer identity", { exact: true })
+        .inputValue(),
+      "owner-test",
+    );
+
+    const other = await context.newPage();
+    await other.goto(origin);
+    await other.locator(".page-card").first().click();
+    await other.getByText("Saved draft restored", { exact: true }).waitFor();
+    await editor.getByLabel("Square b8", { exact: true }).selectOption("Q");
+    await page.getByText("Draft saved on GX10", { exact: true }).waitFor();
+    await other
+      .frameLocator("#editor")
+      .getByLabel("Square b8", { exact: true })
+      .selectOption("R");
+    await other
+      .getByText("draft changed in another tab; reload before saving", {
+        exact: true,
+      })
+      .waitFor();
+    await other.close();
+
+    await page.route("**/api/draft", (route) => route.abort());
+    await editor.getByLabel("Square c8", { exact: true }).selectOption("N");
+    await page
+      .getByText("Draft not saved — retry before leaving", { exact: true })
+      .waitFor();
+    await page
+      .getByRole("button", { name: "Back to pages", exact: true })
+      .click();
+    assert.equal(await page.locator("#editor-section").isVisible(), true);
+    await page.unroute("**/api/draft");
+    await page
+      .getByRole("button", { name: "Retry saving draft", exact: true })
+      .click();
+    await page.getByText("Draft saved on GX10", { exact: true }).waitFor();
+    await editor.locator("#complete-page").check();
+    let dropped = false;
+    await page.route("**/api/review", async (route) => {
+      if (!dropped) {
+        dropped = true;
+        const committed = await route.fetch();
+        assert.equal(committed.status(), 200);
+        await route.abort();
+      } else await route.continue();
+    });
+    await editor
+      .getByRole("button", { name: "Submit review & next", exact: true })
+      .click();
+    await page.getByText("Document 2 · page 1", { exact: true }).waitFor();
+    await editor.locator("#app").waitFor({ state: "visible" });
+    assert.equal(
+      await editor
+        .getByLabel("Reviewer identity", { exact: true })
+        .inputValue(),
+      "owner-test",
+    );
+    await editor
+      .getByRole("button", { name: "No board on this page", exact: true })
+      .click();
+    await editor.locator("#complete-page").check();
+    await editor
+      .getByRole("button", { name: "Submit review & next", exact: true })
+      .click();
+    await page.getByText("Document 3 · page 1", { exact: true }).waitFor();
+    await editor.locator("#app").waitFor({ state: "visible" });
+    await editor
+      .getByLabel("Page kind", { exact: true })
+      .selectOption("partial");
+    await editor.locator("#complete-page").check();
+    await editor
+      .getByRole("button", { name: "Submit review & next", exact: true })
+      .click();
+    await page.locator("#queue").waitFor({ state: "visible" });
+    assert.match(
+      await page.locator("#summary").textContent(),
+      /3 \/ 3 pages accepted/,
+    );
+    assert.match(
+      await page.locator("#summary").textContent(),
+      /3 \/ 20 review decisions/,
+    );
+    await page.locator("#filter").selectOption("all");
+    assert.equal(await page.locator(".page-card.accepted").count(), 3);
+    const touchContext = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true,
+    });
+    const touchPage = await touchContext.newPage();
+    await touchPage.goto(origin);
+    await touchPage.locator("#filter").selectOption("all");
+    await touchPage.locator(".page-card").nth(1).tap();
+    const touchEditor = touchPage.frameLocator("#editor");
+    await touchEditor
+      .getByRole("button", { name: "No board on this page", exact: true })
+      .tap();
+    await touchPage.getByText("Draft saved on GX10", { exact: true }).waitFor();
+    assert.equal(
+      await touchEditor.getByLabel("Page kind", { exact: true }).inputValue(),
+      "negative",
+    );
+    await touchContext.close();
+    await page.getByText("Start over", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Start over…", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Archive and start over", exact: true })
+      .click();
+    await page
+      .getByText("type START OVER exactly to reset the dataset", {
+        exact: true,
+      })
+      .waitFor();
+    await page
+      .getByLabel("Type START OVER", { exact: true })
+      .fill("START OVER");
+    await page
+      .getByRole("button", { name: "Archive and start over", exact: true })
+      .click();
+    await page.locator("#reset-dialog").waitFor({ state: "hidden" });
+    assert.match(
+      await page.locator("#summary").textContent(),
+      /0 \/ 0 pages accepted/,
+    );
+    assert.match(
+      await page.locator("#summary").textContent(),
+      /3 \/ 20 review decisions/,
+    );
+    assert.match(await page.locator("#message").textContent(), /recoverable/);
+    await page.getByText("Archives", { exact: true }).click();
+    await page.locator(".archive-entry").waitFor();
+    assert.match(await page.locator(".archive-entry").textContent(), /MiB/);
+    await page
+      .getByRole("button", { name: "Delete archive…", exact: true })
+      .click();
+    await page.locator("#archive-delete-cancel").click();
+    assert.equal(await page.locator(".archive-entry").count(), 1);
+    await page
+      .getByRole("button", { name: "Delete archive…", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Permanently delete archive", exact: true })
+      .click();
+    await page
+      .getByText("type DELETE exactly to delete this archive", { exact: true })
+      .waitFor();
+    await page.getByLabel("Type DELETE", { exact: true }).fill("DELETE");
+    await page
+      .getByRole("button", { name: "Permanently delete archive", exact: true })
+      .click();
+    await page.locator("#archive-delete-dialog").waitFor({ state: "hidden" });
+    await page.getByText("No archives.", { exact: true }).waitFor();
+    assert.equal(await page.locator(".archive-entry").count(), 0);
+    assert.match(
+      await page.locator("#summary").textContent(),
+      /3 \/ 20 review decisions/,
+    );
+    await page.reload();
+    await page.getByText("Archives", { exact: true }).click();
+    await page.getByText("No archives.", { exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+    assert.deepEqual(external, []);
+  } finally {
+    if (browser) await browser.close();
+    fixture.kill("SIGTERM");
+    await new Promise((resolve) => fixture.once("exit", resolve));
+  }
+});
