@@ -288,6 +288,12 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
     _, recipes = verify_dataset(dataset, config, verify_images=True)
     verify_native(native, config)
     overlay = safe_directory(args.overlay_root)
+    classifier_checkpoint = None
+    if args.detector_only:
+        require(args.classifier_checkpoint is not None, "detector-only mode requires --classifier-checkpoint")
+        classifier_checkpoint = args.classifier_checkpoint.resolve()
+        require(classifier_checkpoint.is_file() and not classifier_checkpoint.is_symlink(),
+                "classifier checkpoint is missing or unsafe")
     prior_attempts = []
     prior_charge = 0.0
     if args.prior_run:
@@ -315,6 +321,9 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
         "dependency_overlay_root": str(overlay),
         "container_user": {"uid": os.getuid(), "gid": os.getgid()},
         "prior_gpu_seconds_charged": prior_charge,
+        "mode": "detector-only" if args.detector_only else "full",
+        "classifier_checkpoint": ({"path": str(classifier_checkpoint), "sha256": sha256(classifier_checkpoint)}
+                                   if classifier_checkpoint else None),
         "split_sha256": identity(split),
         "created_at": time.time(),
     }
@@ -338,6 +347,11 @@ def verify_frozen(run: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     require(frozen.get("container_id") == docker_identity(config["environment"]["image"]), "training image changed")
     require(frozen.get("dependency_overlay") == directory_identity(Path(frozen["dependency_overlay_root"])), "training dependency overlay changed")
     require(frozen.get("container_user") == {"uid": os.getuid(), "gid": os.getgid()}, "container user changed")
+    if frozen.get("mode") == "detector-only":
+        checkpoint = frozen.get("classifier_checkpoint") or {}
+        path = Path(checkpoint.get("path", ""))
+        require(path.is_file() and not path.is_symlink() and sha256(path) == checkpoint.get("sha256"),
+                "classifier checkpoint changed or missing")
     verify_dataset(Path(frozen["dataset_root"]), config, verify_images=True)
     verify_native(Path(frozen["native_root"]), config)
     split = read_json(run / "split.json")
@@ -354,7 +368,7 @@ def container_command(run: Path, frozen: dict[str, Any], segment: str) -> list[s
     overlay = Path(frozen["dependency_overlay_root"])
     require(overlay.is_dir() and not overlay.is_symlink(), "verified GPU dependency overlay missing")
     command = ["docker", "run", "--rm", "--name", container_name(frozen, segment)]
-    if segment != "validate":
+    if segment not in {"validate", "classifier-export"}:
         command.extend(("--gpus", "all"))
     command.extend([
         "--network", "none", "--read-only",
@@ -371,6 +385,12 @@ def container_command(run: Path, frozen: dict[str, Any], segment: str) -> list[s
         "--dataset", "/dataset", "--native", "/native", "--run", "/output",
         "--split", "/output/split.json",
     ])
+    if frozen.get("mode") == "detector-only":
+        checkpoint = Path(frozen["classifier_checkpoint"]["path"])
+        command.extend(("--classifier-checkpoint", "/classifier-checkpoint.pt"))
+        # Insert the read-only checkpoint mount before the environment and image arguments.
+        mount_at = command.index("-e")
+        command[mount_at:mount_at] = ["-v", f"{checkpoint}:/classifier-checkpoint.pt:ro"]
     return command
 
 
@@ -419,6 +439,26 @@ def stop_container(frozen: dict[str, Any], segment: str) -> None:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
 
 
+def materialize_classifier_checkpoint(run: Path, frozen: dict[str, Any]) -> None:
+    if frozen.get("mode") != "detector-only":
+        return
+    marker = run / "classifier.complete.json"
+    if marker.exists():
+        require(read_json(marker).get("run_id") == frozen["run_id"], "invalid classifier export marker")
+        return
+    log_path = run / "classifier-export.log"
+    try:
+        with log_path.open("ab") as log:
+            result = subprocess.run(container_command(run, frozen, "classifier-export"), stdout=log,
+                                    stderr=subprocess.STDOUT, timeout=3600)
+    except subprocess.TimeoutExpired:
+        stop_container(frozen, "classifier-export")
+        raise Invalid("classifier checkpoint export timed out") from None
+    require(result.returncode == 0, "classifier checkpoint export failed; inspect its retained log")
+    write_json(marker, {"run_id": frozen["run_id"], "segment": "classifier-export",
+                        "finished_at": time.time(), "log_sha256": sha256(log_path)})
+
+
 def run_worker(run: Path) -> None:
     run = safe_directory(run)
     with lock(run):
@@ -433,6 +473,7 @@ def run_worker(run: Path) -> None:
         state.update(state="running", pid=os.getpid(), process_start=process_start(os.getpid()))
         write_json(run / "state.json", state)
         try:
+            materialize_classifier_checkpoint(run, frozen)
             for segment, _ in segments:
                 marker = run / f"{segment}.complete.json"
                 if marker.exists():
@@ -556,7 +597,24 @@ def status(run: Path) -> dict[str, Any]:
     run = safe_directory(run)
     state = read_json(run / "state.json")
     live = bool(state.get("pid") and process_start(state["pid"]) == state.get("process_start"))
-    reported = {**state, "process_live": live}
+    frozen = read_json(run / "frozen.json") if (run / "frozen.json").exists() else {}
+    resources = frozen.get("recipe", {}).get("resources", {})
+    attempts = state.get("attempts", [])
+    consumed_by_segment = {segment: sum(float(attempt.get("elapsed_seconds", 0)) for attempt in attempts
+                                        if attempt.get("segment") == segment)
+                           for segment in ("preflight", "classifier", "detector")}
+    capacity = float(resources.get("gpu_seconds", 0))
+    reported = {key: value for key, value in state.items() if key != "attempts"}
+    reported.update({"process_live": live,
+                     "current_attempt": attempts[-1] if attempts else None,
+                     "budget": {"unit": "GPU-seconds (one second of allocated active GPU-container wall time)",
+                                "capacity_seconds": capacity,
+                                "consumed_seconds": float(state.get("gpu_seconds_charged", 0)),
+                                "remaining_seconds": max(0.0, capacity - float(state.get("gpu_seconds_charged", 0))),
+                                "by_segment": {segment: {"capacity_seconds": float(resources.get(f"{segment}_gpu_seconds", 0)),
+                                                           "consumed_seconds": consumed_by_segment[segment],
+                                                           "remaining_seconds": max(0.0, float(resources.get(f"{segment}_gpu_seconds", 0)) - consumed_by_segment[segment])}
+                                                for segment in consumed_by_segment}}})
     if state.get("state") == "running" and not live:
         reported["state"] = "interrupted"
     for model in ("classifier", "detector"):
@@ -575,10 +633,15 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--native-root", type=Path, required=True)
     init.add_argument("--overlay-root", type=Path, required=True)
     init.add_argument("--prior-run", type=Path)
+    init.add_argument("--detector-only", action="store_true")
+    init.add_argument("--classifier-checkpoint", type=Path)
     init.add_argument("--run-root", type=Path, default=DEFAULT_RUN)
-    for name in ("start", "status", "stop", "run"):
+    for name in ("start", "stop", "run"):
         command = sub.add_parser(name)
         command.add_argument("--run-root", type=Path, default=DEFAULT_RUN)
+    status_command = sub.add_parser("status")
+    status_command.add_argument("--run-root", type=Path, default=DEFAULT_RUN)
+    status_command.add_argument("--history", action="store_true")
     return value
 
 
@@ -593,6 +656,8 @@ def main() -> None:
             result = stop(args.run_root)
         elif args.command == "status":
             result = status(args.run_root)
+            if args.history:
+                result["attempts"] = read_json(args.run_root / "state.json").get("attempts", [])
         else:
             run_worker(args.run_root)
             result = status(args.run_root)

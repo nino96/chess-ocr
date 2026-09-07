@@ -53,7 +53,10 @@ The container runs as the invoking host UID/GID, writes only through `/output`,
 and resolves NumPy 2.2.4, Pillow 11.1.0, OpenCV headless 4.11.0.86,
 safetensors 0.5.3 and timm 1.0.15 from a hash-frozen ignored overlay built from
 the existing local wheelhouse. A repaired attempt imports every prior attempt and
-charge; a new run directory cannot reset the cumulative reservation.
+charge; a new run directory cannot reset the cumulative reservation when
+`--prior-run` is supplied. A reviewed detector-only continuation may instead omit
+`--prior-run`, provide the hash-verified completed classifier checkpoint, and
+consume a separately frozen reservation without redoing classifier optimization.
 
 Before `start` can allocate a GPU, the exact frozen, network-disabled container now
 runs a CPU-only validation segment. It verifies dependency pins and output writes,

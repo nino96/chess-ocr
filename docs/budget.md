@@ -144,6 +144,13 @@ is 20 GPU minutes for required preflight/recovery evidence, 100 minutes for the
 classifier, 340 minutes for the detector and 20 minutes for one bounded diagnosis.
 Unused time is not authority for another experiment.
 
+The training controller reports this reservation in GPU-seconds. One GPU-second
+is one second of wall time while a scheduled training container owns the GPU; it
+is not a count of optimizer updates. Preflight, classifier and detector segments
+each have a frozen allocation, retries consume the same segment allocation, and
+the normal status view reports capacity, consumed and remaining seconds. Use
+`status --history` for the complete attempt ledger.
+
 The concrete sequence and acceptance boundaries are in
 [dataset kickoff](dataset-kickoff.md). Reviewed public inventories/URLs/hashes and
 selection recipes are tracked; private details and operational job state stay ignored.

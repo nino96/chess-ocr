@@ -809,6 +809,29 @@ def export_classifier(model: nn.Module, run: Path, config: dict[str, Any], metri
                "metrics": metrics, "publication": "not-authorized"})
 
 
+def export_classifier_checkpoint(args: argparse.Namespace, config: dict[str, Any],
+                                 recipes: list[dict[str, Any]], page_split: dict[int, str]) -> None:
+    """Materialize a completed classifier checkpoint for detector-only runs."""
+    checkpoint_path = args.classifier_checkpoint
+    require(checkpoint_path is not None and checkpoint_path.is_file() and not checkpoint_path.is_symlink(),
+            "classifier checkpoint is missing or unsafe")
+    model = classifier_model(args.native, torch.device("cpu"))
+    saved = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    model.load_state_dict(saved["model"], strict=True)
+    development = evaluate_classifier(model, ClassifierBoards(args.dataset, recipes, page_split, "development"),
+                                      torch.device("cpu"))
+    calibration = calibrate_classifier(model, ClassifierBoards(args.dataset, recipes, page_split, "calibration"),
+                                       torch.device("cpu"))
+    selected_step = int(saved.get("global_step", 0))
+    export_classifier(model, args.run, config, {"development": development, "calibration": calibration,
+                                                "selected_global_step": selected_step,
+                                                "source_checkpoint_sha256": sha256(checkpoint_path)})
+    write_json(args.run / "classifier" / "progress.json", {"state": "complete", "global_step": selected_step,
+               "scheduled_updates": 10000, "selected_global_step": selected_step,
+               "development": development, "calibration": calibration,
+               "source_checkpoint": str(checkpoint_path), "source_checkpoint_sha256": sha256(checkpoint_path)})
+
+
 def export_detector(model: nn.Module, run: Path, config: dict[str, Any], metrics: dict[str, Any]) -> None:
     model.eval().cpu()
     model.head.decode_in_inference = False
@@ -1055,12 +1078,13 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
-    value.add_argument("segment", choices=("validate", "preflight", "classifier", "detector"))
+    value.add_argument("segment", choices=("validate", "preflight", "classifier-export", "classifier", "detector"))
     value.add_argument("--recipe", type=Path, required=True)
     value.add_argument("--dataset", type=Path, required=True)
     value.add_argument("--native", type=Path, required=True)
     value.add_argument("--run", type=Path, required=True)
     value.add_argument("--split", type=Path, required=True)
+    value.add_argument("--classifier-checkpoint", type=Path)
     return value
 
 
@@ -1071,6 +1095,9 @@ def main() -> None:
         config, recipes, page_split = load_inputs(args)
         if args.segment == "validate":
             validate_preprocessing(args, config, recipes, page_split)
+            return
+        if args.segment == "classifier-export":
+            export_classifier_checkpoint(args, config, recipes, page_split)
             return
         device = configure(config["seed"])
         if args.segment == "preflight":

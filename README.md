@@ -201,3 +201,29 @@ Commands without `--run-root` always address the default
 newest repaired attempt. If initialization uses a repaired directory such as
 `work/training/synthetic-bootstrap-v1-repair-3`, pass that same `--run-root` to
 every later `status`, `start`, and `stop` command.
+
+Status reports the current run and a budget summary by default. GPU budget is
+measured in GPU-seconds: one second while a scheduled training container owns
+the GPU. It includes preflight and optimization segments, and a retry consumes
+the same frozen reservation. The summary shows total capacity, consumed time,
+remaining time, and each segment's allocation. Add `--history` when the full
+attempt ledger is needed for audit or diagnosis.
+
+If a completed classifier checkpoint needs to be reused after an export-only
+failure, initialize a fresh detector-only run without `--prior-run`. This gives
+the new run its own frozen reservation while retaining the old run as evidence:
+
+```sh
+pnpm run training -- init --detector-only \
+  --classifier-checkpoint /absolute/path/to/repair-3/classifier/checkpoint-010000.pt \
+  --dataset-root /absolute/path/to/chess-ocr/work/dataset/synthetic \
+  --native-root /absolute/path/to/chess-ocr \
+  --overlay-root /absolute/path/to/ignored/training-overlay \
+  --run-root work/training/synthetic-bootstrap-v1-detector-1
+pnpm run training -- start --run-root work/training/synthetic-bootstrap-v1-detector-1
+```
+
+The controller verifies the checkpoint hash, exports it before detector
+optimization, marks the classifier complete without classifier GPU charges, and
+then runs the detector schedule. Choose the new reservation in the reviewed
+recipe before initialization; omitting `--prior-run` is what makes it fresh.

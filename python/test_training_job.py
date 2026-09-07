@@ -85,6 +85,40 @@ class TrainingJobTest(unittest.TestCase):
             self.assertNotIn("--gpus", validation)
             self.assertIn("validate", validation)
 
+    def test_detector_only_container_mounts_checkpoint_without_gpu_for_export(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            overlay = root / "overlay"; overlay.mkdir()
+            checkpoint = root / "checkpoint.pt"; checkpoint.write_bytes(b"checkpoint")
+            frozen = {"run_id": "e" * 64, "repository_root": str(root), "dataset_root": str(root),
+                      "native_root": str(root), "dependency_overlay_root": str(overlay),
+                      "container_user": {"uid": 123, "gid": 456}, "recipe": self.config(),
+                      "mode": "detector-only", "classifier_checkpoint":
+                      {"path": str(checkpoint), "sha256": training_job.sha256(checkpoint)}}
+            command = training_job.container_command(root, frozen, "classifier-export")
+            self.assertNotIn("--gpus", command)
+            self.assertIn("/classifier-checkpoint.pt", command)
+            self.assertIn("classifier-export", command)
+
+    def test_status_defaults_to_current_attempt_and_reports_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            training_job.write_json(root / "state.json", {
+                "state": "running", "stage": "classifier", "pid": None,
+                "process_start": None, "gpu_seconds_charged": 125,
+                "attempts": [{"segment": "preflight", "elapsed_seconds": 25},
+                             {"segment": "classifier", "elapsed_seconds": 100}],
+            })
+            training_job.write_json(root / "frozen.json", {"recipe": {"resources": {
+                "gpu_seconds": 1000, "preflight_gpu_seconds": 100,
+                "classifier_gpu_seconds": 300, "detector_gpu_seconds": 600}}})
+            result = training_job.status(root)
+            self.assertNotIn("attempts", result)
+            self.assertEqual(result["current_attempt"]["segment"], "classifier")
+            self.assertEqual(result["budget"]["capacity_seconds"], 1000)
+            self.assertEqual(result["budget"]["consumed_seconds"], 125)
+            self.assertEqual(result["budget"]["by_segment"]["classifier"]["remaining_seconds"], 200)
+
     def test_failed_cpu_validation_never_requests_gpu_or_writes_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
