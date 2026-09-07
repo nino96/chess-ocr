@@ -3,6 +3,12 @@
 These are the repository-wide rules. Tool-specific instruction files must
 point here rather than create competing policies.
 
+## Codex sandbox execution
+
+- In the restricted Codex sandbox, request escalation before `pnpm run check`,
+  Playwright/browser suites, Git writes, and networked Git/GitHub commands. Do
+  not first retry these known-incompatible commands inside the sandbox.
+
 ## Read first and own the outcome
 
 Read the assigned issue, its dependencies and acceptance criteria, README.md,
