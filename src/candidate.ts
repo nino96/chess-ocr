@@ -2,6 +2,28 @@ import { z } from "zod";
 import { LABELS, identitySchema } from "./contract.ts";
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
+export const LEGACY_DETECTOR_PREPROCESSING = "legacy-bgr-div255-v1";
+export const V2_DETECTOR_PREPROCESSING = "yolox-rgb-imagenet-v2";
+export const detectorPreprocessingSchema = z.enum([
+  LEGACY_DETECTOR_PREPROCESSING,
+  V2_DETECTOR_PREPROCESSING,
+]);
+
+export function detectorInputFromRgba(
+  pixels: Uint8ClampedArray,
+  preprocessing: z.infer<typeof detectorPreprocessingSchema>,
+): Float32Array {
+  if (pixels.length !== 416 * 416 * 4)
+    throw new Error("Invalid detector raster size");
+  const input = new Float32Array(3 * 416 * 416);
+  const legacy = preprocessing === LEGACY_DETECTOR_PREPROCESSING;
+  for (let i = 0; i < 416 * 416; i++) {
+    input[i] = pixels[i * 4 + (legacy ? 2 : 0)]!;
+    input[416 * 416 + i] = pixels[i * 4 + 1]!;
+    input[2 * 416 * 416 + i] = pixels[i * 4 + (legacy ? 0 : 2)]!;
+  }
+  return input;
+}
 const model = z
   .object({
     sha256: hash,
@@ -13,10 +35,11 @@ const model = z
 
 export const candidateManifestSchema = z
   .object({
-    schema: z.literal("chess-ocr-candidate-bundle/1"),
+    schema: z.literal("chess-ocr-candidate-bundle/2"),
     name: z.string().min(1).max(120),
     version: z.string().min(1).max(120),
     qualification: z.literal("synthetic-development-only"),
+    preprocessing: detectorPreprocessingSchema,
     classifier: model.extend({
       labels: z.array(z.string()).length(13),
     }),
@@ -73,6 +96,15 @@ export async function loadCandidateFiles(
   } catch {
     throw new Error("Candidate manifest is not valid UTF-8 JSON");
   }
+  if (
+    value &&
+    typeof value === "object" &&
+    "schema" in value &&
+    value.schema === "chess-ocr-candidate-bundle/1"
+  )
+    throw new Error(
+      "Candidate bundle schema 1 has ambiguous preprocessing; regenerate it as schema 2",
+    );
   const manifest = candidateManifestSchema.parse(value);
   const [classifier, detector] = await Promise.all([
     readBounded(classifierFile, 32 * 1024 * 1024),

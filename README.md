@@ -190,9 +190,20 @@ synthetic-only MobileNetV3 classifier plus YOLOX-Nano detector schedule. It is
 diagnostic and may assist annotation; it is not real-page qualification and does
 not replace the shipped FENShot baseline.
 
-Create the issue #3 worktree from merged `origin/main`, commit reviewed training
-code, then initialize it with explicit read-only roots for the completed corpus
-and admitted native artifacts:
+Corrective triage found that the retained detector used incompatible BGR/divide-
+by-255 transfer preprocessing and a fixed-decay EMA. Its export also failed after
+training/evaluation because lifecycle results were not persisted before export.
+Treat that candidate as `legacy-bgr-div255-v1`, synthetic-only and uncalibrated.
+The classifier checkpoint remains reusable. The completed v2 detector started
+from the original COCO checkpoint with RGB/ImageNet normalization, ramped
+resumable EMA, durable export states and export-only retry. It completed all
+9,000 updates and selected step 9,000. Its saturated synthetic metrics are
+diagnostic only; real development, refinement and browser gates remain open.
+
+From a clean branch based on merged `origin/main`, commit reviewed training code,
+then initialize it with explicit read-only roots for the completed corpus and
+admitted native artifacts. The commands below describe the retained v1 controller;
+do not start another v1 detector run:
 
 ```sh
 pnpm run training -- init \
@@ -225,8 +236,47 @@ the same frozen reservation. The summary shows total capacity, consumed time,
 remaining time, and each segment's allocation. Add `--history` when the full
 attempt ledger is needed for audit or diagnosis.
 
-If a completed classifier checkpoint needs to be reused after an export-only
-failure, initialize a fresh detector-only run without `--prior-run`. This gives
+The corrected detector-only run uses `recipes/synthetic-bootstrap-v2.json` and
+the original COCO detector; it reuses the completed classifier checkpoint
+without charging classifier GPU time. Initialize it without `--prior-run`:
+
+```sh
+pnpm run training -- init --detector-only \
+  --recipe recipes/synthetic-bootstrap-v2.json \
+  --classifier-checkpoint /absolute/path/to/synthetic-bootstrap-v1-detector-3/classifier/checkpoint-010000.pt \
+  --dataset-root /absolute/path/to/chess-ocr/work/dataset/synthetic \
+  --native-root /absolute/path/to/chess-ocr \
+  --overlay-root /absolute/path/to/ignored/training-overlay \
+  --run-root work/training/synthetic-bootstrap-v2-detector
+pnpm run training -- start --run-root work/training/synthetic-bootstrap-v2-detector
+pnpm run training -- status --run-root work/training/synthetic-bootstrap-v2-detector
+```
+
+The completed run is immutable. To recompute corrected synthetic DEV/CAL metrics
+from its selected checkpoint and ONNX without optimization or lifecycle changes:
+
+```sh
+pnpm run training -- audit --run-root work/training/synthetic-bootstrap-v2-detector
+pnpm run training -- ledger --training-root work/training
+```
+
+The audit includes partial/unsupported inputs as no-valid-board cases and writes
+only ignored `audits/` evidence plus its log. The ledger deduplicates inherited
+attempt histories across retained runs. The corrected v2 synthetic threshold is
+`1.0` with zero recall because confident region detections remained on partial
+grids. The hash-bound bundle therefore abstains in automatic mode; this is a
+refinement/rejection blocker, not evidence to relax the threshold or retrain.
+
+If a completed v2 detector needs only its failed export retried, use this exact
+export-only command; it does not repeat optimization, final evaluation or
+calibration:
+
+```sh
+pnpm run training -- export --run-root work/training/synthetic-bootstrap-v2-detector --segment detector
+```
+
+If a completed classifier checkpoint needs to be reused after a v1 export-only
+failure, initialize a fresh detector-only v1 run without `--prior-run`. This gives
 the new run its own frozen reservation while retaining the old run as evidence:
 
 ```sh

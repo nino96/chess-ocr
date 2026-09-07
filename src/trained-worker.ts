@@ -2,6 +2,7 @@ import * as ort from "onnxruntime-web/wasm";
 import { verifiedAsset } from "./assets.ts";
 import {
   candidateManifestSchema,
+  detectorInputFromRgba,
   type CandidateManifest,
 } from "./candidate.ts";
 import {
@@ -123,12 +124,7 @@ async function detect(
   context.imageSmoothingQuality = "low";
   context.drawImage(source, 0, 0, resizedWidth, resizedHeight);
   const pixels = context.getImageData(0, 0, 416, 416).data;
-  const input = new Float32Array(3 * 416 * 416);
-  for (let i = 0; i < 416 * 416; i++) {
-    input[i] = pixels[i * 4 + 2]!;
-    input[416 * 416 + i] = pixels[i * 4 + 1]!;
-    input[2 * 416 * 416 + i] = pixels[i * 4]!;
-  }
+  const input = detectorInputFromRgba(pixels, candidate.preprocessing);
   const tensor = new ort.Tensor("float32", input, [1, 3, 416, 416]);
   try {
     const output = await session.run({ [candidate.detector.input]: tensor });
@@ -219,6 +215,10 @@ function probabilities(logits: Float32Array, square: number): number[] {
   return values.map((value) => value / total);
 }
 
+function preprocessingIdentity(candidate: CandidateManifest): string {
+  return `candidate-v2/${candidate.preprocessing}/mobilenetv3-rgb96`;
+}
+
 async function recognize(
   request: Request,
   rgba: Uint8ClampedArray,
@@ -244,7 +244,7 @@ async function recognize(
         "The synthetic candidate found no board. Select the inner grid manually or use the baseline.",
       ],
       model: modelIdentity,
-      preprocessing: "candidate-v1/yolox416-bgr/mobilenetv3-rgb96",
+      preprocessing: preprocessingIdentity(candidate),
       timings: { totalMs: performance.now() - start },
     });
   const values = classifierInput(source, boxes);
@@ -307,7 +307,7 @@ async function recognize(
       "Orientation remains unknown; image rows are preserved top to bottom.",
     ],
     model: modelIdentity,
-    preprocessing: "candidate-v1/yolox416-bgr/mobilenetv3-rgb96",
+    preprocessing: preprocessingIdentity(candidate),
     timings: { totalMs: performance.now() - start },
   });
 }
@@ -338,7 +338,9 @@ self.onmessage = async (event: MessageEvent) => {
         "Local candidate recognition failed. Reload its verified files.",
       ],
       model: identity,
-      preprocessing: "candidate-v1/yolox416-bgr/mobilenetv3-rgb96",
+      preprocessing: manifest
+        ? preprocessingIdentity(manifest)
+        : "candidate-v2/unconfigured",
       timings: { totalMs: 0 },
     });
   } finally {

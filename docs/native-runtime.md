@@ -6,6 +6,12 @@ checkpoints, tensors, outputs and ONNX files remain ignored under `cache/native`
 
 ## Contract for browser parity
 
+Corrective note (2026-09-07): the original YOLOX vector below proved native and
+browser agreement on a project-defined BGR `0..255` tensor. It did not establish
+that this tensor matched the pinned checkpoint's official transfer preprocessing.
+It is retained as `legacy-bgr-div255-v1` evidence, not as a checkpoint-compatible
+training contract.
+
 Run `python/native_runtime.py prepare-inputs`. It creates an original synthetic,
 font-free `416x416` raw RGB raster plus exact little-endian float32 input tensors
 and `work/native/parity-input-manifest.json`. The manifest is the browser test
@@ -15,10 +21,17 @@ WASM is executed. Browser decoding may differ from Pillow by a few bicubic pixel
 that is a failed parity check to diagnose, not an excuse to silently accept a new
 preprocessing version.
 
-| model | graph input | source preprocessing | graph output |
-| --- | --- | --- | --- |
-| YOLOX-Nano COCO | `[1,3,416,416]`, `float32` BGR, `0..255` | RGB source; aspect-fit to 416, pad BGR channels with 114; no mean/std | raw `[1,3549,85]`: `tx,ty,tw,th,obj,80 class scores`; browser applies grid/stride decode then NMS |
-| MobileNetV3 Small 100 | `[1,3,224,224]`, `float32` RGB | bicubic resize shorter side to 256, center crop 224, then `(x/255-mean)/std` with ImageNet values | `[1,1000]` ImageNet logits |
+| legacy probe          | graph input                              | source preprocessing                                                                              | graph output                                                                                      |
+| --------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| YOLOX-Nano COCO       | `[1,3,416,416]`, `float32` BGR, `0..255` | RGB source; aspect-fit to 416, pad BGR channels with 114; no mean/std                             | raw `[1,3549,85]`: `tx,ty,tw,th,obj,80 class scores`; browser applies grid/stride decode then NMS |
+| MobileNetV3 Small 100 | `[1,3,224,224]`, `float32` RGB           | bicubic resize shorter side to 256, center crop 224, then `(x/255-mean)/std` with ImageNet values | `[1,1000]` ImageNet logits                                                                        |
+
+The corrected YOLOX v2 contract is separate: the native/browser graph accepts raw
+letterboxed RGB float32 `0..255` with pad `114`, and an in-graph wrapper divides by
+255 then applies ImageNet RGB mean/std normalization. Training feeds the equivalent
+normalized RGB tensor directly. V2 parity must compare an OpenCV BGR source through
+the pinned upstream helper with non-square geometry and channel sentinels at
+maximum tensor difference `1e-6`.
 
 For YOLOX, `decode_in_inference` is deliberately **false**. The rows are ordered
 by strides 8, 16 and 32 (52² + 26² + 13² = 3549). For each row, generate grid
@@ -46,7 +59,7 @@ linked artifact before downloading and place the factual result in
 [native-notices.json](../python/native-notices.json) preserves the public notice
 URLs, review date and SHA-256 identities of the reviewed LICENSE/model card:
 
-* YOLOX-Nano is requested only from the official
+- YOLOX-Nano is requested only from the official
   [0.1.1rc0 GitHub release](https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.pth).
   Local admission uses the official release's association with the YOLOX project,
   source commit `e1052df71842031413f6030723c3607b839c80ce`, and that project's
@@ -54,7 +67,7 @@ URLs, review date and SHA-256 identities of the reviewed LICENSE/model card:
   The asset has no separate GitHub release license field. This is therefore a
   reviewed basis for local issue-#1 evaluation/export only; retain the Apache
   notice and obtain a separate artifact review before redistribution or release.
-* MobileNet is requested only from the pinned commit of the official
+- MobileNet is requested only from the pinned commit of the official
   [timm Hugging Face repository](https://huggingface.co/timm/mobilenetv3_small_100.lamb_in1k).
   Its model card declares Apache-2.0 at full revision
   `1824797e7887cbec1990e4adbd6675960a36c589`. Record the model-file URL and
@@ -111,10 +124,10 @@ Python 3.12.3, Torch `2.6.0+cpu`, timm `1.0.15`, ONNX `1.17.0`, and ONNX
 Runtime `1.20.1` produced the following ignored assets. CPU ORT agreed with the
 native reference forward to the stated maximum absolute difference.
 
-| model | source identity | checkpoint SHA-256 | ONNX SHA-256 | output SHA-256 | native/ORT max abs |
-| --- | --- | --- | --- | --- | --- |
-| YOLOX-Nano | release `0.1.1rc0`, source `e1052df71842031413f6030723c3607b839c80ce` | `cd28f55fbbc1829f99d9ac9b38a16d259a22889739c8728ea877610201feff7b` | `b1b8da1585106dc116bf591b83c6197e0f3c8711f88181e55e601aec031c8e7c` | `f831ac8f73d2deaa5535f2bb06ce40fc426a235fc801be596bc577a1ee20322a` | `7.319450378417969e-05` |
-| MobileNetV3 Small 100 | HF `1824797e7887cbec1990e4adbd6675960a36c589` | `46d2c063b18125884c48937afa4c49e18128869e52e8db96df48bf0a4d7ff697` | `ffa1e75320f1ad7829d04940e32a3fb707b9cf228f2da7215ba253e4ec71e9a0` | `ed9ded4abd9d8be4ffeb4f270d6740328611fde8ff89efe942e780eb14694c40` | `3.0517578125e-05` |
+| model                 | source identity                                                       | checkpoint SHA-256                                                 | ONNX SHA-256                                                       | output SHA-256                                                     | native/ORT max abs      |
+| --------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ----------------------- |
+| YOLOX-Nano            | release `0.1.1rc0`, source `e1052df71842031413f6030723c3607b839c80ce` | `cd28f55fbbc1829f99d9ac9b38a16d259a22889739c8728ea877610201feff7b` | `b1b8da1585106dc116bf591b83c6197e0f3c8711f88181e55e601aec031c8e7c` | `f831ac8f73d2deaa5535f2bb06ce40fc426a235fc801be596bc577a1ee20322a` | `7.319450378417969e-05` |
+| MobileNetV3 Small 100 | HF `1824797e7887cbec1990e4adbd6675960a36c589`                         | `46d2c063b18125884c48937afa4c49e18128869e52e8db96df48bf0a4d7ff697` | `ffa1e75320f1ad7829d04940e32a3fb707b9cf228f2da7215ba253e4ec71e9a0` | `ed9ded4abd9d8be4ffeb4f270d6740328611fde8ff89efe942e780eb14694c40` | `3.0517578125e-05`      |
 
 `onnx.checker.check_model` and `pip check` passed. The host reported NVIDIA GB10,
 driver `580.159.03`, CUDA 13.0. The separate existing NVIDIA image
@@ -169,7 +182,6 @@ models, not evidence of training throughput, backward-pass correctness, optimize
 recovery or GPU export parity. Those training gates remain in #3. No host driver
 changes or alternative image pulls were made. The raw lead diagnosis is ignored
 `work/native/cudnn-disabled-result.txt`; the default-path failures remain recorded.
-
 
 Native tooling tests (no GPU/model runs):
 

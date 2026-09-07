@@ -4,14 +4,16 @@ import { createHash } from "node:crypto";
 import { File as NodeFile } from "node:buffer";
 import {
   candidateManifestSchema,
+  detectorInputFromRgba,
   loadCandidateFiles,
 } from "../src/candidate.ts";
 
 const manifest = {
-  schema: "chess-ocr-candidate-bundle/1",
+  schema: "chess-ocr-candidate-bundle/2",
   name: "test candidate",
   version: "classifier-1-detector-1",
   qualification: "synthetic-development-only",
+  preprocessing: "yolox-rgb-imagenet-v2",
   classifier: {
     sha256: "a".repeat(64),
     bytes: 1024,
@@ -66,6 +68,27 @@ test("candidate manifest fixes roles, label order, provenance state and bounds",
         },
       }),
     /label order/,
+  );
+});
+
+test("candidate detector packing follows the declared preprocessing", () => {
+  const rgba = new Uint8ClampedArray(416 * 416 * 4);
+  rgba.set([17, 31, 47, 255]);
+  const rgb = detectorInputFromRgba(rgba, "yolox-rgb-imagenet-v2");
+  const bgr = detectorInputFromRgba(rgba, "legacy-bgr-div255-v1");
+  assert.deepEqual([rgb[0], rgb[416 * 416], rgb[2 * 416 * 416]], [17, 31, 47]);
+  assert.deepEqual([bgr[0], bgr[416 * 416], bgr[2 * 416 * 416]], [47, 31, 17]);
+});
+
+test("schema-1 bundles require regeneration", async () => {
+  const old = { ...manifest, schema: "chess-ocr-candidate-bundle/1" };
+  const file = new NodeFile(
+    [JSON.stringify(old)],
+    "candidate.json",
+  ) as unknown as File;
+  await assert.rejects(
+    loadCandidateFiles(file, file, file),
+    /ambiguous preprocessing; regenerate it as schema 2/,
   );
 });
 

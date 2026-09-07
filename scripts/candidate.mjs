@@ -14,7 +14,7 @@ const argv = process.argv.slice(2);
 if (argv[0] === "--") argv.shift();
 if (argv.shift() !== "prepare")
   throw new Error(
-    "Usage: candidate prepare --run-root PATH --output PATH --score-threshold NUMBER",
+    "Usage: candidate prepare --run-root PATH --output PATH --score-threshold NUMBER --preprocessing ID",
   );
 const options = new Map();
 while (argv.length) {
@@ -54,6 +54,7 @@ const digest = (path) =>
 const classifierManifest = readJson(
   underWork(resolve(run, "classifier/selected.manifest.json")),
 );
+const frozen = readJson(underWork(resolve(run, "frozen.json")));
 if (
   classifierManifest.schema !== "chess-ocr-model/1" ||
   classifierManifest.role !== "square-classifier" ||
@@ -62,6 +63,7 @@ if (
 )
   throw new Error("Classifier export manifest is missing or inconsistent");
 let detectorStep;
+let exportedPreprocessing;
 try {
   const detectorManifest = readJson(
     underWork(resolve(run, "detector/selected.manifest.json")),
@@ -73,11 +75,11 @@ try {
   )
     throw new Error("Detector export manifest is inconsistent");
   detectorStep = detectorManifest.metrics?.selected_global_step;
+  exportedPreprocessing = detectorManifest.preprocessing;
 } catch (error) {
   // The first completed schedule was rejected only by the old 1e-4 gate. This
   // recovery is deliberately limited to the documented <=1e-3 failure shape.
   const state = readJson(underWork(resolve(run, "state.json")));
-  const frozen = readJson(underWork(resolve(run, "frozen.json")));
   const log = readFileSync(underWork(resolve(run, "detector.log")), "utf8");
   const matches = [
     ...log.matchAll(/ONNX output parity mismatch: ([0-9.eE+-]+)/g),
@@ -115,20 +117,30 @@ try {
   )
     throw error;
   detectorStep = best.global_step;
+  exportedPreprocessing = "legacy-bgr-div255-v1";
 }
 const threshold = Number(required("--score-threshold"));
 if (!Number.isFinite(threshold) || threshold < 0.001 || threshold > 1)
   throw new Error("Score threshold must be between 0.001 and 1");
+const preprocessing = required("--preprocessing");
+if (
+  preprocessing !== "legacy-bgr-div255-v1" &&
+  preprocessing !== "yolox-rgb-imagenet-v2"
+)
+  throw new Error("Unsupported detector preprocessing identifier");
+if (exportedPreprocessing !== preprocessing)
+  throw new Error("Detector preprocessing does not match its export manifest");
 const classifierStep = Number(
   classifierManifest.metrics?.selected_global_step ?? 0,
 );
 if (!Number.isInteger(classifierStep) || !Number.isInteger(detectorStep))
   throw new Error("Selected checkpoint steps are unavailable");
 const manifest = {
-  schema: "chess-ocr-candidate-bundle/1",
-  name: "synthetic-bootstrap-v1",
+  schema: "chess-ocr-candidate-bundle/2",
+  name: frozen.recipe?.run,
   version: `classifier-${classifierStep}-detector-${detectorStep}`,
   qualification: "synthetic-development-only",
+  preprocessing,
   classifier: {
     sha256: digest(classifier),
     bytes: statSync(classifier).size,
