@@ -96,7 +96,10 @@ def _builtin_manifests():
          "runtime": "fenshot-labeler-v1", "model": identity,
          "preprocessing": "fenshot-0.1.4/rgba-gray-bilinear-256/1",
          "artifact": artifact, "limits": limits},
-        {"schema": SCHEMA, "id": "classical-grid-v1", "capability": "localization",
+        # Keep the prior v1 manifest immutable.  The provider implementation
+        # source changed after v1 shipped (including unrelated adapters), so
+        # the current source-bound identity is a new provider record.
+        {"schema": SCHEMA, "id": "classical-grid-v2", "capability": "localization",
          "runtime": "classical-grid-v1",
          "model": {"name": "chess-ocr classical grid", "version": "1", "sha256": classical_sha},
          "preprocessing": "chess-ocr/classical-grid-gray/1", "artifact": None,

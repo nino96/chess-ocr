@@ -40,7 +40,7 @@ Built-in provider IDs are:
 | Capability | Provider | Runtime |
 | --- | --- | --- |
 | Localization | `fenshot-localizer-v1` | unchanged FENShot grid detector |
-| Localization | `classical-grid-v1` | deterministic multi-grid evidence |
+| Localization | `classical-grid-v2` (current; v1 retained for old runs) | deterministic multi-grid evidence |
 | Labels | `fenshot-labeler-v1` | unchanged FENShot ONNX tile classifier |
 
 `chess-ocr-onnx-localizer-v1` and `chess-ocr-onnx-labeler-v1` are reserved
