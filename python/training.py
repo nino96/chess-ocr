@@ -800,6 +800,7 @@ def train_detector(args: argparse.Namespace, config: dict[str, Any], recipes: li
 
 def export_classifier(model: nn.Module, run: Path, config: dict[str, Any], metrics: dict[str, Any]) -> None:
     model.eval().cpu()
+    (run / "classifier").mkdir(parents=True, exist_ok=True)
     destination = run / "classifier" / "selected.onnx"
     torch.onnx.export(model, torch.zeros((1, 3, 96, 96)), destination, input_names=["tiles"],
                       output_names=["logits"], dynamic_axes={"tiles": {0: "squares"}, "logits": {0: "squares"}},
