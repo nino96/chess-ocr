@@ -36,8 +36,13 @@ validated.
 The GPU ceiling remains eight hours total: twenty minutes for mandatory native
 parity/backward/tiny-fit/throughput/recovery gates, 100 minutes for the classifier,
 340 minutes for the detector, and twenty minutes for at most one bounded diagnosis.
-The run also reserves four CPU hours and 16 GiB of output storage while preserving
-at least 30% filesystem free space. Failed and interrupted attempts remain charged.
+Future runs reserve 24,000 CPU-seconds (six hours forty minutes) and 16 GiB of
+output storage while preserving at least 30% filesystem free space. The CPU ceiling
+retains the measured 8,806 CPU-seconds used by the completed classifier path and
+adds provisional detector and contingency capacity; it does not enlarge the
+unchanged eight-hour GPU ceiling. Each initialized run keeps the exact recipe value
+it froze, so this revision does not alter an active or historical run. Failed and
+interrupted attempts remain charged.
 
 ## Gates and stop conditions
 

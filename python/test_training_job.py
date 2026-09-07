@@ -36,6 +36,7 @@ class TrainingJobTest(unittest.TestCase):
         self.assertEqual(sum(stage["updates"] for stage in config["classifier"]["stages"]), 10000)
         self.assertEqual(sum(stage["updates"] for stage in config["detector"]["stages"]), 9000)
         self.assertEqual(config["resources"]["gpu_seconds"], 8 * 60 * 60)
+        self.assertEqual(config["resources"]["cpu_seconds"], 24000)
         self.assertFalse(config["environment"]["cudnn_enabled"])
 
     def test_split_is_deterministic_and_keeps_effect_groups_together(self):

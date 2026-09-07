@@ -130,7 +130,7 @@
     "classifier_gpu_seconds": 6000,
     "detector_gpu_seconds": 20400,
     "diagnosis_gpu_seconds": 1200,
-    "cpu_seconds": 14400,
+    "cpu_seconds": 24000,
     "storage_bytes": 17179869184,
     "minimum_free_space_ratio": 0.3
   }
