@@ -14,6 +14,37 @@ single seed, split policy, preprocessing, trainable stages, update counts,
 selection rules and resource ceilings. Operational paths and run state stay in
 ignored `work/training/`.
 
+## Corrective v2 triage — 2026-09-07
+
+The completed v1 run is retained as diagnostic evidence, not repaired in place.
+Its detector and ONNX export are `legacy-bgr-div255-v1`, synthetic-only and
+uncalibrated. Native/browser agreement proved agreement on that self-defined
+tensor; it did not prove compatibility with the pinned checkpoint's official
+RGB/ImageNet-normalized transfer preprocessing.
+
+Two training causes are confirmed and require a new immutable v2 recipe:
+
+1. The detector fine-tune consumed BGR pixels divided by 255 instead of the
+   checkpoint-compatible RGB tensor normalized with ImageNet mean/std.
+2. EMA used a fixed `0.9998` decay from the first update instead of the pinned
+   YOLOX ramp `0.9998 × (1 - exp(-updates / 2000))`, making the early average
+   insufficiently responsive.
+
+The v1 lifecycle also performed checkpoint selection, final development
+evaluation and calibration inside the detector process immediately before ONNX
+export. When export failed, those completed results were not durably marked and
+the progress file still said `running`. V2 must persist `trained`, `calibrating`,
+`exporting`, `export_failed` and `complete` states, and provide an export-only
+retry that cannot repeat optimization, final development evaluation or
+calibration.
+
+The first corrected run keeps the 9,000-update detector schedule, seed, batch
+size, BN policy and learning rates. It starts from the original COCO checkpoint,
+reuses the completed classifier checkpoint, and does not continue the legacy
+detector. No seed sweep, backbone-LR change or model-family addition is authorized.
+The incremental reservation is at most 600 preflight plus 5,400 detector
+GPU-seconds, with the 24,000 CPU-second ceiling retained.
+
 ## Boundaries and hypothesis
 
 Hypothesis: task heads followed by lower-rate adaptation of the pinned native
@@ -66,18 +97,20 @@ The continuation validates that the checkpoint is the complete development-selec
 candidate, reuses its retained development evidence, and performs bounded native-to-ONNX
 parity. It does not repeat the full development/calibration evaluation.
 
-Before `start` can allocate a GPU, the exact frozen, network-disabled container now
-runs a CPU-only validation segment. It verifies dependency pins and output writes,
-independently compares classifier tensors and labels for both orientations, and
-checks representative positive/negative detector pages against the pinned YOLOX
-resize, BGR/padding tensor and correct 416-pixel letterbox target frame. Failure
+Before `start` can allocate a GPU, the exact frozen, network-disabled container
+runs a CPU-only validation segment. The v1 segment verified dependency pins,
+output writes, classifier tensors/labels, BGR/padding geometry and a self-defined
+divide-by-255 detector tensor. That detector check was internally consistent but
+not checkpoint-compatible. V2 must instead compare an OpenCV BGR source against
+the pinned upstream helper using non-square geometry, colored channel sentinels,
+actual ImageNet RGB mean/std and a maximum tensor difference of `1e-6`. Failure
 leaves a retained validation log and consumes no GPU time; timeout cleanup stops
 the named validation container before returning control.
 
-The detector loader retains raw pixels for parity evidence, then `batch_detector`
-divides the training tensor by 255 to match pinned YOLOX's official training
-transform. The CPU barrier runs three mixed-page loss/gradient/update steps and
-rejects non-finite behavior before GPU allocation.
+The v2 graph boundary is raw letterboxed RGB float32 `0..255`, pad `114`; its graph
+wrapper divides by 255, subtracts ImageNet RGB mean and divides by ImageNet RGB
+standard deviation. Training feeds the equivalent normalized RGB tensor directly.
+Native export and browser preprocessing must agree on that identifier.
 
 The detector recipe clips its head/full-model gradient norm at 10.0. This is a
 mechanics-stability guard justified by the bounded diagnosis: the configured
@@ -135,7 +168,7 @@ passed the new CPU barrier, then failed GPU preflight after 7.750 charged
 GPU-seconds during the detector tiny-set fit. The retained CUDA log showed a
 device-side BCE assertion after the first optimizer update; no scheduled model
 training ran. The bounded diagnosis reproduced finite first-step CPU loss but
-non-finite gradients after the next update, even with official 0..1 input scale.
+non-finite gradients after the next update, even with the then-assumed 0..1 input scale.
 The configured 0.005 detector head rate required the explicit norm-10 gradient
 clip now bound in the recipe. The repair applies that clip to preflight, timed
 projection and both detector stages, and extends the CPU barrier to three
@@ -172,8 +205,16 @@ therefore uses the existing reviewed YOLOX native/browser raw-output ceiling of
 0.001 while the classifier keeps 0.0001. This changes no model, data, checkpoint
 selection or metric and does not by itself establish browser WASM parity.
 
+That failure also exposed the lifecycle fault described above: the selected
+weights and final evaluation existed, but the process had not persisted a trained
+state and calibration before entering export. V2 export failure must retain those
+artifacts and return `export_failed`; `pnpm run training -- export --run-root PATH
+--segment detector` must retry export only.
+
 The retained classifier and detector ONNX exports can now be loaded explicitly
 into both local review surfaces through a hash-bound ignored candidate manifest;
 the operator commands and limitations are in [local candidate testing](local-candidate.md).
-FENShot remains the browser default. Dataset proposals remain drafts, and neither
-UI treats synthetic-only confidence as calibration or qualification.
+That v1 bundle is legacy diagnostic input only and must be regenerated with the
+legacy preprocessing identifier under manifest schema 2 before corrected code
+will load it. FENShot remains the browser default. Dataset proposals remain drafts,
+and neither UI treats synthetic-only confidence as calibration or qualification.

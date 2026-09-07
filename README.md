@@ -190,9 +190,19 @@ synthetic-only MobileNetV3 classifier plus YOLOX-Nano detector schedule. It is
 diagnostic and may assist annotation; it is not real-page qualification and does
 not replace the shipped FENShot baseline.
 
-Create the issue #3 worktree from merged `origin/main`, commit reviewed training
-code, then initialize it with explicit read-only roots for the completed corpus
-and admitted native artifacts:
+Corrective triage found that the retained detector used incompatible BGR/divide-
+by-255 transfer preprocessing and a fixed-decay EMA. Its export also failed after
+training/evaluation because lifecycle results were not persisted before export.
+Treat that candidate as `legacy-bgr-div255-v1`, synthetic-only and uncalibrated.
+The classifier checkpoint remains reusable. The pending v2 detector starts from
+the original COCO checkpoint with RGB/ImageNet normalization, ramped resumable EMA,
+durable export states and export-only retry. See the training decision for the
+frozen run and promotion boundaries.
+
+From a clean branch based on merged `origin/main`, commit reviewed training code,
+then initialize it with explicit read-only roots for the completed corpus and
+admitted native artifacts. The commands below describe the retained v1 controller;
+do not start another v1 detector run:
 
 ```sh
 pnpm run training -- init \

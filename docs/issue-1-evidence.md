@@ -23,15 +23,17 @@ Schema `chess-ocr/1`; preprocessing `fenshot-0.1.4/rgba-gray-bilinear-256/1`.
 ## Native/browser parity
 
 `npm run test:parity` passed actual ORT Web 1.29.0 WASM in Chromium 153.0.8010.12,
-Firefox 155.0 and WebKit 26.6. Inputs reproduce the native preprocessing exactly
-(max absolute tensor difference **0**), including MobileNet's antialiased bicubic
-416->256 resize/224 center crop/ImageNet normalization and YOLOX's exact416
-RGB->BGR conversion. This single shape does not validate arbitrary page resizing.
+Firefox 155.0 and WebKit 26.6. Inputs reproduce the project-defined native tensors
+exactly (max absolute tensor difference **0**), including MobileNet's antialiased
+bicubic 416->256 resize/224 center crop/ImageNet normalization and the legacy
+YOLOX exact-416 RGB->BGR conversion. This proved browser/native agreement on that
+self-defined tensor, not compatibility with the pinned YOLOX checkpoint's official
+RGB/ImageNet-normalized preprocessing. The corrected parity task remains open in #1.
 
-| Model | Browser/native maximum absolute output difference | Elements |
-| --- | ---: | ---: |
-| MobileNetV3 Small, unchanged ImageNet head | 0.0000228882 | 1000 |
-| YOLOX-Nano, unchanged COCO head | 0.0000616908 | 301665 |
+| Model                                      | Browser/native maximum absolute output difference | Elements |
+| ------------------------------------------ | ------------------------------------------------: | -------: |
+| MobileNetV3 Small, unchanged ImageNet head |                                      0.0000228882 |     1000 |
+| YOLOX-Nano, unchanged COCO head            |                                      0.0000616908 |   301665 |
 
 Prospective thresholds in the harness: input max absolute <=1e-6, output <=1e-3.
 Native checkpoints, source/notice hashes and CPU export evidence are in
@@ -48,11 +50,11 @@ checker pattern. This measures the dev-served runtime harness, including worker
 startup in cold samples. Browser/HTTP/WASM compiler caches are not cleared between
 cold samples. It is not a fresh-download laptop distribution.
 
-| Browser | Cold worker min/median/max ms | Warm min/median/max ms | Four explicit 1024px windows, ms |
-| --- | --- | --- | ---: |
-| Chromium | 335.5 / 382 / 522.1 | 20.3 / 21 / 28.3 | 113.3 |
-| Firefox | 398 / 454 / 476 | 24 / 25 / 28 | 121 |
-| WebKit | 313 / 372 / 391 | 20 / 21 / 22 | 102 |
+| Browser  | Cold worker min/median/max ms | Warm min/median/max ms | Four explicit 1024px windows, ms |
+| -------- | ----------------------------- | ---------------------- | -------------------------------: |
+| Chromium | 335.5 / 382 / 522.1           | 20.3 / 21 / 28.3       |                            113.3 |
+| Firefox  | 398 / 454 / 476               | 24 / 25 / 28           |                              121 |
+| WebKit   | 313 / 372 / 391               | 20 / 21 / 22           |                              102 |
 
 Four-window work uses the 1600x1200 tiling plan with sequential synthetic crops;
 it measures extra classifier work, not page-localization recall. Tiling is an
@@ -87,22 +89,21 @@ without weakening the offline requirement. Physical iPad remains deferred.
 
 ## Outstanding acceptance gates
 
-* No named laptop, physical macOS/Windows host or iPad is available in this session.
+- No named laptop, physical macOS/Windows host or iPad is available in this session.
   OS/device setup and laptop peak memory/runtime budgets are not claimed complete.
-* The selected GB10 container passes these two native forward probes only with
+- The selected GB10 container passes these two native forward probes only with
   cuDNN disabled (MobileNet max abs 1.48e-5, YOLOX 5.82e-5). The default cuDNN
   path failed and remains recorded. Backward/optimizer/recovery validation is #3.
-* CPU native lock is Linux ARM64-specific; it must not be copied to other platforms.
-* Original repository source is licensed under MIT; third-party packages and
+- CPU native lock is Linux ARM64-specific; it must not be copied to other platforms.
+- Original repository source is licensed under MIT; third-party packages and
   model artifacts retain their separate licenses and notices.
   package is private. Model release/publication is a separate decision.
-* No real-data accuracy, qualified localization, skew support or superiority over
+- No real-data accuracy, qualified localization, skew support or superiority over
   FENShot is claimed. Dataset and substantive training stay in #2/#3.
 
 Delegated work: Luna medium gathered artifact provenance; Terra medium implemented
 bounded native export/environment tooling. Lead owns contract, demo, integration,
 reuse review and final validation. No token/quota measurement is available.
-
 
 ## Resuming
 
@@ -115,8 +116,8 @@ is part of this handoff.
 
 Raw final report SHA-256 (reports include source-code hashes):
 
-* `work/evidence/parity-2026-09-06T09-47-47-823Z.json`: `34f4e410d9bb171fe759b74d82c37cf066e55d20ed13e3061f624dc07c845ffd`
-* `work/evidence/benchmark-2026-09-06T09-47-53-970Z.json`: `8f42227d56d71bcbbf7a0d76b1b762374df21a952b9456e2093da70b53bcbd75`
+- `work/evidence/parity-2026-09-06T09-47-47-823Z.json`: `34f4e410d9bb171fe759b74d82c37cf066e55d20ed13e3061f624dc07c845ffd`
+- `work/evidence/benchmark-2026-09-06T09-47-53-970Z.json`: `8f42227d56d71bcbbf7a0d76b1b762374df21a952b9456e2093da70b53bcbd75`
 
 ## pnpm migration — owner correction
 

@@ -29,13 +29,13 @@ Do not manufacture unobservable FEN state or correct printed diagrams for legali
 
 ## Architecture hypotheses
 
-| Role                       | Initial native checkpoint                    | Important boundary                                               |
-| -------------------------- | -------------------------------------------- | ---------------------------------------------------------------- |
-| Browser board detector     | COCO-pretrained YOLOX-Nano                   | A rectangle is not yet the exact inner playing grid              |
-| Alternative browser board detector | Classical computer vision and grid geometry | Proposed bounded comparison in #3; no learned detector required |
-| Browser square classifier  | `timm/mobilenetv3_small_100.lamb_in1k`       | ImageNet features, not pretrained chess knowledge                |
-| Fixed control              | Shipped FENShot 0.1.4, exact artifact review | Baseline to beat, not the architecture we must rescue            |
-| Optional server recognizer | RF-DETR Small                                | Must improve measured accuracy or serve a stated runtime purpose |
+| Role                                 | Initial native checkpoint                    | Important boundary                                                          |
+| ------------------------------------ | -------------------------------------------- | --------------------------------------------------------------------------- |
+| Browser board detector               | COCO-pretrained YOLOX-Nano                   | A rectangle is not yet the exact inner playing grid                         |
+| Alternative browser board detector   | Classical computer vision and grid geometry  | Proposed bounded comparison in #3; no learned detector required             |
+| Browser square classifier            | `timm/mobilenetv3_small_100.lamb_in1k`       | ImageNet features, not pretrained chess knowledge                           |
+| Fixed control                        | Shipped FENShot 0.1.4, exact artifact review | Baseline to beat, not the architecture we must rescue                       |
+| Optional server recognizer           | RF-DETR Small                                | Must improve measured accuracy or serve a stated runtime purpose            |
 | Additional GB10 evaluation candidate | ChessQueries ViT-L/14 + square-query decoder | Unvalidated on printed pages; explicit geometry and runtime checks required |
 
 Acquire exact native training weights after provenance review, preserve them
@@ -274,7 +274,6 @@ and accessibility/touch checks are retained as manual browser integration gates
 for relevant runtime/demo changes, not an every-training-change CI matrix.
 Initial multi-browser evidence is retained; it is not physical iPad evidence.
 
-
 ## Implemented issue #1 baseline
 
 The repository now contains the npm FENShot control, versioned raster/geometry/
@@ -286,7 +285,6 @@ No dataset training, real-diagram qualification or recognition superiority is
 claimed. Required laptop runtime budgets and unavailable physical OS/device gates
 remain explicit. The selected pinned GB10 native inference probe requires cuDNN
 disabled to pass CPU/GPU parity; training validation remains a later gate.
-
 
 ## Package-manager alignment
 
@@ -501,3 +499,28 @@ successful run may improve annotation proposals but cannot establish real-page
 promotion, touch qualification, replace the classical-detector comparison or
 complete issue #3. Keep FENShot as the shipped default until the existing paired
 real-development, qualification, WASM and browser gates pass.
+
+## Corrective detector bootstrap v2 — 2026-09-07
+
+The retained v1 detector is `legacy-bgr-div255-v1`, synthetic-only and
+uncalibrated. Its browser/native parity established agreement on a self-defined
+tensor, not compatibility with the pinned checkpoint's official preprocessing.
+The two confirmed training causes are incompatible BGR/divide-by-255 transfer
+preprocessing and fixed `0.9998` EMA decay. A third fault let ONNX export failure
+erase the durable lifecycle distinction between completed training/evaluation,
+calibration and export.
+
+Issue #1 owns corrected upstream preprocessing parity. Issue #2 owns a
+source-held-out independently human-reviewed real development tranche; proposals
+are not truth and qualification remains untouched. Issue #3 owns immutable recipe
+v2, raw RGB `0..255` graph input with in-graph ImageNet normalization, equivalent
+normalized RGB training, ramped/resumable EMA, durable lifecycle/retry, live-versus-
+EMA stage gates, detector-only rerun, calibration, inner-grid refinement and the
+unchanged FENShot/end-to-end/browser comparisons.
+
+The first corrected detector run starts from the original COCO checkpoint and
+reuses the completed classifier. Keep its existing 9,000 updates, seed, batch size,
+BN policy and learning rates; do not add a seed sweep, backbone-LR change or model
+family without corrected live-model evidence. Reserve at most 600 preflight plus
+5,400 detector GPU-seconds and retain the 24,000 CPU-second ceiling. This remains
+a synthetic bootstrap, not promotion or issue completion.

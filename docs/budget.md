@@ -31,10 +31,10 @@ charged separately by the existing page worker. No new cumulative ceiling needed
 external exposure or private upload. Operational experiment detail is persisted
 in ignored `work/issue-1-status.md` and `work/native/status.md`.
 
-| Work | Download ceiling | Local disk ceiling | Compute ceiling |
-| --- | --- | --- | --- |
-| Browser dependencies/checks | 1 GiB | 3 GiB | 30 CPU minutes; zero GPU training |
-| Native checkpoint/export/env probe | 4 GiB | 8 GiB | 25 CPU minutes; 5 GPU minutes |
+| Work                               | Download ceiling | Local disk ceiling | Compute ceiling                   |
+| ---------------------------------- | ---------------- | ------------------ | --------------------------------- |
+| Browser dependencies/checks        | 1 GiB            | 3 GiB              | 30 CPU minutes; zero GPU training |
+| Native checkpoint/export/env probe | 4 GiB            | 8 GiB              | 25 CPU minutes; 5 GPU minutes     |
 
 The native reservation includes failed attempts and the lead's one <=60-second
 cuDNN diagnosis. There was one export per starting model, no seed/model sweep,
@@ -117,13 +117,13 @@ to burn 200 hours or weaken per-job limits.
 
 Initial suballocations within those totals:
 
-| Increment | Bound and stop condition |
-| --- | --- |
-| Asset preparation | Up to 16 reviewed piece designs; first download only 3 sets/36 SVGs; 16 MiB request reservation and 1,200 compute seconds for initial evidence/download/inspection |
-| Renderer fidelity and tooling | Up to 2 CPU hours and 1 GiB; validate every admitted design, both backgrounds, all 12 pieces and independent pixel/label ordering before bulk synthesis |
-| Synthetic seed | Up to 20,000 board equivalents, initially 3 audited designs; 8 CPU hours and 16 GiB; retain compact page/position recipes and PNGs, generate tensors lazily |
-| Real acquisition increment | Up to 12 newly reviewed source families and 500 selected pages initially; source/lineage decisions before download; later increments by measured coverage benefit within global limits |
-| Proposal comparison | One bounded identical-input screen, up to 100 non-qualification pages, 2 CPU hours; assess misses and review-time benefit, not just confidence |
+| Increment                     | Bound and stop condition                                                                                                                                                               |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Asset preparation             | Up to 16 reviewed piece designs; first download only 3 sets/36 SVGs; 16 MiB request reservation and 1,200 compute seconds for initial evidence/download/inspection                     |
+| Renderer fidelity and tooling | Up to 2 CPU hours and 1 GiB; validate every admitted design, both backgrounds, all 12 pieces and independent pixel/label ordering before bulk synthesis                                |
+| Synthetic seed                | Up to 20,000 board equivalents, initially 3 audited designs; 8 CPU hours and 16 GiB; retain compact page/position recipes and PNGs, generate tensors lazily                            |
+| Real acquisition increment    | Up to 12 newly reviewed source families and 500 selected pages initially; source/lineage decisions before download; later increments by measured coverage benefit within global limits |
+| Proposal comparison           | One bounded identical-input screen, up to 100 non-qualification pages, 2 CPU hours; assess misses and review-time benefit, not just confidence                                         |
 
 Issue #3 may reserve up to **8 local GB10 GPU hours** for one frozen synthetic
 bootstrap schedule plus its recovery check and bounded diagnosis, under this owner
@@ -150,6 +150,23 @@ is not a count of optimizer updates. Preflight, classifier and detector segments
 each have a frozen allocation, retries consume the same segment allocation, and
 the normal status view reports capacity, consumed and remaining seconds. Use
 `status --history` for the complete attempt ledger.
+
+### Corrective detector v2 reservation and actual usage — 2026-09-07
+
+The retained run histories contain inherited attempts, so summing each run's
+`gpu_seconds_charged` would double-count the same work. Deduplicating attempts by
+their immutable start timestamp across all retained state files gives **9,271.1
+cumulative unique GPU-seconds consumed** (9,271.076973802876 unrounded) in ten
+attempt segments. This includes failed preflights, classifier attempts and the
+completed detector optimization followed by export failure.
+
+Reserve at most 600 additional preflight GPU-seconds plus 5,400 detector
+GPU-seconds for the first corrected v2 run. The maximum resulting cumulative usage
+is 15,271.1 seconds, within the existing 28,800-second project allocation. Retain
+the 24,000 CPU-second future-run ceiling and 16 GiB output ceiling; this does not
+authorize a classifier rerun, new seed, model family or sweep. Ordinary status
+must remain current-run-only, while `--history` owns the complete deduplicated
+ledger.
 
 The concrete sequence and acceptance boundaries are in
 [dataset kickoff](dataset-kickoff.md). Reviewed public inventories/URLs/hashes and

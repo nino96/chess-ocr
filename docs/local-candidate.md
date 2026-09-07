@@ -9,6 +9,12 @@ corresponding ONNX exports, bound by a small manifest that records exact bytes,
 SHA-256 values, tensor names, label order and detector thresholds. No model,
 checkpoint or generated manifest is committed or published.
 
+The currently retained detector is `legacy-bgr-div255-v1`, synthetic-only and
+uncalibrated. Its schema-1 bundle does not identify preprocessing and is therefore
+ambiguous. Corrected loaders reject it with a regeneration instruction; regenerate
+the ignored bundle under schema 2 with the legacy identifier for diagnostic use.
+Do not relabel the existing weights as corrected or qualified.
+
 ## Prepare the ignored manifest
 
 From the repository/worktree containing the run:
