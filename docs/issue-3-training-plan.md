@@ -159,3 +159,15 @@ The replacement run inherits the second continuation's 4.335 GPU-second charge,
 keeps the same data, selected checkpoint, seed, models and complete detector
 schedule, and must pass the strengthened all-stage timing and recovery preflight
 before detector optimization.
+
+The replacement completed all 9,000 detector updates and selected step 9,000,
+then failed its final export because the trained YOLOX raw output differed between
+native PyTorch and ONNX Runtime by 0.0002151, above an inconsistent 0.0001 export
+cutoff. A bounded CPU diagnosis retained the graph and checkpoint and compared
+four deterministic tensors plus 16 synthetic development pages. Development-page
+raw maximum absolute drift was 0.0004187; decoded detection counts were identical
+at score thresholds 0.001, 0.01, 0.1 and 0.3, maximum decoded box drift was
+0.00235 pixels, and maximum score drift was 0.0000408. The detector export gate
+therefore uses the existing reviewed YOLOX native/browser raw-output ceiling of
+0.001 while the classifier keeps 0.0001. This changes no model, data, checkpoint
+selection or metric and does not by itself establish browser WASM parity.

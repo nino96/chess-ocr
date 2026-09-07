@@ -117,11 +117,12 @@ class TrainingTest(unittest.TestCase):
                 captured["output"] = model(example)
                 Path(destination).write_bytes(b"onnx")
             with mock.patch.object(training.torch.onnx, "export", side_effect=fake_export), \
-                 mock.patch.object(training, "verify_onnx", return_value=0.0):
+                 mock.patch.object(training, "verify_onnx", return_value=0.0) as verify:
                 training.export_detector(Detector(), root, {"detector": {"input": "raw", "nms_iou": .5}}, {})
             expected = captured["example"].mean(dim=(2, 3)) / 255
             self.assertGreater(float(captured["example"].max() - captured["example"].min()), 0)
             self.assertTrue(torch.allclose(captured["output"], expected))
+            self.assertEqual(verify.call_args.kwargs["maximum_absolute_difference"], 1e-3)
 
 
 if __name__ == "__main__":
