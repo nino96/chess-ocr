@@ -114,6 +114,31 @@ Delegated work: Luna medium gathered artifact provenance; Terra medium implement
 bounded native export/environment tooling. Lead owns contract, demo, integration,
 reuse review and final validation. No token/quota measurement is available.
 
+## V2 paired-browser integration — 2026-09-08
+
+The retained v2 detector and classifier were loaded from their hash-bound local
+schema-3 bundle and exercised—not mocked—through the production offline build.
+The verifier ran automatic full-page and manual four-corner modes sequentially
+against unchanged FENShot and observed zero external requests:
+
+| Engine   | Automatic paired run | Manual-grid paired run |
+| -------- | -------------------: | ---------------------: |
+| Chromium |          1,078.75 ms |              295.25 ms |
+| Firefox  |          1,553.54 ms |              433.30 ms |
+| WebKit   |          1,221.28 ms |              337.03 ms |
+
+Command:
+
+```sh
+pnpm run candidate:verify:browser work/candidates/synthetic-bootstrap-v2-detector-v3.json \
+  work/training/synthetic-bootstrap-v2-detector/classifier/selected.onnx \
+  work/training/synthetic-bootstrap-v2-detector/detector/selected.onnx
+```
+
+These are synthetic in-memory smoke timings from this GB10 environment, not the
+named-laptop gate and not real-page accuracy evidence. Private screenshot and
+physical-device checks remain unrun.
+
 ## Resuming
 
 Use [the resource ledger](budget.md), preserved local raw reports and their

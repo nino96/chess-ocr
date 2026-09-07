@@ -266,7 +266,8 @@ artifacts and return `export_failed`; `pnpm run training -- export --run-root PA
 The retained classifier and detector ONNX exports can now be loaded explicitly
 into both local review surfaces through a hash-bound ignored candidate manifest;
 the operator commands and limitations are in [local candidate testing](local-candidate.md).
-That v1 bundle is legacy diagnostic input only and must be regenerated with the
-legacy preprocessing identifier under manifest schema 2 before corrected code
-will load it. FENShot remains the browser default. Dataset proposals remain drafts,
-and neither UI treats synthetic-only confidence as calibration or qualification.
+That v1 bundle remains legacy diagnostic evidence and is not promoted into the
+schema-3 paired runtime. The v2 bundle binds the shared refiner, tensor contracts,
+separate proposal/calibrated thresholds and limits. FENShot remains the browser
+default. Dataset proposals remain drafts, and neither UI treats synthetic-only
+confidence as calibration or qualification.

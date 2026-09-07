@@ -17,15 +17,15 @@ setup and budget commands in the reference.
 
 ## Who does what
 
-| Stage | You | Agent and local tools | Exit condition |
-| --- | --- | --- | --- |
-| Choose feasibility inputs | Supply authorized PDFs if desired; confirm their intended local use | Research public candidates, inspect rights and propose related artwork groups and initial splits | Small, explicit source/page selection |
-| Acquire and render | Optionally run ingest/start yourself | Register reviewed public manifests or ingest supplied PDFs; run the bounded background worker | Pages ready for review, or a specific repair/budget blocker |
-| Review feasibility pages | Annotate pixels as a human reviewer | Generate review pages; import decisions; validate revisions, geometry and duplicates | Timed review batch and honest coverage/yield assessment |
-| Approve larger collection | Approve a concrete follow-up resource and human-review allocation | Estimate costs from the pilot, identify missing designs and implement missing collection features | Approved plan for a useful real training tranche |
-| Build larger collection | Review assigned batches and ambiguous cases | Repeat bounded acquisition, review imports and leakage/coverage checks | Accepted train/dev data and independently reserved qualification membership |
-| Train and compare models | Approve a separate training budget and review the experiment proposal | Implement #3 training/evaluation jobs, run the frozen schedule, save resumable state and compare against FENShot | Measured advance/defer/reject decision |
-| Qualify and integrate | Participate in independent qualification truth checking and physical laptop/device tests | Freeze candidate, evaluate reserved inputs, verify actual offline browser inference | Existing recognition and runtime gates pass, or remain explicitly incomplete |
+| Stage                     | You                                                                                      | Agent and local tools                                                                                            | Exit condition                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Choose feasibility inputs | Supply authorized PDFs if desired; confirm their intended local use                      | Research public candidates, inspect rights and propose related artwork groups and initial splits                 | Small, explicit source/page selection                                        |
+| Acquire and render        | Optionally run ingest/start yourself                                                     | Register reviewed public manifests or ingest supplied PDFs; run the bounded background worker                    | Pages ready for review, or a specific repair/budget blocker                  |
+| Review feasibility pages  | Annotate pixels as a human reviewer                                                      | Generate review pages; import decisions; validate revisions, geometry and duplicates                             | Timed review batch and honest coverage/yield assessment                      |
+| Approve larger collection | Approve a concrete follow-up resource and human-review allocation                        | Estimate costs from the pilot, identify missing designs and implement missing collection features                | Approved plan for a useful real training tranche                             |
+| Build larger collection   | Review assigned batches and ambiguous cases                                              | Repeat bounded acquisition, review imports and leakage/coverage checks                                           | Accepted train/dev data and independently reserved qualification membership  |
+| Train and compare models  | Approve a separate training budget and review the experiment proposal                    | Implement #3 training/evaluation jobs, run the frozen schedule, save resumable state and compare against FENShot | Measured advance/defer/reject decision                                       |
+| Qualify and integrate     | Participate in independent qualification truth checking and physical laptop/device tests | Freeze candidate, evaluate reserved inputs, verify actual offline browser inference                              | Existing recognition and runtime gates pass, or remain explicitly incomplete |
 
 You do not need to run every command yourself. You can ask the agent to start,
 resume, inspect or export within the approved scope. Jobs run on the local host
@@ -122,16 +122,16 @@ pnpm run dataset queue
 pnpm run dataset stop
 ```
 
-| Reported state or finding | Your next action |
-| --- | --- |
-| `awaiting-sources` | Supply intended PDFs or ask the agent to prepare reviewed public candidates |
-| `running` / `exporting` | Let the local job proceed; inspect status whenever useful |
-| `needs-review` | Begin the offline review workflow below |
-| `budget-blocked` | Ask for a usage/yield report; approve a justified follow-up allocation if needed |
-| `needs-repair` / quarantined jobs | Ask the agent to diagnose the local cause; after repair use `retry JOB_ID --after-repair` and `start` |
-| `stopped` / interrupted heartbeat | Inspect the reason, then use `start` when ready; a live writer prevents overlap |
-| Cross-split duplicate candidates | Ask the agent to investigate leakage; same-split similarities are retained with an audit and need no action |
-| `export-interrupted` | Ask for the cause, then rerun export within the remaining budget |
+| Reported state or finding         | Your next action                                                                                            |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `awaiting-sources`                | Supply intended PDFs or ask the agent to prepare reviewed public candidates                                 |
+| `running` / `exporting`           | Let the local job proceed; inspect status whenever useful                                                   |
+| `needs-review`                    | Begin the offline review workflow below                                                                     |
+| `budget-blocked`                  | Ask for a usage/yield report; approve a justified follow-up allocation if needed                            |
+| `needs-repair` / quarantined jobs | Ask the agent to diagnose the local cause; after repair use `retry JOB_ID --after-repair` and `start`       |
+| `stopped` / interrupted heartbeat | Inspect the reason, then use `start` when ready; a live writer prevents overlap                             |
+| Cross-split duplicate candidates  | Ask the agent to investigate leakage; same-split similarities are retained with an audit and need no action |
+| `export-interrupted`              | Ask for the cause, then rerun export within the remaining budget                                            |
 
 Do not delete the database, reset reservations, change hashes to accept corruption,
 or relabel a duplicate as distinct simply to make a gate pass. Excluding a bad
@@ -164,8 +164,9 @@ The dashboard exposes existing start/stop, validation, candidate export, inbox
 ingestion with its explicit authorization checkbox, and duplicate decisions. It
 does not upload PDFs: place intended files in `work/dataset/inbox/` through VS
 Code/the local workspace, then ingest that existing inbox. Under **Proposal run
-controls**, choose localization and label providers separately, select a TRAIN-only
-scope, and start a bounded proposal run. Use **Stop proposals** independently of
+controls**, choose localization and label providers separately, select an
+authorized nonqualification train/dev scope, and start a bounded proposal run.
+Use **Stop proposals** independently of
 the acquisition **Stop job**; `Ctrl+C` stops only the web app. Rendering uses the
 same writer lock as draft saves, so stop the job
 and choose **Retry saving draft** if a save is temporarily blocked.

@@ -9,7 +9,7 @@ import {
 } from "../src/candidate.ts";
 
 const manifest = {
-  schema: "chess-ocr-candidate-bundle/2",
+  schema: "chess-ocr-candidate-bundle/3",
   name: "test candidate",
   version: "classifier-1-detector-1",
   qualification: "synthetic-development-only",
@@ -19,6 +19,8 @@ const manifest = {
     bytes: 1024,
     input: "tiles",
     output: "logits",
+    inputShape: ["squares", 3, 96, 96],
+    outputShape: ["squares", 13],
     labels: [
       "empty",
       "P",
@@ -40,8 +42,18 @@ const manifest = {
     bytes: 1024,
     input: "images",
     output: "predictions",
-    scoreThreshold: 0.3,
+    inputShape: [1, 3, 416, 416],
+    proposalScoreThreshold: 0.01,
+    calibratedAcceptanceThreshold: 1,
     nmsIou: 0.65,
+  },
+  refinement: {
+    id: "nine-line-grid-refiner-v1",
+    implementationSha256: "c".repeat(64),
+    regionExpansion: 0.12,
+    outputSize: 768,
+    classifierTileSize: 96,
+    maxCandidates: 4,
   },
 };
 
@@ -80,7 +92,7 @@ test("candidate detector packing follows the declared preprocessing", () => {
   assert.deepEqual([bgr[0], bgr[416 * 416], bgr[2 * 416 * 416]], [47, 31, 17]);
 });
 
-test("schema-1 bundles require regeneration", async () => {
+test("older bundles require regeneration", async () => {
   const old = { ...manifest, schema: "chess-ocr-candidate-bundle/1" };
   const file = new NodeFile(
     [JSON.stringify(old)],
@@ -88,7 +100,43 @@ test("schema-1 bundles require regeneration", async () => {
   ) as unknown as File;
   await assert.rejects(
     loadCandidateFiles(file, file, file),
-    /ambiguous preprocessing; regenerate it as schema 2/,
+    /lacks the shared refinement contract; regenerate it as schema 3/,
+  );
+  await assert.rejects(
+    loadCandidateFiles(
+      new NodeFile(
+        [
+          JSON.stringify({
+            ...manifest,
+            schema: "chess-ocr-candidate-bundle/2",
+          }),
+        ],
+        "candidate.json",
+      ) as unknown as File,
+      file,
+      file,
+    ),
+    /schema 2 lacks the shared refinement contract/,
+  );
+});
+
+test("proposal and calibrated acceptance thresholds remain distinct and ordered", () => {
+  assert.equal(
+    candidateManifestSchema.parse(manifest).detector
+      .calibratedAcceptanceThreshold,
+    1,
+  );
+  assert.throws(
+    () =>
+      candidateManifestSchema.parse({
+        ...manifest,
+        detector: {
+          ...manifest.detector,
+          proposalScoreThreshold: 0.5,
+          calibratedAcceptanceThreshold: 0.4,
+        },
+      }),
+    /Proposal threshold cannot exceed/,
   );
 });
 

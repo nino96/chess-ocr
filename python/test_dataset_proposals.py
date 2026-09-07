@@ -24,6 +24,7 @@ class ProposalTests(unittest.TestCase):
         p.set_budget(argparse.Namespace(sources=4, pages=20, download_bytes=2**20,
                      storage_bytes=2**28, cpu_seconds=7200, review_limit=20))
         self.train = self.sample("train", "train")
+        self.development = self.sample("development", "dev")
         self.qualification = self.sample("qualification", "qualification")
         proposals.initialize()
 
@@ -75,13 +76,27 @@ class ProposalTests(unittest.TestCase):
         self.assertNotEqual(manifests["fenshot-localizer-v1"]["model"]["sha256"],
                             manifests["fenshot-labeler-v1"]["model"]["sha256"])
         future = {**manifests["fenshot-labeler-v1"], "id": "future-localizer",
-                  "capability": "localization", "runtime": "chess-ocr-onnx-localizer-v1"}
+                  "capability": "localization", "runtime": "chess-ocr-onnx-localizer-v1",
+                  "preprocessing": "yolox-rgb-imagenet-v2"}
+        with self.assertRaisesRegex(p.Invalid, "configuration required"):
+            proposals.validate_manifest(future, allow_builtin=True)
+        future["configuration"] = {
+            "kind": "chess-ocr-onnx-localizer/1", "input": "images",
+            "output": "predictions", "inputShape": [1,3,416,416],
+            "proposalScoreThreshold": .01, "calibratedAcceptanceThreshold": 1,
+            "nmsIou": .65, "refinement": {
+                "id": "nine-line-grid-refiner-v1",
+                "implementationSha256": p.digest(p.REPO / "src/grid.ts"),
+                "regionExpansion": .12, "outputSize": 768, "classifierTileSize": 96,
+                "maxCandidates": 4,
+            },
+        }
         proposals.validate_manifest(future, allow_builtin=True)
         with p.connect() as db:
             db.execute("INSERT INTO provider_manifests VALUES (?,?,?,?,?,0)",
                        (future["id"], future["capability"], future["runtime"],
                         p.canonical(future), p.identity(future)))
-        self.assertNotIn("future-localizer", {item["id"] for item in proposals.providers()["providers"]})
+        self.assertIn("future-localizer", {item["id"] for item in proposals.providers()["providers"]})
 
     def test_missing_square_evidence_must_remain_uncertain(self):
         with p.connect() as db:
@@ -110,6 +125,14 @@ class ProposalTests(unittest.TestCase):
             db.execute("UPDATE proposal_runs SET state='complete'")
         with self.assertRaisesRegex(p.Invalid, "exclude qualification"):
             proposals.create_run("fenshot-localizer-v1", "fenshot-labeler-v1", "qualification", 1)
+
+    def test_development_scope_is_frozen_before_inference_and_excludes_qualification(self):
+        with patch.object(proposals, "_launch", side_effect=lambda run: {"state": "starting", "run_id": run}):
+            result = proposals.create_run("fenshot-localizer-v1", "fenshot-labeler-v1", "dev-pending", 10)
+        with p.connect() as db:
+            body = json.loads(db.execute("SELECT body FROM proposal_runs WHERE id=?", (result["run_id"],)).fetchone()[0])
+        self.assertEqual([sample["id"] for sample in body["samples"]], [self.development])
+        self.assertNotIn(self.qualification, p.canonical(body))
 
     def test_stale_heartbeat_run_is_explicitly_resumable(self):
         with patch.object(proposals, "_launch", side_effect=lambda run: {"state": "starting", "run_id": run}):

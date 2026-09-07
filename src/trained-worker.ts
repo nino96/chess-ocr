@@ -2,20 +2,31 @@ import * as ort from "onnxruntime-web/wasm";
 import { verifiedAsset } from "./assets.ts";
 import {
   candidateManifestSchema,
-  detectorInputFromRgba,
   type CandidateManifest,
 } from "./candidate.ts";
 import {
+  classProbabilities,
+  classifierTiles,
+  detectorRasterFromRgba,
+  sourceDetections,
+} from "./candidate-runtime.ts";
+import {
   identitySchema,
   LABELS,
-  manualBoard,
   requestSchema,
   resultSchema,
   VERSION,
+  type Board,
   type Rect,
   type Request,
 } from "./contract.ts";
-import { decodeYolox } from "./geometry.ts";
+import {
+  deduplicateGrids,
+  findInnerGrid,
+  rectifyGrid,
+  type GridCorners,
+  type RgbaRaster,
+} from "./grid.ts";
 
 type Sessions = {
   classifier: ort.InferenceSession;
@@ -72,8 +83,10 @@ function configure(message: unknown): void {
   const detectorBytes = message.detector;
   sessions = (async () => {
     const cleanup = await configureRuntime();
+    let classifier: ort.InferenceSession | null = null;
+    let detector: ort.InferenceSession | null = null;
     try {
-      const [classifier, detector] = await Promise.all([
+      [classifier, detector] = await Promise.all([
         ort.InferenceSession.create(classifierBytes, {
           executionProviders: ["wasm"],
         }),
@@ -82,80 +95,64 @@ function configure(message: unknown): void {
         }),
       ]);
       return { classifier, detector };
+    } catch (error) {
+      await Promise.allSettled([classifier?.release(), detector?.release()]);
+      throw error;
     } finally {
       cleanup();
     }
   })();
 }
 
-function sourceCanvas(
-  request: Request,
-  rgba: Uint8ClampedArray,
-): OffscreenCanvas {
-  const canvas = new OffscreenCanvas(request.image.width, request.image.height);
-  canvas
-    .getContext("2d")!
-    .putImageData(
-      new ImageData(
-        Uint8ClampedArray.from(rgba),
-        request.image.width,
-        request.image.height,
-      ),
-      0,
-      0,
-    );
-  return canvas;
+async function releaseSessions(): Promise<void> {
+  const pending = sessions;
+  sessions = null;
+  if (!pending) return;
+  try {
+    const loaded = await pending;
+    await Promise.allSettled([
+      loaded.classifier.release(),
+      loaded.detector.release(),
+    ]);
+  } catch {
+    // Failed construction releases every session it managed to create.
+  }
+}
+
+function raster(request: Request, rgba: Uint8ClampedArray): RgbaRaster {
+  return {
+    data: new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.byteLength),
+    width: request.image.width,
+    height: request.image.height,
+  };
 }
 
 async function detect(
   request: Request,
-  source: OffscreenCanvas,
+  rgba: Uint8ClampedArray,
   session: ort.InferenceSession,
   candidate: CandidateManifest,
 ): Promise<Rect[]> {
-  const scale = Math.min(416 / request.image.width, 416 / request.image.height);
-  const resizedWidth = Math.max(1, Math.trunc(request.image.width * scale));
-  const resizedHeight = Math.max(1, Math.trunc(request.image.height * scale));
-  const canvas = new OffscreenCanvas(416, 416);
-  const context = canvas.getContext("2d")!;
-  context.fillStyle = "rgb(114 114 114)";
-  context.fillRect(0, 0, 416, 416);
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = "low";
-  context.drawImage(source, 0, 0, resizedWidth, resizedHeight);
-  const pixels = context.getImageData(0, 0, 416, 416).data;
-  const input = detectorInputFromRgba(pixels, candidate.preprocessing);
-  const tensor = new ort.Tensor("float32", input, [1, 3, 416, 416]);
+  const prepared = detectorRasterFromRgba(
+    rgba,
+    request.image.width,
+    request.image.height,
+    candidate.preprocessing,
+  );
+  const tensor = new ort.Tensor("float32", prepared.input, [1, 3, 416, 416]);
   try {
     const output = await session.run({ [candidate.detector.input]: tensor });
     try {
       const raw = output[candidate.detector.output];
       if (!raw || !(raw.data instanceof Float32Array))
         throw new Error("Invalid detector output");
-      return decodeYolox(
+      return sourceDetections(
         raw.data,
-        416,
-        candidate.detector.scoreThreshold,
-        1,
+        prepared,
+        candidate.detector.proposalScoreThreshold,
         candidate.detector.nmsIou,
-        16,
-      )
-        .map(({ box }) => {
-          const left = Math.max(0, Math.min(resizedWidth, box.x));
-          const top = Math.max(0, Math.min(resizedHeight, box.y));
-          const right = Math.max(0, Math.min(resizedWidth, box.x + box.width));
-          const bottom = Math.max(
-            0,
-            Math.min(resizedHeight, box.y + box.height),
-          );
-          return {
-            x: left / scale,
-            y: top / scale,
-            width: (right - left) / scale,
-            height: (bottom - top) / scale,
-          };
-        })
-        .filter((box) => box.width > 1 && box.height > 1);
+        candidate.refinement.maxCandidates,
+      ).map((value) => value.box);
     } finally {
       for (const value of Object.values(output)) value.dispose();
     }
@@ -164,59 +161,86 @@ async function detect(
   }
 }
 
-function classifierInput(source: OffscreenCanvas, boxes: Rect[]): Float32Array {
-  const result = new Float32Array(boxes.length * 64 * 3 * 96 * 96);
-  const mean = [0.485, 0.456, 0.406];
-  const std = [0.229, 0.224, 0.225];
-  boxes.forEach((box, board) => {
-    const canvas = new OffscreenCanvas(768, 768);
-    const context = canvas.getContext("2d")!;
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-    context.drawImage(
-      source,
-      box.x,
-      box.y,
-      box.width,
-      box.height,
-      0,
-      0,
-      768,
-      768,
-    );
-    const pixels = context.getImageData(0, 0, 768, 768).data;
-    for (let row = 0; row < 8; row++)
-      for (let column = 0; column < 8; column++) {
-        const square = board * 64 + row * 8 + column;
-        for (let channel = 0; channel < 3; channel++)
-          for (let y = 0; y < 96; y++)
-            for (let x = 0; x < 96; x++) {
-              const sourceIndex =
-                ((row * 96 + y) * 768 + column * 96 + x) * 4 + channel;
-              const targetIndex = (square * 3 + channel) * 96 * 96 + y * 96 + x;
-              result[targetIndex] =
-                (pixels[sourceIndex]! / 255 - mean[channel]!) / std[channel]!;
-            }
-      }
-  });
-  return result;
+function expandedRegion(
+  box: Rect,
+  width: number,
+  height: number,
+  fraction: number,
+): Rect {
+  const padding = Math.max(box.width, box.height) * fraction;
+  const x = Math.max(0, box.x - padding);
+  const y = Math.max(0, box.y - padding);
+  const right = Math.min(width, box.x + box.width + padding);
+  const bottom = Math.min(height, box.y + box.height + padding);
+  return { x, y, width: right - x, height: bottom - y };
 }
 
-function probabilities(logits: Float32Array, square: number): number[] {
-  const start = square * 13;
-  let maximum = -Infinity;
-  for (let i = 0; i < 13; i++) maximum = Math.max(maximum, logits[start + i]!);
-  const values = Array.from({ length: 13 }, (_, i) =>
-    Math.exp(logits[start + i]! - maximum),
+function selectionCorners(request: Request): GridCorners | null {
+  const box = request.selection;
+  if (!box) return null;
+  const right = Math.min(request.image.width - 1, box.x + box.width);
+  const bottom = Math.min(request.image.height - 1, box.y + box.height);
+  return [
+    { x: box.x, y: box.y },
+    { x: right, y: box.y },
+    { x: right, y: bottom },
+    { x: box.x, y: bottom },
+  ];
+}
+
+async function classify(
+  source: RgbaRaster,
+  corners: GridCorners,
+  session: ort.InferenceSession,
+  candidate: CandidateManifest,
+  id: string,
+  manual: boolean,
+): Promise<Board> {
+  const rectified = rectifyGrid(
+    source,
+    corners,
+    3,
+    candidate.refinement.outputSize,
   );
-  const total = values.reduce((sum, value) => sum + value, 0);
-  if (!Number.isFinite(total) || total <= 0)
-    throw new Error("Invalid classifier output");
-  return values.map((value) => value / total);
+  const values = classifierTiles(rectified.data);
+  const tensor = new ort.Tensor("float32", values, [64, 3, 96, 96]);
+  try {
+    const output = await session.run({ [candidate.classifier.input]: tensor });
+    try {
+      const raw = output[candidate.classifier.output];
+      if (!raw || !(raw.data instanceof Float32Array))
+        throw new Error("Invalid classifier output");
+      const probabilities = classProbabilities(raw.data, 64);
+      return {
+        id,
+        corners: corners.map((point) => ({ ...point })) as Board["corners"],
+        geometrySource: manual ? "manual" : "detected",
+        squares: probabilities.map((values) => {
+          let best = 0;
+          for (let index = 1; index < values.length; index++)
+            if (values[index]! > values[best]!) best = index;
+          return {
+            label: LABELS[best]!,
+            probabilities: values,
+            uncertain: true,
+          };
+        }),
+        orientation: "unknown",
+        orientationEvidence: "unknown",
+        warnings: [
+          "Synthetic-only candidate; inspect every square and grid corner.",
+        ],
+      };
+    } finally {
+      for (const value of Object.values(output)) value.dispose();
+    }
+  } finally {
+    tensor.dispose();
+  }
 }
 
 function preprocessingIdentity(candidate: CandidateManifest): string {
-  return `candidate-v2/${candidate.preprocessing}/mobilenetv3-rgb96`;
+  return `candidate-v3/${candidate.preprocessing}/${candidate.refinement.id}/mobilenetv3-rgb96`;
 }
 
 async function recognize(
@@ -229,11 +253,28 @@ async function recognize(
   const candidate = manifest;
   const modelIdentity = identity;
   const loaded = await sessions;
-  const source = sourceCanvas(request, rgba);
-  const boxes = request.selection
-    ? [request.selection]
-    : await detect(request, source, loaded.detector, candidate);
-  if (!boxes.length)
+  const source = raster(request, rgba);
+  const manual = selectionCorners(request);
+  let rejected = 0;
+  const grids: GridCorners[] = [];
+  if (manual) grids.push(manual);
+  else {
+    const boxes = await detect(request, rgba, loaded.detector, candidate);
+    for (const box of boxes) {
+      const refined = findInnerGrid(
+        source,
+        expandedRegion(
+          box,
+          request.image.width,
+          request.image.height,
+          candidate.refinement.regionExpansion,
+        ),
+      );
+      if (refined.ok) grids.push(refined.corners);
+      else rejected++;
+    }
+  }
+  if (!grids.length)
     return resultSchema.parse({
       schema: VERSION,
       requestId: request.requestId,
@@ -241,61 +282,28 @@ async function recognize(
       status: "unsupported",
       boards: [],
       warnings: [
-        "The synthetic candidate found no board. Select the inner grid manually or use the baseline.",
+        rejected
+          ? `Grid refinement rejected ${rejected} detector proposal${rejected === 1 ? "" : "s"}.`
+          : "The synthetic candidate found no detector proposal.",
+        "Supply the inner grid manually or use the unchanged baseline.",
       ],
       model: modelIdentity,
       preprocessing: preprocessingIdentity(candidate),
       timings: { totalMs: performance.now() - start },
     });
-  const values = classifierInput(source, boxes);
-  const tensor = new ort.Tensor("float32", values, [
-    boxes.length * 64,
-    3,
-    96,
-    96,
-  ]);
-  let logits: Float32Array;
-  try {
-    const output = await loaded.classifier.run({
-      [candidate.classifier.input]: tensor,
-    });
-    try {
-      const raw = output[candidate.classifier.output];
-      if (
-        !raw ||
-        !(raw.data instanceof Float32Array) ||
-        raw.data.length !== boxes.length * 64 * 13
-      )
-        throw new Error("Invalid classifier output");
-      logits = Float32Array.from(raw.data);
-    } finally {
-      for (const value of Object.values(output)) value.dispose();
-    }
-  } finally {
-    tensor.dispose();
-  }
-  const boards = boxes.map((box, boardIndex) => {
-    const board = manualBoard(box);
-    board.id = `candidate-${boardIndex + 1}`;
-    board.geometrySource = request.selection ? "manual" : "detected";
-    board.squares = Array.from({ length: 64 }, (_, squareIndex) => {
-      const probs = probabilities(logits, boardIndex * 64 + squareIndex);
-      let best = 0;
-      for (let i = 1; i < probs.length; i++)
-        if (probs[i]! > probs[best]!) best = i;
-      return {
-        label: LABELS[best]!,
-        probabilities: probs,
-        // Synthetic development confidence is not a real-page calibration.
-        uncertain: true,
-      };
-    });
-    board.warnings = [
-      "Synthetic-only candidate; inspect every square and the detected grid.",
-      "Detector boxes are axis-aligned and are not inner-grid refined.",
-    ];
-    return board;
-  });
+  const distinct = deduplicateGrids(grids.map((corners) => ({ corners })));
+  const boards: Board[] = [];
+  for (let index = 0; index < distinct.length; index++)
+    boards.push(
+      await classify(
+        source,
+        distinct[index]!.corners,
+        loaded.classifier,
+        candidate,
+        `candidate-${index + 1}`,
+        Boolean(manual),
+      ),
+    );
   return resultSchema.parse({
     schema: VERSION,
     requestId: request.requestId,
@@ -304,6 +312,12 @@ async function recognize(
     boards,
     warnings: [
       "Candidate results are unqualified synthetic-development evidence only.",
+      "Detector regions are proposals; only nine-line-refined grids are returned.",
+      ...(rejected
+        ? [
+            `Grid refinement rejected ${rejected} additional proposal${rejected === 1 ? "" : "s"}.`,
+          ]
+        : []),
       "Orientation remains unknown; image rows are preserved top to bottom.",
     ],
     model: modelIdentity,
@@ -327,7 +341,7 @@ self.onmessage = async (event: MessageEvent) => {
       throw new Error("Invalid input");
     self.postMessage(await recognize(request, event.data.rgba));
   } catch {
-    sessions = null;
+    await releaseSessions();
     self.postMessage({
       schema: VERSION,
       requestId: request.requestId,
@@ -340,7 +354,7 @@ self.onmessage = async (event: MessageEvent) => {
       model: identity,
       preprocessing: manifest
         ? preprocessingIdentity(manifest)
-        : "candidate-v2/unconfigured",
+        : "candidate-v3/unconfigured",
       timings: { totalMs: 0 },
     });
   } finally {

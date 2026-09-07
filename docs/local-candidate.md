@@ -1,8 +1,8 @@
 # Test a local trained candidate
 
 The browser demo and dataset dashboard keep their existing default behavior.
-FENShot remains the browser default, and the dataset dashboard has no model
-unless one is explicitly supplied when its loopback server starts.
+FENShot remains the browser default. V2 appears in the dataset provider registry
+only after its ignored immutable manifests are explicitly registered.
 
 The training checkpoints are native `.pt` recovery artifacts. The UIs load the
 corresponding ONNX exports, bound by a small manifest that records exact bytes,
@@ -10,60 +10,45 @@ SHA-256 values, tensor names, label order and detector thresholds. No model,
 checkpoint or generated manifest is committed or published.
 
 Two detectors are retained. V1 is `legacy-bgr-div255-v1`, synthetic-only and
-uncalibrated. Its original schema-1 bundle did not identify preprocessing and was
-therefore ambiguous. Corrected loaders reject schema 1 with a regeneration
-instruction; its ignored local bundle was regenerated under schema 2 with the
-legacy identifier for diagnostic use. V2 is `yolox-rgb-imagenet-v2`, completed
-all 9,000 updates, and remains synthetic-development-only. Neither is qualified;
-never relabel V1 as corrected or treat V2's saturated synthetic metrics as real
+uncalibrated; preserve its old diagnostic bundle unchanged. V2 is
+`yolox-rgb-imagenet-v2`, completed all 9,000 updates, and remains
+synthetic-development-only. The executable browser/provider integration uses
+schema 3 because it binds the shared refiner, tensor shapes, separate proposal
+and acceptance thresholds, and resource limits. Older bundles are rejected.
+Neither model is qualified; saturated synthetic metrics are not real-page
 generalization.
 
 ## Prepare the ignored manifest
 
 From the repository/worktree containing the run:
 
-```sh
-pnpm run candidate -- prepare \
-  --run-root work/training/synthetic-bootstrap-v1-detector-3 \
-  --output work/candidates/synthetic-bootstrap-v1-detector-3.json \
-  --preprocessing legacy-bgr-div255-v1 \
-  --score-threshold 0.3
-```
-
-The `0.3` threshold is an explicit exploratory value, not a calibrated real-page
-operating point. Creating another manifest with a different threshold does not
-retrain or modify either model. A normal completed run must have both export
-manifests. The command also has one bounded recovery path for a complete detector
-schedule rejected only by the former `0.0001` export cutoff: the run must retain
-the terminal checkpoint, full curve, matching failed state/log and diagnosed
-drift at or below `0.001`.
-
 The corrected post-hoc audit admits partial pages as no-valid-board cases. No
 nonzero-recall threshold met its false-positive limit, so the exact calibrated
-threshold is `1.0`. Prepare the hash-bound v2 bundle with that value:
+threshold is `1.0`. The lower `0.01` value feeds region proposals to the refiner;
+it is not an accepted-board threshold. Prepare the hash-bound v2 bundle and its
+two immutable ignored provider manifests with both values:
 
 ```sh
 pnpm run candidate -- prepare \
   --run-root work/training/synthetic-bootstrap-v2-detector \
-  --output work/candidates/synthetic-bootstrap-v2-detector.json \
+  --output work/candidates/synthetic-bootstrap-v2-detector-v3.json \
+  --provider-output-directory work/candidates/providers \
   --preprocessing yolox-rgb-imagenet-v2 \
-  --score-threshold 1.0
+  --proposal-score-threshold 0.01 \
+  --calibrated-score-threshold 1.0
 ```
 
-This threshold is still labeled `synthetic-development-only`. Preparing the
-bundle copies no model bytes and changes no retained run artifact. It causes
-automatic v2 detection to abstain; manual-grid classifier diagnostics still run.
-A later full-page diagnostic may use a separately named low proposal threshold
-only to feed the required nine-line grid refiner. It must retain `1.0` as the
-synthetic calibrated acceptance threshold and cannot present region proposals as
-accepted boards.
+Both thresholds remain labeled `synthetic-development-only`. Preparing the
+bundle copies no model bytes and changes no retained run artifact. Automatic v2
+uses low-threshold regions only as inputs to the deterministic nine-line refiner;
+unrefined regions are never returned as accepted boards.
 
 For this run the three local inputs are:
 
 ```text
-work/candidates/synthetic-bootstrap-v1-detector-3.json
-work/training/synthetic-bootstrap-v1-detector-3/classifier/selected.onnx
-work/training/synthetic-bootstrap-v1-detector-3/detector/selected.onnx
+work/candidates/synthetic-bootstrap-v2-detector-v3.json
+work/training/synthetic-bootstrap-v2-detector/classifier/selected.onnx
+work/training/synthetic-bootstrap-v2-detector/detector/selected.onnx
 ```
 
 ## Browser test UI
@@ -75,24 +60,39 @@ The app checks model sizes and hashes before creating the local WASM worker. Use
 
 Candidate results preserve source-image coordinates and row order. Orientation
 remains unknown. All 64 squares stay visibly uncertain because synthetic
-development confidence is not real-page calibration. Detector rectangles are
-axis-aligned and are not yet inner-grid corner refinement.
+development confidence is not real-page calibration. Automatic results require
+nine-line refinement; low-evidence and partial grids are rejected. The paired
+diagnostic accepts at most 20 inputs and 100 MiB compressed, keeps only the active
+image decoded, hides results until the reference is saved, and supports automatic
+and manual four-corner modes. Its private export is sensitive local evidence;
+only the aggregate summary is publication-safe.
 
 ## Dataset dashboard
 
-Start the loopback dashboard with the optional candidate arguments:
+Register the generated provider manifests, then list their immutable IDs:
 
 ```sh
-pnpm run dataset serve --port 8766 \
-  --candidate-manifest work/candidates/synthetic-bootstrap-v1-detector-3.json \
-  --candidate-classifier work/training/synthetic-bootstrap-v1-detector-3/classifier/selected.onnx \
-  --candidate-detector work/training/synthetic-bootstrap-v1-detector-3/detector/selected.onnx \
-  --candidate-overlay-root work/training-overlay
+pnpm run dataset proposals register work/candidates/providers/v2-localizer-DET-HASH-REFINER-HASH.json
+pnpm run dataset proposals register work/candidates/providers/v2-labeler-CLS-HASH-REFINER-HASH.json
+pnpm run dataset proposals providers
 ```
 
 Use the dataset environment setup from [the pipeline guide](dataset-pipeline.md).
-The optional inference adapter imports NumPy and ONNX Runtime from the verified
-training overlay; the dashboard itself still uses its small dataset environment.
+The detached runner verifies both model hashes and the refiner implementation,
+creates separate bounded WASM sessions, and releases both on success or failure.
+Use `dev-pending`, `dev-all`, or `accepted-dev` only after a held-out development
+membership exists. Qualification is never a proposal scope.
+
+Verify the actual retained artifacts in Node WASM and all production browser
+engines with:
+
+```sh
+pnpm run candidate:verify work/candidates/providers/LOCALIZER.json work/candidates/providers/LABELER.json
+pnpm run build
+pnpm run candidate:verify:browser work/candidates/synthetic-bootstrap-v2-detector-v3.json \
+  work/training/synthetic-bootstrap-v2-detector/classifier/selected.onnx \
+  work/training/synthetic-bootstrap-v2-detector/detector/selected.onnx
+```
 
 When a page is open, **Generate model proposal** runs both models locally and
 offers geometry and labels as an editable draft. It never marks a page negative,

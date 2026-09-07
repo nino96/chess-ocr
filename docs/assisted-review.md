@@ -37,19 +37,18 @@ complete the source-diverse dataset, or qualify recognition.
 
 Built-in provider IDs are:
 
-| Capability | Provider | Runtime |
-| --- | --- | --- |
-| Localization | `fenshot-localizer-v1` | unchanged FENShot grid detector |
-| Localization | `classical-grid-v1` | deterministic multi-grid evidence |
-| Labels | `fenshot-labeler-v1` | unchanged FENShot ONNX tile classifier |
+| Capability   | Provider               | Runtime                                |
+| ------------ | ---------------------- | -------------------------------------- |
+| Localization | `fenshot-localizer-v1` | unchanged FENShot grid detector        |
+| Localization | `classical-grid-v1`    | deterministic multi-grid evidence      |
+| Labels       | `fenshot-labeler-v1`   | unchanged FENShot ONNX tile classifier |
 
-`chess-ocr-onnx-localizer-v1` and `chess-ocr-onnx-labeler-v1` are reserved
-validated runtime identifiers for issue #3 integration. They are not dynamically
-loaded and are not advertised until an adapter exists. Registering a future
-manifest requires a local ignored manifest under `work/` or `artifacts/`, an
-artifact in one of those approved roots, a matching model/artifact SHA-256 and a
-unique immutable provider ID. The adapter must then be reviewed in source and
-added to the fixed runtime registry.
+`chess-ocr-onnx-localizer-v1` and `chess-ocr-onnx-labeler-v1` are executable fixed
+adapters. They accept only explicitly registered manifests under ignored `work/`
+or `artifacts/`, separately verify detector and classifier bytes, bind tensor
+contracts, thresholds, preprocessing, refinement identity and limits, and create
+two WASM sessions in the detached runner. They are not dynamic module loaders.
+Changing an artifact or the refiner requires a new immutable provider ID.
 
 `chess-ocr-dataset-proposal/1` binds each result to run ID, sample ID, sample
 revision, source-image SHA-256, both complete manifests and measured runtime.
@@ -58,12 +57,8 @@ per-square 13-class probability evidence where available, uncertainty flags and
 unknown orientation. Only results matching the current revision and image hash
 are exposed to the editor.
 
-The issue #3 branch began from merge commit
-`977d3ab40187203d43a2c485fd1a3adc89e3e174`, which includes issue #2 commit
-`8155a3e0e2bd2672267b097cc72e87a0298cc899`. Training remains owned by issue #3.
-After its model and exact preprocessing/output contract are merged, integrate it
-by adding the corresponding fixed adapter and manifest tests here; do not copy
-changes into or edit the concurrent training worktree from issue #2.
+Training remains owned by issue #3. These adapters expose only draft proposals;
+they do not alter annotations or satisfy the real-development gate.
 
 ## Bounded job lifecycle
 
@@ -84,6 +79,9 @@ A run is capped at 100 pages and two hours. Work is persisted after each page;
 inference runs outside the dataset writer lock, with short transactions for
 attempt/result records. Status is resumable local state, so no AI turn needs to
 poll it. The dashboard exposes the same start/status/stop surface.
+
+The start command also accepts `dev-pending`, `dev-all`, or `accepted-dev` after
+development sources are prospectively assigned. No command accepts qualification.
 
 Proposal inputs, intermediate RGBA, results, manifests for local models and review
 metrics remain under ignored dataset storage/SQLite. Reset refuses a live proposal
@@ -122,12 +120,12 @@ A four-page TRAIN smoke run on `capablanca-1921-20` through
 negative evidence for both current localization paths, not a provider promotion
 comparison:
 
-| Page | Visible board | FENShot proposal | Classical proposal |
-| --- | --- | --- | --- |
-| 20 | none | false board over the text body | false text-region grid |
-| 21 | one board near the upper page | false lower-page grid; missed the board | two false lower-page grids; missed the board |
-| 22 | one board near the lower page | false upper-page grid; missed the board | unsupported; missed the board |
-| 23 | none | false text-region grid | three false text-region grids |
+| Page | Visible board                 | FENShot proposal                        | Classical proposal                           |
+| ---- | ----------------------------- | --------------------------------------- | -------------------------------------------- |
+| 20   | none                          | false board over the text body          | false text-region grid                       |
+| 21   | one board near the upper page | false lower-page grid; missed the board | two false lower-page grids; missed the board |
+| 22   | one board near the lower page | false upper-page grid; missed the board | unsupported; missed the board                |
+| 23   | none                          | false text-region grid                  | three false text-region grids                |
 
 The labels are consequently not useful because they are extracted from the
 wrong crops. The result does not justify more human time choosing between

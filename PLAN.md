@@ -532,3 +532,13 @@ an evaluation-only audit now clamps AP to `[0,1]` and includes partial/unsupport
 pages as separately reported no-valid-board cases. These saturated synthetic
 results do not change the required shared grid refinement, reference-first real
 development comparison, named-laptop budget or qualification gates.
+
+The schema-3 local bundle and fixed ONNX providers now share detector
+letterboxing/decode, deterministic nine-line refinement, perspective
+rectification and classifier tiling. A reference-first browser diagnostic
+compares v2 with unchanged FENShot in automatic and manual-grid modes and emits
+separate sensitive and aggregate schemas. The retained ONNX files passed Node
+WASM plus Chromium, Firefox and WebKit production runs with no external requests.
+This is runtime integration evidence only: no private six-image diagnostic, real
+development truth, promotion comparison, named-laptop memory gate or
+qualification was run.
