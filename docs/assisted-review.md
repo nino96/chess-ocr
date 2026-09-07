@@ -40,7 +40,7 @@ Built-in provider IDs are:
 | Capability | Provider | Runtime |
 | --- | --- | --- |
 | Localization | `fenshot-localizer-v1` | unchanged FENShot grid detector |
-| Localization | `classical-grid-v2` (current; v1 retained for old runs) | deterministic multi-grid evidence |
+| Localization | `classical-grid-v1` | deterministic multi-grid evidence |
 | Labels | `fenshot-labeler-v1` | unchanged FENShot ONNX tile classifier |
 
 `chess-ocr-onnx-localizer-v1` and `chess-ocr-onnx-labeler-v1` are reserved
@@ -135,6 +135,12 @@ FENShot and classical. Keep both as diagnostic/baseline evidence only and make
 the issue #3 model-versus-FENShot comparison the next meaningful gate. The
 source pages and proposal payloads remain local ignored evidence; no image,
 crop, label or model artifact is committed.
+
+The provider manifest originally hashed the whole shared TypeScript module.
+That binding was corrected to hash only the classical implementation segment;
+the startup migration recognizes the old v1 whole-file hash and updates only
+the registry metadata. Existing proposal results retain their embedded
+historical manifests.
 
 Implementation and synthetic tests establish contracts, isolation, stale-result
 handling and editing behavior. Per the 2026-09-07 owner supersession, no

@@ -40,6 +40,11 @@ SUPPORTED_RUNTIMES = {
 RUNNABLE_RUNTIMES = {
     "fenshot-localizer-v1", "fenshot-labeler-v1", "classical-grid-v1"
 }
+# The first classical manifest accidentally hashed the whole shared provider
+# module. Keep its exact source hash recognizable for the one-time migration
+# below; unrelated provider edits must not change classical-grid-v1 identity.
+LEGACY_CLASSICAL_SOURCE_SHA = "fe398d6710dc985213844f1953232d39da52797f3061fdbde2e5b447855a8253"
+ACCIDENTAL_PROVIDER_ID = "classical-grid-v2"
 
 
 def _hex(value):
@@ -84,7 +89,15 @@ def _builtin_manifests():
     identity = {"name": "@scoriiu/fenshot", "version": "0.1.4", "sha256": model_sha}
     artifact = {"path": str(model.relative_to(p.REPO)), "sha256": model_sha}
     classical_path = p.REPO / "src/proposals/index.ts"
-    classical_sha = p.digest(classical_path) if classical_path.is_file() else "0" * 64
+    p.require(classical_path.is_file(), "classical provider source missing")
+    source = classical_path.read_text(encoding="utf-8")
+    start = source.find("const classicalManifest =")
+    end = source.find("function overlap(", start)
+    p.require(start >= 0 and end > start, "classical provider source markers missing")
+    classical_sha = p.identity({
+        "implementation": "classical-grid-v1",
+        "source": source[start:end],
+    })
     return [
         {"schema": SCHEMA, "id": "fenshot-localizer-v1", "capability": "localization",
          "runtime": "fenshot-localizer-v1",
@@ -96,10 +109,7 @@ def _builtin_manifests():
          "runtime": "fenshot-labeler-v1", "model": identity,
          "preprocessing": "fenshot-0.1.4/rgba-gray-bilinear-256/1",
          "artifact": artifact, "limits": limits},
-        # Keep the prior v1 manifest immutable.  The provider implementation
-        # source changed after v1 shipped (including unrelated adapters), so
-        # the current source-bound identity is a new provider record.
-        {"schema": SCHEMA, "id": "classical-grid-v2", "capability": "localization",
+        {"schema": SCHEMA, "id": "classical-grid-v1", "capability": "localization",
          "runtime": "classical-grid-v1",
          "model": {"name": "chess-ocr classical grid", "version": "1", "sha256": classical_sha},
          "preprocessing": "chess-ocr/classical-grid-gray/1", "artifact": None,
@@ -153,13 +163,37 @@ def validate_manifest(value, *, allow_builtin=False):
 def initialize():
     with p.writer(), p.connect() as db:
         _provider_tables(db)
+        accidental = db.execute(
+            "SELECT 1 FROM provider_manifests WHERE id=?", (ACCIDENTAL_PROVIDER_ID,)
+        ).fetchone()
+        if accidental:
+            referenced = any(
+                ACCIDENTAL_PROVIDER_ID in row[0]
+                for table in ("proposal_runs", "proposal_results")
+                for row in db.execute(f"SELECT body FROM {table}")
+            )
+            if not referenced:
+                db.execute("DELETE FROM provider_manifests WHERE id=?", (ACCIDENTAL_PROVIDER_ID,))
         for manifest in _builtin_manifests():
             validate_manifest(manifest, allow_builtin=True)
             body = p.canonical(manifest)
             sha = p.identity(manifest)
             prior = db.execute("SELECT sha FROM provider_manifests WHERE id=?", (manifest["id"],)).fetchone()
-            p.require(prior is None or prior["sha"] == sha,
-                      "built-in provider identity changed; version its provider id")
+            if prior is not None and prior["sha"] != sha:
+                previous = json.loads(db.execute(
+                    "SELECT body FROM provider_manifests WHERE id=?", (manifest["id"],)
+                ).fetchone()[0])
+                p.require(
+                    manifest["id"] == "classical-grid-v1"
+                    and previous["model"]["sha256"] == LEGACY_CLASSICAL_SOURCE_SHA,
+                    "built-in provider identity changed; version its provider id",
+                )
+                # Repair the original over-broad identity binding. Existing
+                # proposal runs retain their embedded historical manifest.
+                db.execute(
+                    "UPDATE provider_manifests SET body=?,sha=? WHERE id=?",
+                    (body, sha, manifest["id"]),
+                )
             db.execute("INSERT OR IGNORE INTO provider_manifests VALUES (?,?,?,?,?,1)",
                        (manifest["id"], manifest["capability"], manifest["runtime"], body, sha))
 
@@ -186,8 +220,8 @@ def providers():
         values = []
         placeholders = ",".join("?" for _ in RUNNABLE_RUNTIMES)
         for row in db.execute(
-                f"SELECT * FROM provider_manifests WHERE runtime IN ({placeholders}) ORDER BY capability,id",
-                tuple(sorted(RUNNABLE_RUNTIMES))):
+            f"SELECT * FROM provider_manifests WHERE runtime IN ({placeholders}) AND id != ? ORDER BY capability,id",
+            (*sorted(RUNNABLE_RUNTIMES), ACCIDENTAL_PROVIDER_ID)):
             body = json.loads(row["body"])
             values.append({"id": row["id"], "capability": row["capability"],
                            "runtime": row["runtime"], "manifest_sha256": row["sha"],
