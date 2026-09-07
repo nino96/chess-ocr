@@ -107,6 +107,7 @@ def load_inputs(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str
     require(config.get("schema") == "chess-ocr-training-recipe/1", "recipe schema")
     dependencies = config["environment"]["dependencies"]
     require(np.__version__ == dependencies["numpy"] and PIL.__version__ == dependencies["pillow"], "training NumPy/Pillow versions")
+    require(importlib.metadata.version("onnx") == dependencies["onnx"], "training ONNX version")
     require(importlib.metadata.version("opencv-python-headless") == dependencies["opencv-python-headless"],
             "training OpenCV version")
     require(config["dataset"]["label_order"] == LABELS, "label order")
