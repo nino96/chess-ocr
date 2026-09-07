@@ -41,9 +41,11 @@ No measured model token/quota accounting is available.
 
 Physical devices, the owner's actual SSH browser session, and Firefox/WebKit
 dataset UI remain untested. Chromium emulation is not physical iPad evidence.
-Core inference is unchanged, so its full runtime matrix was not rerun. Browser
-PDF upload and automatic annotation proposals remain unimplemented; archive
-restoration needs operator handling. See the [operator workflow](operator-workflow.md).
+Core inference is unchanged, so its full runtime matrix was not rerun. At this
+2026-09-06 checkpoint, browser PDF upload and automatic annotation proposals were
+unimplemented; the assisted-review follow-up below supersedes the second
+limitation. Archive restoration still needs operator handling. See the
+[operator workflow](operator-workflow.md).
 
 ## Archive management follow-up
 
@@ -96,3 +98,47 @@ Core inference was unchanged; full inference/browser/physical-device matrices
 were not rerun. A bounded research worker gathered primary references and a coding
 worker implemented the duplicate policy/tests; the lead owned decisions, integration,
 asset admission and final checks. No measured model token/quota usage is available.
+
+## Assisted-review framework — 2026-09-07
+
+Implemented against issue #2 commit
+`8155a3e0e2bd2672267b097cc72e87a0298cc899`. Localization and square-label
+providers are separately selectable through immutable validated manifests. The
+built-ins are FENShot localization, a deterministic classical grid localizer and
+FENShot labels. A bounded TRAIN-only detached job records immutable input/provider
+identity and exposes only current revision/hash results. It never mutates or
+accepts an annotation.
+
+The dashboard now provides focused filters and proposal controls. The editor
+autofills a valid proposal only on an untouched draft, preserves edits when a
+proposal changes, requires explicit confirmed replacement of an edited board,
+highlights uncertain squares, and adds draggable/keyboard geometry, zoom, palette,
+undo/redo, bounded deferral and an optional five-minute session. Accepted truth
+still needs one human pixel check. Separate local metrics record active time,
+missed/false boards, geometry displacement and piece corrections.
+
+Validation on Linux ARM64 GX10, Node 24.19.0, pnpm 11.11.0, CPython 3.12.3 and
+the pinned dataset environment:
+
+- `work/dataset-venv/bin/python -m unittest python/test_dataset_pipeline.py python/test_dataset_reset.py python/test_dataset_server.py python/test_dataset_proposals.py`: 52 passed, including the actual pinned FENShot WASM runner.
+- `pnpm test`: 32 passed after rerunning the Git-spawning payload guard with its required sandbox permission.
+- `pnpm run check`: strict types, formatting, source/privacy, payload protection and documentation links passed.
+- `pnpm run build`: passed; produced seven integrity-bound offline assets.
+- `pnpm run test:dataset-review`: both connected and standalone Chromium workflows passed.
+- `git diff --check`: passed.
+
+Two bounded Terra workers implemented the provider engine/tests and disjoint
+review workspace/browser tests. The lead integrated them, corrected identity,
+stale-run and edit-preservation behavior, added the job/server/reset layer and
+performed final review and gates. No measured model token/quota accounting is
+available.
+
+All tests used original temporary synthetic fixtures; no corpus or private input
+was read, no proposal run touched qualification, and no training/model artifact
+was written. The issue #3 training branch is based on merge commit
+`977d3ab40187203d43a2c485fd1a3adc89e3e174`; its future model adapter remains an
+explicit post-merge integration point. The owner subsequently removed the
+classical-versus-FENShot human winner-selection gate: classical remains diagnostic
+and FENShot remains baseline. The issue #3 model versus FENShot comparison, real
+review-time benefit, full browser matrix and physical device checks remain unrun.
+See [assisted dataset review](assisted-review.md).

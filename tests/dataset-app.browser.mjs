@@ -231,6 +231,7 @@ finally:
       .getByRole("button", { name: "Archive and start over", exact: true })
       .click();
     await page.locator("#reset-dialog").waitFor({ state: "hidden" });
+    await page.getByText(/0 \/ 0 pages accepted/).waitFor();
     assert.match(
       await page.locator("#summary").textContent(),
       /0 \/ 0 pages accepted/,

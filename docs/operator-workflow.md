@@ -53,8 +53,8 @@ Reserve distinct candidate families for later evaluation before tuning models on
 them; merely leaving pages unlabelled does not prove they are independent.
 
 The historical 20-decision feasibility limit has been replaced by the kickoff
-allocation; review capacity is not a request for more manual labeling.
-There is no automatic label-proposal system yet: annotation is a real human task.
+allocation; review capacity is not a request for more manual labeling. Assisted
+proposals can now reduce editing, but annotation remains a real human task.
 One human pixel review, independent of any model/agent proposal, accepts the page.
 A second reviewer is optional and never mandatory. An agent review cannot accept
 or overwrite a human-accepted annotation.
@@ -163,9 +163,11 @@ without overwriting accepted edits.
 The dashboard exposes existing start/stop, validation, candidate export, inbox
 ingestion with its explicit authorization checkbox, and duplicate decisions. It
 does not upload PDFs: place intended files in `work/dataset/inbox/` through VS
-Code/the local workspace, then ingest that existing inbox. No automatic proposal
-feature exists yet. Use **Stop job** for the separate worker; `Ctrl+C` stops only
-the web app. Rendering uses the same writer lock as draft saves, so stop the job
+Code/the local workspace, then ingest that existing inbox. Under **Proposal run
+controls**, choose localization and label providers separately, select a TRAIN-only
+scope, and start a bounded proposal run. Use **Stop proposals** independently of
+the acquisition **Stop job**; `Ctrl+C` stops only the web app. Rendering uses the
+same writer lock as draft saves, so stop the job
 and choose **Retry saving draft** if a save is temporarily blocked.
 
 **Start over** is a deliberate reset, not routine cleanup: it requires typing
@@ -189,15 +191,31 @@ records per-decision timing; the agent still needs to analyze the local records 
 produce the feasibility report. A disagreement rate requires a separately planned
 comparison review; a zero-error tiny batch is not a quality guarantee.
 
+### Assisted-review behavior
+
+A valid proposal autofills only a new untouched draft. If you have edited the
+page, switching the proposal pair keeps those edits and draws the candidate as a
+comparison overlay. **Use proposed board** is an explicit replacement; edited
+boards require confirmation and Undo remains available. Yellow squares have
+uncertain or missing provider evidence, not permission to skip confident squares.
+Use the optional five-minute session for a short correction batch, or defer with
+the closest bounded reason. Neither action auto-accepts a page.
+
+The agent uses only a small classical/FENShot smoke screen to validate the
+diagnostic path. Once the issue #3 adapter is merged, the meaningful identical-input
+comparison is the new model versus FENShot and reports active human time,
+missed/false boards, corner movement and piece corrections. Your task is the
+independent pixel check for that short batch, not bulk label creation. Full
+commands and the provider boundary are in [assisted dataset review](assisted-review.md).
+
 ## 5. Decide the larger collection budget
 
-Automatic board proposals and piece-label prefilling are committed follow-up work
-after this feasibility batch and before larger-scale annotation. The
+Automatic board proposals and piece-label prefilling are implemented framework
+work. The
 [recorded decision](../PLAN.md#decision-automatic-annotation-proposals-after-feasibility)
-requires a bounded comparison based on manual-review effort; no detector has been
-selected. The agent owns implementation and tests. Your role is to review the
-measured benefit/failure report and approve any additional resource allocation.
-This feature remains unimplemented until that work passes its handoff gate.
+keeps FENShot as baseline and classical localization as a diagnostic. The
+still-pending promotion comparison is the issue #3 model versus FENShot. The agent
+owns running and reporting it; your role is the agreed short independent review.
 
 After the first review batch, the agent should bring you a concrete proposal with:
 
@@ -233,9 +251,10 @@ of recognition quality. Dataset delivery also needs reviewed lineage, adequate
 coverage, sound geometry and independent truth checks.
 
 Continue acquisition/review in batches while tracking missing appearances. An
-expanded budget alone does not implement source extension, automated proposals,
-synthetic generation, verified per-board coverage or qualification freezing.
-Those outstanding features need implementation and validation as appropriate.
+expanded budget alone does not implement source extension, proposal-comparison
+evidence, verified per-board coverage or qualification freezing. Those outstanding
+features need implementation and validation as appropriate; proposal tooling and
+synthetic generation are already implemented but do not satisfy those outcomes.
 
 When the active tranche is reviewed and duplicate blockers are resolved:
 

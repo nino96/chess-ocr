@@ -60,18 +60,17 @@ not knowledge of its current private implementation. Removing a learned localize
 could reduce detector-training requirements; neural inference can also be
 deterministic, and classical heuristics do not guarantee reliability.
 
-Compare classical detection and YOLOX-Nano with the same frozen chess classifier,
-square preprocessing, confidence policy and shared downstream grid processing
-where applicable. Record unavoidable geometry-stage differences. Retain unchanged
-FENShot as the complete-path control. Freeze approved development inputs, hashes,
-thresholds, commands, coverage, stop/decision criteria and concrete ledger ceilings
-before execution; this addition does not enlarge the budget or expose qualification.
-Include degraded/broken lines, borderless grids, captions, small/multiple boards,
-skew and negative/partial cases. Report paired localization/grid errors, all-input
-exact boards, confident errors, clean losses and CPU latency/memory. End with an
-advance/defer/reject decision under unchanged #3 gates, including actual browser
-WASM CPU validation before promotion. YOLOX plus ImageNet-pretrained MobileNetV3
-adapted for chess may still win. No detector is selected by this planning addition;
+Owner supersession (2026-09-07): keep the implemented classical detector as a
+cheap diagnostic/fallback and give it only a small smoke screen; it is no longer
+a promotion contender or human winner-selection gate. Compare the issue #3 learned
+complete path against unchanged FENShot on identical real development inputs.
+Freeze hashes, thresholds, commands, coverage, stop/decision criteria and ledger
+ceilings before that comparison; do not expose qualification. Include
+degraded/broken lines, borderless grids, captions, small/multiple boards, skew and
+negative/partial cases. Report localization/grid errors, all-input exact boards,
+confident errors, clean losses, human correction time and CPU latency/memory. End
+with an advance/defer/reject decision under unchanged #3 gates, including actual
+browser WASM CPU validation before promotion. The new model is not assumed to win;
 ChessQueries remains the separate #4 screen.
 
 YOLOX-Nano is a small established detector with documented ONNX deployment;
@@ -335,19 +334,29 @@ active data, inbox files or cumulative usage; unsafe paths and links are rejecte
 These are local workflow controls, not a real collection, qualification result or
 browser-test claim.
 
-## Planned dashboard enhancements before larger collection
+## Dashboard enhancements before larger collection
 
-Owner direction, 2026-09-06; all work stays in issue #2. The current dashboard
-supports a small manual feasibility batch; successful synthetic workflow tests
-do not establish large-collection throughput. The following are delivery work,
-not implemented capabilities or approval for more acquisition/compute/reviews:
+Owner direction, 2026-09-06; all work stays in issue #2. The dashboard now includes
+the focused queues and assisted-review framework described below. Successful
+synthetic workflow tests still do not establish large-collection throughput.
+The remaining bullets are delivery work, not approval for more
+acquisition/compute/reviews:
 
-- **Annotation assistance:** deliver the bounded board-proposal and label-prefill
-  comparison below. Measure total human time per board, missed/false boards and
-  geometry/piece corrections; preserve one-human acceptance and edited labels.
-- **Focused review queues:** add filters for page kind, draft/annotation issues,
-  ambiguity and source/condition coverage gaps, with resumable batch progress.
-  Prioritization must not silently exclude negatives, difficult pages or misses.
+- **Annotation assistance:** the provider framework, bounded jobs, editable
+  proposal UI and metric capture are implemented. The 2026-09-07 four-page
+  smoke check found false/missed boards in both current localizers; this is
+  recorded as negative diagnostic evidence, not a winner-selection gate. Reserve
+  the measured human promotion comparison for the issue #3 candidate versus
+  unchanged FENShot.
+- **Geometry-triggered label re-read:** deferred until a reviewed label adapter
+  rectifies arbitrary four-corner grids. FENShot's unchanged axis-aligned tile
+  preprocessor must not be silently applied to a human-edited perspective grid;
+  the required stale-result, budget and edit-preservation behavior is recorded in
+  [assisted dataset review](docs/assisted-review.md).
+- **Focused review queues:** proposal/deferred/ambiguous/pending/accepted filters,
+  deferral and optional five-minute progress are implemented. Source/condition
+  coverage-gap prioritization remains pending and must not silently exclude
+  negatives, difficult pages or misses.
 - **Concurrent acquisition and review:** remove the whole-job writer-lock conflict
   so rendering does not block saving reviews. Retain transactional revision guards,
   request cancellation/recovery, bounded concurrency and budget accounting. Test
@@ -376,23 +385,37 @@ boards. This roadmap does not complete issue #2's real dataset outcome.
 
 ## Decision: automatic annotation proposals after feasibility
 
-Owner direction, 2026-09-06; owned by issue #2. After the initial manual feasibility
-batch, implement automatic board proposals and piece-label prefilling before
-scaling annotation to the larger collection. This is committed follow-up scope,
-not an already implemented feature. No board detector has been selected.
+Owner direction, 2026-09-06; implementation decision recorded 2026-09-07; owned
+by issue #2. Automatic board proposals and piece-label prefilling are now
+implemented as the bounded, provider-separated framework in
+[assisted dataset review](docs/assisted-review.md).
 
-- Use the feasibility batch's reviewed pages and measured manual-review effort
-  to define one bounded comparison of a classical multi-board grid detector and
-  the existing FENShot detection path. Preserve full-page negatives, missed boards,
-  small/multiple boards and difficult geometry; do not select only successes.
+Owner supersession, 2026-09-07: do not spend human review effort selecting a
+classical-versus-FENShot winner. Keep unchanged FENShot as the current baseline
+and the classical localizer as a cheap diagnostic/fallback. Use only a small
+nonqualification smoke screen to validate that path. The consequential paired
+human promotion comparison is the new issue #3 model versus FENShot on identical
+real development pages; retain the same time, miss, false-board, geometry and
+piece-correction measures.
+
+- Use a small bounded screen to smoke-test the classical multi-board grid detector
+  against the existing FENShot path. Preserve full-page negatives, missed boards,
+  small/multiple boards and difficult geometry; do not select only successes or
+  treat this smoke evidence as a provider promotion decision.
 - Choose localization separately from square-label proposals. The unchanged
   chess-trained FENShot classifier is an initial label-prefilling candidate,
   not a mandated detector or teacher. The unadapted YOLOX/ImageNet checkpoints
   are not assumed to provide useful chess annotations.
-- Select the proposal workflow by total human annotation time, missed and false
-  board proposals, grid corrections and piece corrections on identical pages.
-  Record a measured advance/defer/reject decision rather than assuming either
-  approach wins. Qualification inputs remain untouched.
+- The default pair is FENShot localization plus FENShot labels; the classical
+  grid provider is a switchable localizer. Providers are immutable validated
+  manifests, not arbitrary code plugins. A valid result prefills only an
+  untouched draft; switching providers preserves edits and uses an explicit,
+  undoable per-board replacement.
+- Evaluate the new issue #3 proposal providers against FENShot by total human
+  annotation time, missed and false board proposals, grid corrections and piece
+  corrections on identical real development pages. Record a measured
+  advance/defer/reject decision rather than assuming the new model wins.
+  Qualification inputs remain untouched.
 - Implement bounded resumable proposal jobs, source/model/preprocessing identity,
   editable candidate outlines and labels, and preservation of human corrections
   across retries, geometry edits and late results. Provide executable tests and
@@ -405,9 +428,16 @@ not an already implemented feature. No board detector has been selected.
   Freeze the comparison limits within an approved
   allocation; this decision does not increase the current collection/GPU budget.
 
-Handoff gate: report the selected method, measured review-time benefit and failure
-coverage, or the specific reason neither method advances. The operator workflow
-must reflect the implemented behavior before the larger annotation phase begins.
+Handoff gate: after the issue #3 adapter is available, report its measured
+review-time benefit and failure coverage against FENShot, or the specific reason
+it does not advance. The classical smoke is an implementation check, not a
+blocker or winner-selection gate for larger annotation.
+
+Issue #3 training proceeds independently from merge commit
+`977d3ab40187203d43a2c485fd1a3adc89e3e174`. Its future trained localizer and
+labeler integrate through the fixed manifest and adapter contracts after their
+exact preprocessing/output contract is merged; issue #2 does not edit the
+concurrent training worktree.
 
 ## Owner decision: synthetic-first kickoff — 2026-09-07
 

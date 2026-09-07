@@ -189,6 +189,53 @@ class DatasetServerTests(unittest.TestCase):
         status, _, _ = self.post("/api/draft", invalid, self.write_headers(cookie))
         self.assertEqual(status, 409)
 
+    def test_provider_routes_extended_draft_deferral_and_metrics(self):
+        cookie = self.handshake()
+        headers = self.write_headers(cookie)
+        status, _, body = self.request("GET", "/api/providers", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        registry = json.loads(body)
+        self.assertEqual({x["capability"] for x in registry["providers"]}, {"localization", "labels"})
+        with patch.object(s.proposals, "create_run",
+                          return_value={"state": "running", "run_id": "a" * 64}) as start:
+            status, _, body = self.post("/api/proposals/start", {
+                "localizer": "classical-grid-v1", "labeler": "fenshot-labeler-v1",
+                "scope": "train-pending", "max_pages": 20}, headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["state"], "running")
+        start.assert_called_once_with("classical-grid-v1", "fenshot-labeler-v1",
+                                      "train-pending", 20)
+        status, _, body = self.request("GET", f"/api/proposals/{self.sample}", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["results"], [])
+
+        board = self.review_data()["boards"][0]
+        state = {"boards": [board], "kind": "boards", "reviewer": "human", "human": True,
+                 "complete": True, "elapsed_seconds": 12, "proposal_base": [board],
+                 "proposal_run": None,
+                 "touched": {"boards": [], "corners": [], "squares": ["0:0"], "corrections": ["0:0"]}}
+        envelope = {"sample_id": self.sample, "revision": 0,
+                    "image_sha256": p.digest(p.local_path("pages/test-1.png")), "version": 0, "state": state}
+        self.assertEqual(self.post("/api/draft", envelope, headers)[0], 200)
+        review = dict(self.review_data(), draft_version=1)
+        status, _, body = self.post("/api/review", review, headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["assistance_metrics"], "recorded")
+        with p.connect() as db:
+            metric = json.loads(db.execute("SELECT body FROM review_metrics").fetchone()[0])
+        self.assertEqual(metric["missed_boards"], 0)
+        self.assertEqual(metric["false_boards"], 0)
+        self.assertEqual(metric["matched_boards"][0]["piece_corrections"], 0)
+
+        second = self.make_second_sample("defer", "train")
+        payload = {"sample_id": second, "revision": 0,
+                   "image_sha256": p.digest(p.local_path(f"pages/{second}.png")),
+                   "reason": "ambiguous", "elapsed_seconds": 5, "proposal_run": None}
+        self.assertEqual(self.post("/api/defer", payload, headers)[0], 200)
+        status, _, body = self.request("GET", "/api/queue", headers={"Cookie": cookie})
+        deferred = next(x for x in json.loads(body)["pages"] if x["id"] == second)
+        self.assertEqual(deferred["deferred_reason"], "ambiguous")
+
     def test_direct_human_acceptance_stale_submission_and_action_allowlist(self):
         cookie = self.handshake()
         review = self.review_data()

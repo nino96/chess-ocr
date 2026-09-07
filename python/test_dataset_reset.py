@@ -71,6 +71,16 @@ class DatasetResetTests(unittest.TestCase):
         self.assertNotEqual(again["archive"], result["archive"])
         self.assertEqual(p.status()["review_decisions"], 1)
 
+    def test_reset_refuses_live_proposal_run(self):
+        with p.connect() as db:
+            db.execute("""CREATE TABLE proposal_runs(
+                id TEXT PRIMARY KEY, state TEXT NOT NULL, body TEXT NOT NULL,
+                created REAL NOT NULL, heartbeat REAL NOT NULL, error TEXT)""")
+            db.execute("INSERT INTO proposal_runs VALUES ('run','running','{}',0,9999999999,NULL)")
+        with self.assertRaisesRegex(p.Invalid, "active proposal job"):
+            reset.reset_dataset("START OVER")
+        self.assertTrue(p.local_path("pages/source-1.png").exists())
+
     def test_interrupted_payload_move_recovers_before_status(self):
         with self.assertRaisesRegex(RuntimeError, "injected"):
             reset.reset_dataset("START OVER", _interrupt_at="payload-moved")

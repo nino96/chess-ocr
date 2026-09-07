@@ -112,6 +112,19 @@
         z-index: 3;
         border-bottom: 1px solid #c8d5cd;
       }
+      #review-workspace {
+        background: #102c26;
+        color: white;
+        padding: 12px 20px;
+        border-radius: 10px;
+        margin: 16px 0;
+      }
+      #review-workspace p {
+        margin: 0 0 8px;
+      }
+      #review-workspace button {
+        border-color: #b7cac0;
+      }
       .danger {
         color: #9d2525;
         border-color: #9d2525;
@@ -152,6 +165,64 @@
       <p id="message" role="status" aria-live="polite"></p>
     </header>
     <main>
+      <section id="review-workspace" aria-label="Review workspace">
+        <p>
+          <strong>Focused review</strong> — inspect the page, correct the board,
+          then accept and continue.
+        </p>
+        <div class="row">
+          <button id="review-next" class="primary">Review next page</button>
+          <label
+            >Show
+            <select id="filter">
+              <option value="pending">Needs review</option>
+              <option value="proposal">Has proposal</option>
+              <option value="deferred">Deferred</option>
+              <option value="ambiguous">Ambiguous / partial</option>
+              <option value="all">All pages</option>
+              <option value="accepted">Accepted</option>
+            </select></label
+          >
+        </div>
+        <details>
+          <summary>Proposal run controls</summary>
+          <p id="proposal-run-status" role="status">
+            Proposal providers are optional and run only when explicitly
+            started.
+          </p>
+          <label
+            >Localizer
+            <select id="proposal-localizer">
+              <option value="">No localizer available</option>
+            </select></label
+          >
+          <label
+            >Labeler
+            <select id="proposal-labeler">
+              <option value="">No labeler available</option>
+            </select></label
+          >
+          <label
+            >Scope
+            <select id="proposal-scope">
+              <option value="train-pending">Pending training pages</option>
+              <option value="train-all">All training pages</option>
+              <option value="accepted-train">Accepted training pages</option>
+            </select></label
+          >
+          <label
+            >Max pages
+            <input
+              id="proposal-max-pages"
+              type="number"
+              min="1"
+              max="100"
+              value="20"
+          /></label>
+          <button id="proposal-start">Start proposals</button>
+          <button id="proposal-stop">Stop proposals</button>
+        </details>
+      </section>
       <section id="queue" class="panel">
         <div class="row">
           <h2>Pages</h2>
@@ -161,15 +232,7 @@
               <option value="">All documents</option>
             </select></label
           >
-          <label
-            >Show
-            <select id="filter">
-              <option value="pending">Needs review</option>
-              <option value="all">All pages</option>
-              <option value="accepted">Accepted</option>
-            </select></label
-          >
-          <button id="review-next" class="primary">Review next page</button>
+          <span>Use the focused controls above to change review state.</span>
         </div>
         <p id="queue-count"></p>
         <div id="pages"></div>

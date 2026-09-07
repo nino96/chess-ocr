@@ -48,6 +48,66 @@ test("offline review edits image-relative labels, exports versioned decisions an
           orientation: "unknown",
         },
       ],
+      proposals: [
+        {
+          runId: "b".repeat(64),
+          providers: [
+            { id: "fenshot-localizer-v1" },
+            { id: "fenshot-labeler-v1" },
+          ],
+          boards: [
+            {
+              corners: [
+                [0, 0],
+                [160, 0],
+                [160, 160],
+                [0, 160],
+              ],
+              labels: Array(64).fill("."),
+              orientation: "white-bottom",
+              probabilities: Array(64).fill(null),
+              uncertain: Array(64).fill(true),
+            },
+          ],
+        },
+        {
+          runId: "c".repeat(64),
+          providers: [
+            { id: "classical-grid-v1" },
+            { id: "fenshot-labeler-v1" },
+          ],
+          boards: [
+            {
+              corners: [
+                [0, 0],
+                [160, 0],
+                [160, 160],
+                [0, 160],
+              ],
+              labels: Array(64).fill("P"),
+              orientation: "unknown",
+              probabilities: Array.from({ length: 64 }, () => [
+                0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+              ]),
+              uncertain: Array(64).fill(false),
+            },
+            {
+              corners: [
+                [20, 20],
+                [140, 20],
+                [140, 140],
+                [20, 140],
+              ],
+              labels: Array(64).fill("N"),
+              orientation: "unknown",
+              probabilities: Array.from({ length: 64 }, () => [
+                0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+              ]),
+              uncertain: Array(64).fill(false),
+            },
+          ],
+        },
+      ],
     };
     await page.setContent(
       template.replace(
@@ -57,7 +117,69 @@ test("offline review edits image-relative labels, exports versioned decisions an
     );
     await page.locator("#app").waitFor({ state: "visible" });
     assert.equal(await page.locator("#labels select").count(), 64);
+    assert.match(
+      await page.locator("#proposal-status").textContent(),
+      /autofilled/,
+    );
+    assert.equal(await page.locator("#labels .uncertain").count(), 64);
+    assert.equal(await page.locator("#piece-palette button").count(), 13);
+    await page
+      .getByRole("button", {
+        name: "Start optional 5-minute session",
+        exact: true,
+      })
+      .click();
+    assert.equal(await page.locator("#session-progress").isVisible(), true);
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    assert.equal(
+      await page.locator("#zoom").evaluate((el) => el.value),
+      "125%",
+    );
     await page.getByLabel("Square a8", { exact: true }).selectOption("K");
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    assert.equal(
+      await page.getByLabel("Square a8", { exact: true }).inputValue(),
+      ".",
+    );
+    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    assert.equal(
+      await page.getByLabel("Square a8", { exact: true }).inputValue(),
+      "K",
+    );
+    await page.locator("#proposal-choice").selectOption("1");
+    assert.equal(
+      await page.getByLabel("Square a8", { exact: true }).inputValue(),
+      "K",
+    );
+    assert.match(
+      await page.locator("#proposal-status").textContent(),
+      /preserved/,
+    );
+    await page
+      .getByRole("button", { name: "Add proposed board 2", exact: true })
+      .click();
+    assert.equal(
+      await page.getByRole("button", { name: "Board 2", exact: true }).count(),
+      1,
+    );
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    assert.equal(
+      await page.getByRole("button", { name: "Board 2", exact: true }).count(),
+      0,
+    );
+    page.once("dialog", (dialog) => dialog.accept());
+    await page
+      .getByRole("button", { name: "Use proposed board 1", exact: true })
+      .click();
+    assert.equal(
+      await page.getByLabel("Square a8", { exact: true }).inputValue(),
+      "P",
+    );
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    assert.equal(
+      await page.getByLabel("Square a8", { exact: true }).inputValue(),
+      "K",
+    );
     await page.getByLabel("Square a8", { exact: true }).focus();
     await page.keyboard.press("Alt+ArrowRight");
     assert.equal(
