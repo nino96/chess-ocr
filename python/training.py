@@ -19,6 +19,7 @@ import time
 from typing import Any, Iterable
 
 import numpy as np
+import PIL
 from PIL import Image
 import safetensors.torch
 import torch
@@ -101,6 +102,8 @@ def freeze_batch_norm(model: nn.Module) -> None:
 def load_inputs(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[int, str]]:
     config = read_json(args.recipe)
     require(config.get("schema") == "chess-ocr-training-recipe/1", "recipe schema")
+    dependencies = config["environment"]["dependencies"]
+    require(np.__version__ == dependencies["numpy"] and PIL.__version__ == dependencies["pillow"], "training NumPy/Pillow versions")
     require(config["dataset"]["label_order"] == LABELS, "label order")
     require(sha256(args.dataset / "frozen.json") == config["dataset"]["frozen_sha256"], "dataset frozen hash")
     require(sha256(args.dataset / "recipes.json") == config["dataset"]["recipes_sha256"], "dataset recipes hash")

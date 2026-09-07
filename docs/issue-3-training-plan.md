@@ -49,6 +49,12 @@ disabled; its default cuDNN path previously failed native parity. If backward,
 resume, deterministic execution or the complete schedule's measured projection
 fails, stop before the run and report the specific blocker.
 
+The container runs as the invoking host UID/GID, writes only through `/output`,
+and resolves NumPy 2.2.4, Pillow 11.1.0, safetensors 0.5.3 and timm 1.0.15 from a
+hash-frozen ignored overlay built from the existing local wheelhouse. A repaired
+attempt imports every prior attempt and charge; a new run directory cannot reset
+the cumulative reservation.
+
 The schedule is complete only after 10,000 classifier and 9,000 detector updates
 plus all frozen development/calibration evaluations. Do not shorten it to call a
 mechanics pilot successful. One failed comparison permits one bounded causal
@@ -71,3 +77,14 @@ runtime and browser gates pass.
 
 Checkpoints, ONNX files and raw evidence remain ignored. Model publication and a
 public artifact mechanism require separate rights review and owner approval.
+
+## Preflight attempt record
+
+Attempt 1 (`bce9ea1878e7e5ef67eabd6f3ba0175e6da41968ee4deb240bb29080fe107f85`)
+stopped before optimization after 5.696 charged GPU-seconds. The container resolved
+Pillow 12.3.0 instead of the required 11.1.0, and its capability-dropped root user
+could not write to the host-owned output directory. The bounded diagnosis changed
+no data, model or schedule: it adds the exact local Pillow/NumPy wheels to a
+training-specific hash-frozen overlay, runs as the invoking UID/GID, uses `/output`
+instead of the system `/run`, and imports the first attempt's charge into the
+repaired frozen run. The failed run and log remain retained.

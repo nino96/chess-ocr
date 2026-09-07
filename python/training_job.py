@@ -286,7 +286,15 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
     native = safe_directory(args.native_root)
     _, recipes = verify_dataset(dataset, config, verify_images=True)
     verify_native(native, config)
-    overlay = native / "work/native/gpu-overlay"
+    overlay = safe_directory(args.overlay_root)
+    prior_attempts = []
+    prior_charge = 0.0
+    if args.prior_run:
+        prior = read_json(safe_directory(args.prior_run) / "state.json")
+        require(prior.get("run_id") and prior.get("state") in {"failed", "budget-blocked", "interrupted", "stopped"}, "invalid prior training attempt")
+        prior_attempts = [{**attempt, "prior_run_id": prior["run_id"]} for attempt in prior.get("attempts", [])]
+        prior_charge = float(prior.get("gpu_seconds_charged", 0))
+        require(prior_charge < config["resources"]["gpu_seconds"], "prior attempt exhausted GPU budget")
     split = freeze_split(recipes, config)
     usage = shutil.disk_usage(run)
     resources = config["resources"]
@@ -302,6 +310,9 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
         "git": git_identity(),
         "container_id": docker_identity(config["environment"]["image"]),
         "dependency_overlay": directory_identity(overlay),
+        "dependency_overlay_root": str(overlay),
+        "container_user": {"uid": os.getuid(), "gid": os.getgid()},
+        "prior_gpu_seconds_charged": prior_charge,
         "split_sha256": identity(split),
         "created_at": time.time(),
     }
@@ -310,7 +321,7 @@ def initialize(args: argparse.Namespace) -> dict[str, Any]:
     write_json(run / "frozen.json", frozen)
     write_json(run / "state.json", {
         "schema": "chess-ocr-training-state/1", "state": "ready", "stage": "preflight",
-        "pid": None, "process_start": None, "attempts": [], "gpu_seconds_charged": 0,
+        "pid": None, "process_start": None, "attempts": prior_attempts, "gpu_seconds_charged": prior_charge,
         "run_id": frozen["run_id"],
     })
     return {"state": "ready", "run_id": frozen["run_id"], "split": split["summary"]}
@@ -323,7 +334,8 @@ def verify_frozen(run: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     require(frozen.get("code") == code_identity(), "training code changed")
     require(frozen.get("git") == git_identity(), "training commit changed")
     require(frozen.get("container_id") == docker_identity(config["environment"]["image"]), "training image changed")
-    require(frozen.get("dependency_overlay") == directory_identity(Path(frozen["native_root"]) / "work/native/gpu-overlay"), "training dependency overlay changed")
+    require(frozen.get("dependency_overlay") == directory_identity(Path(frozen["dependency_overlay_root"])), "training dependency overlay changed")
+    require(frozen.get("container_user") == {"uid": os.getuid(), "gid": os.getgid()}, "container user changed")
     verify_dataset(Path(frozen["dataset_root"]), config, verify_images=True)
     verify_native(Path(frozen["native_root"]), config)
     split = read_json(run / "split.json")
@@ -337,22 +349,22 @@ def container_name(frozen: dict[str, Any], segment: str) -> str:
 
 def container_command(run: Path, frozen: dict[str, Any], segment: str) -> list[str]:
     config = frozen["recipe"]
-    overlay = Path(frozen["native_root"]) / "work/native/gpu-overlay"
+    overlay = Path(frozen["dependency_overlay_root"])
     require(overlay.is_dir() and not overlay.is_symlink(), "verified GPU dependency overlay missing")
     return [
         "docker", "run", "--rm", "--name", container_name(frozen, segment), "--gpus", "all", "--network", "none", "--read-only",
+        "--user", f"{frozen['container_user']['uid']}:{frozen['container_user']['gid']}", "--entrypoint", "python",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,noexec,nosuid,size=2g",
         "-v", f"{frozen['repository_root']}:/repo:ro",
         "-v", f"{frozen['dataset_root']}:/dataset:ro",
         "-v", f"{frozen['native_root']}:/native:ro",
-        "-v", f"{run}:/run:rw",
+        "-v", f"{run}:/output:rw",
         "-v", f"{overlay}:/overlay:ro",
         "-e", "PYTHONPATH=/overlay:/native/cache/native/yolox:/repo/python",
-        config["environment"]["image"],
-        "python", "/repo/python/training.py", segment,
+        config["environment"]["image"], "/repo/python/training.py", segment,
         "--recipe", "/repo/recipes/synthetic-bootstrap-v1.json",
-        "--dataset", "/dataset", "--native", "/native", "--run", "/run",
-        "--split", "/run/split.json",
+        "--dataset", "/dataset", "--native", "/native", "--run", "/output",
+        "--split", "/output/split.json",
     ]
 
 
@@ -522,6 +534,8 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--recipe", type=Path, default=DEFAULT_RECIPE)
     init.add_argument("--dataset-root", type=Path, required=True)
     init.add_argument("--native-root", type=Path, required=True)
+    init.add_argument("--overlay-root", type=Path, required=True)
+    init.add_argument("--prior-run", type=Path)
     init.add_argument("--run-root", type=Path, default=DEFAULT_RUN)
     for name in ("start", "status", "stop", "run"):
         command = sub.add_parser(name)

@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 
@@ -65,6 +66,19 @@ class TrainingJobTest(unittest.TestCase):
         self.assertEqual(training_job.remaining_seconds(state, "classifier", resources), 25)
         state["gpu_seconds_charged"] = resources["gpu_seconds"]
         self.assertEqual(training_job.remaining_seconds(state, "classifier", resources), 0)
+
+    def test_container_uses_host_identity_and_dedicated_output_mount(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            overlay = root / "overlay"; overlay.mkdir()
+            frozen = {"run_id": "a" * 64, "repository_root": str(root), "dataset_root": str(root),
+                      "native_root": str(root), "dependency_overlay_root": str(overlay),
+                      "container_user": {"uid": 123, "gid": 456}, "recipe": self.config()}
+            command = training_job.container_command(root, frozen, "preflight")
+            self.assertIn("123:456", command)
+            self.assertIn(f"{root}:/output:rw", command)
+            self.assertNotIn(f"{root}:/run:rw", command)
+            self.assertEqual(command[command.index("--entrypoint") + 1], "python")
 
 
 if __name__ == "__main__":

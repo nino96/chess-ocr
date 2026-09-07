@@ -251,7 +251,7 @@ not export qualification or establish production preprocessing parity. Preserve
 its hashes for #3. Keep generated data and private/operational metadata outside Git;
 commit reviewed public provenance and reconstruction recipes.
 
-## 7. Approve and run model training — planned, not implemented
+## 7. Run the bounded bootstrap; later adaptation remains planned
 
 Issue #3 now provides the separate `pnpm run training -- init/start/status/stop`
 command surface for its first frozen synthetic bootstrap. It does not run through

@@ -24,7 +24,13 @@
     "device": "NVIDIA GB10",
     "cudnn_enabled": false,
     "deterministic_algorithms": true,
-    "precision": "float32"
+    "precision": "float32",
+    "dependencies": {
+      "numpy": "2.2.4",
+      "pillow": "11.1.0",
+      "safetensors": "0.5.3",
+      "timm": "1.0.15"
+    }
   },
   "starting_models": {
     "classifier": {

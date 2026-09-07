@@ -181,7 +181,8 @@ and admitted native artifacts:
 ```sh
 pnpm run training -- init \
   --dataset-root /absolute/path/to/chess-ocr/work/dataset/synthetic \
-  --native-root /absolute/path/to/chess-ocr
+  --native-root /absolute/path/to/chess-ocr \
+  --overlay-root /absolute/path/to/ignored/training-overlay
 pnpm run training -- start
 pnpm run training -- status
 pnpm run training -- stop
