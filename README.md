@@ -195,3 +195,9 @@ failure is retained without a GPU charge. It returns after the bounded backgroun
 supervisor is live. Checkpoints, curves, exports and raw logs remain under ignored
 `work/training/`; do not publish them without the separate artifact rights review
 required by this repository.
+
+Commands without `--run-root` always address the default
+`work/training/synthetic-bootstrap-v1` directory; they do not discover the
+newest repaired attempt. If initialization uses a repaired directory such as
+`work/training/synthetic-bootstrap-v1-repair-3`, pass that same `--run-root` to
+every later `status`, `start`, and `stop` command.
