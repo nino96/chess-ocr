@@ -23,6 +23,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: pnpm run setup
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

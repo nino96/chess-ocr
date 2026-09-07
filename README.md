@@ -123,8 +123,10 @@ of this baseline.
 The current [synthetic-first kickoff](docs/dataset-kickoff.md) starts asset
 collection and an audited synthetic seed alongside real-source acquisition.
 It replaces bulk manual labeling as the collection strategy. Generation now has
-an executable fidelity gate; annotation assistance remains pending its comparison
-and workflow checks.
+an executable fidelity gate. The [assisted-review framework](docs/assisted-review.md)
+now provides separately switchable localization/label providers and editable
+proposals. FENShot remains the baseline, classical localization is diagnostic,
+and the pending promotion comparison is the issue #3 model versus FENShot.
 Same-split duplicate candidates are retained with an export audit, not a required
 human task. Cross-split leakage remains blocking.
 
@@ -154,6 +156,15 @@ keeps FENShot as its default and loads candidate ONNX files only after the user
 selects and verifies them locally.
 Use **Archives** to see dated archive sizes and permanently delete an old recovery
 copy after confirmation. Active data, inbox PDFs and cumulative usage are retained.
+Proposal jobs are explicit, TRAIN-only, resumable, and bounded:
+
+```sh
+pnpm run dataset proposals providers
+pnpm run dataset proposals start --localizer fenshot-localizer-v1 --labeler fenshot-labeler-v1 --scope train-pending --max-pages 20
+pnpm run dataset proposals status
+pnpm run dataset proposals stop
+```
+
 Reviewed public-source provenance is tracked for
 [reproducibility](docs/reproducibility.md). Private source details, operational
 history, downloaded assets and generated datasets remain local and ignored.

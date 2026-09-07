@@ -6,6 +6,9 @@ type Page = {
   revision: number;
   accepted: number;
   draft: number;
+  proposal_count: number;
+  deferred_reason: string | null;
+  review_state: string | null;
 };
 type Source = {
   id: string;
@@ -143,7 +146,11 @@ function queueResponse(value: Record<string, unknown>): Queue {
         Number.isInteger(x.page) &&
         Number.isInteger(x.revision) &&
         [0, 1].includes(Number(x.accepted)) &&
-        [0, 1].includes(Number(x.draft)),
+        [0, 1].includes(Number(x.draft)) &&
+        Number.isInteger(x.proposal_count) &&
+        Number(x.proposal_count) >= 0 &&
+        (x.deferred_reason === null || typeof x.deferred_reason === "string") &&
+        (x.review_state === null || typeof x.review_state === "string"),
     ) ||
     !value.sources.every(
       (x: unknown) =>
@@ -167,7 +174,13 @@ function filtered(): Page[] {
   return (data?.pages ?? []).filter(
     (p) =>
       (!doc || doc === p.source) &&
-      (filter === "all" || Boolean(p.accepted) === (filter === "accepted")),
+      (filter === "all" ||
+        (filter === "pending" && !p.accepted) ||
+        (filter === "accepted" && Boolean(p.accepted)) ||
+        (filter === "proposal" && p.proposal_count > 0) ||
+        (filter === "deferred" && p.deferred_reason !== null) ||
+        (filter === "ambiguous" &&
+          ["partial", "unsupported"].includes(p.review_state ?? ""))),
   );
 }
 function label(page: Page): string {
@@ -184,7 +197,7 @@ function button(text: string, action: () => Promise<void>): HTMLButtonElement {
 function renderQueue(): void {
   const pages = filtered();
   el("queue-count").textContent =
-    `${pages.length} pages · ${data?.sources.map((s) => `${s.label}: ${s.split}, ${s.selected_pages} selected pages`).join("; ") ?? ""}`;
+    `${pages.length} matching pages of ${data?.pages.length ?? 0} total · ${data?.sources.map((s) => `${s.label}: ${s.split}, ${s.selected_pages} selected pages`).join("; ") ?? ""}`;
   el<HTMLButtonElement>("review-next").disabled = pages.length === 0;
   el("pages").replaceChildren(
     ...pages.slice(0, limit).map((p) => {
@@ -271,6 +284,56 @@ async function refresh(): Promise<void> {
     `${String(s.accepted_pages)} / ${String(s.pages)} pages accepted · job: ${String(worker)}${jobs ? ` (${jobs})` : ""} · ${String(s.review_decisions)} / ${String(budget.review_limit)} review decisions used`;
   renderQueue();
   await refreshArchives();
+  void refreshProposalControls();
+}
+function proposalOptions(id: string, values: unknown[]): void {
+  const select = el<HTMLSelectElement>(id);
+  const previous = select.value;
+  select.replaceChildren(
+    new Option("Select a provider", ""),
+    ...values.flatMap((value) => {
+      if (!object(value) || typeof value.id !== "string") return [];
+      const title = typeof value.label === "string" ? value.label : value.id;
+      return [new Option(title, value.id)];
+    }),
+  );
+  select.value = previous;
+}
+async function refreshProposalControls(): Promise<void> {
+  try {
+    const result = await api("/api/providers");
+    const providers = Array.isArray(result.providers) ? result.providers : [];
+    const localizers = providers.filter(
+      (p) => object(p) && p.capability === "localization",
+    );
+    const labelers = providers.filter(
+      (p) => object(p) && p.capability === "labels",
+    );
+    const selectedLocalizer = el<HTMLSelectElement>("proposal-localizer").value;
+    const selectedLabeler = el<HTMLSelectElement>("proposal-labeler").value;
+    proposalOptions("proposal-localizer", localizers);
+    proposalOptions("proposal-labeler", labelers);
+    if (object(result.defaults)) {
+      const localizer = result.defaults.localization;
+      const labeler = result.defaults.labels;
+      if (!selectedLocalizer && typeof localizer === "string")
+        el<HTMLSelectElement>("proposal-localizer").value = localizer;
+      if (!selectedLabeler && typeof labeler === "string")
+        el<HTMLSelectElement>("proposal-labeler").value = labeler;
+    }
+    const status = await api("/api/proposals/status");
+    const latest =
+      Array.isArray(status.runs) && object(status.runs[0])
+        ? status.runs[0]
+        : undefined;
+    el("proposal-run-status").textContent = latest
+      ? `Proposal status: ${String(latest.state)} · ${String(latest.completed)} / ${String(latest.pages)} pages`
+      : "Proposal providers ready; no run has started.";
+  } catch {
+    // Proposal infrastructure is deliberately optional during local review.
+    el("proposal-run-status").textContent =
+      "No proposal service available; manual review remains fully usable.";
+  }
 }
 function archiveLabel(archive: Archive): string {
   const stamp = archive.id.slice(0, 16);
@@ -443,6 +506,20 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
         { type: "profile", ...profile },
         location.origin,
       );
+    // Older servers deliberately have no proposal route. Keep review usable.
+    void api(`/api/proposals/${encodeURIComponent(current.id)}`)
+      .then((proposal) => {
+        if (current && message.sample_id === current.id && frame.contentWindow)
+          frame.contentWindow.postMessage(
+            { type: "proposal", proposal },
+            location.origin,
+          );
+        frame.contentWindow?.postMessage(
+          { type: "review-extensions" },
+          location.origin,
+        );
+      })
+      .catch(() => undefined);
   } else if (
     message.type === "draft" &&
     message.revision === current.revision &&
@@ -530,6 +607,33 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
         );
       }
     });
+  } else if (
+    message.type === "defer" &&
+    message.revision === current.revision &&
+    typeof message.reason === "string" &&
+    typeof message.image_sha256 === "string"
+  ) {
+    void run(async () => {
+      await flush();
+      await api("/api/defer", {
+        sample_id: current?.id,
+        revision: current?.revision,
+        image_sha256: message.image_sha256,
+        reason: message.reason,
+        proposal_run:
+          message.proposal_run === null ||
+          typeof message.proposal_run === "string"
+            ? message.proposal_run
+            : null,
+        elapsed_seconds:
+          typeof message.elapsed_seconds === "number"
+            ? message.elapsed_seconds
+            : 0,
+      });
+      note("Page deferred. It remains available under Deferred.");
+      closeEditor();
+      await refresh();
+    });
   }
 });
 window.addEventListener("beforeunload", (event) => {
@@ -603,6 +707,31 @@ el("review-next").addEventListener("click", () => {
   void run(async () => {
     const page = filtered()[0];
     if (page) await openPage(page);
+  });
+});
+el("proposal-start").addEventListener("click", () => {
+  void run(async () => {
+    const localizer = el<HTMLSelectElement>("proposal-localizer").value;
+    const labeler = el<HTMLSelectElement>("proposal-labeler").value;
+    if (!localizer || !labeler)
+      throw new Error(
+        "Choose both a localizer and labeler before starting proposals.",
+      );
+    const result = await api("/api/proposals/start", {
+      localizer,
+      labeler,
+      scope: el<HTMLSelectElement>("proposal-scope").value,
+      max_pages: Number(input("proposal-max-pages").value),
+    });
+    el("proposal-run-status").textContent =
+      `Proposal status: ${String(result.state ?? "started")}`;
+  });
+});
+el("proposal-stop").addEventListener("click", () => {
+  void run(async () => {
+    const result = await api("/api/proposals/stop", {});
+    el("proposal-run-status").textContent =
+      `Proposal status: ${String(result.state ?? "stopped")}`;
   });
 });
 for (const id of ["document", "filter"])

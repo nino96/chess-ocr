@@ -3,9 +3,12 @@
 Current implementation update: the renderer, perspective/print effects and
 independent fidelity checks are delivered; use the status commands before doing
 anything else. Do not repeat acquisition of the four verified local PDFs or the
-36 SVG assets. Remaining work includes corpus-result validation, source-diverse
-real TRAIN/DEV/qualification preparation, proposals and short assisted review,
-leakage investigation and the recorded training/evaluation gates. The older
+36 SVG assets. The provider-separated proposal framework and focused editor are
+delivered; do not rebuild them. Remaining work includes corpus-result validation,
+source-diverse real TRAIN/DEV/qualification preparation, the bounded paired
+issue-#3-model-versus-FENShot assisted-review comparison, leakage investigation
+and the recorded
+training/evaluation gates. The older
 kickoff prompt below describes the full objective, not a reason to rebuild tools.
 
 Paste this into a new session opened in this repository:
@@ -43,9 +46,15 @@ human entry. Keep real accepted data and qualification separate from synthetic d
 In parallel where useful, prepare source-diverse real acquisition increments under
 the kickoff plan; start admitted queues without waiting for manual labeling. Do not
 pad diversity with shared fonts or treat acquired pages as accepted truth.
-Use existing FENShot for an early assisted-label screen; if necessary, a frozen
-synthetic bootstrap in issue #3 is authorized before the large real tranche, subject
-to merged dependencies and training gates. No model/seed sweeps. Human interaction
+Use the implemented FENShot/classical provider screen only for a small diagnostic
+smoke; do not spend human review effort selecting a winner or expose qualification
+pages. The meaningful promotion comparison is the issue #3 model versus FENShot.
+Issue #3 started from merge commit
+`977d3ab40187203d43a2c485fd1a3adc89e3e174`; after its model contract merges, add
+its fixed localizer/labeler adapters through `docs/assisted-review.md`, without
+editing its concurrent worktree from issue #2. If necessary, a frozen synthetic
+bootstrap in issue #3 is authorized before the large real tranche, subject to
+merged dependencies and training gates. No model/seed sweeps. Human interaction
 should become optional short correction/confirmation sessions, not manual creation.
 
 Implement, test and launch the next bounded job rather than rewriting the plan.
