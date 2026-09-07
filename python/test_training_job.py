@@ -133,6 +133,61 @@ class TrainingJobTest(unittest.TestCase):
             self.assertIn("/classifier-checkpoint.pt", command)
             self.assertIn("classifier-export", command)
 
+    def test_detector_audit_is_cpu_only_and_writes_only_below_audits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            overlay = root / "overlay"; overlay.mkdir()
+            frozen = {"run_id": "a" * 64, "repository_root": str(root), "dataset_root": str(root),
+                      "native_root": str(root), "dependency_overlay_root": str(overlay),
+                      "container_user": {"uid": 123, "gid": 456}, "recipe": self.config()}
+            command = training_job.container_command(root, frozen, "detector-audit", "audit.json")
+            self.assertNotIn("--gpus", command)
+            self.assertIn("detector-audit", command)
+            self.assertEqual(command[command.index("--audit-output") + 1],
+                             "/output/audits/audit.json")
+
+            (root / "retained.bin").write_bytes(b"retained")
+            (root / "audits").mkdir()
+            (root / "audits" / "old.json").write_text("{}")
+            checksums = training_job.protected_run_checksums(root)
+            self.assertIn("retained.bin", checksums)
+            self.assertNotIn("audits/old.json", checksums)
+
+    def test_posthoc_audit_preserves_training_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            overlay = root / "overlay"; overlay.mkdir()
+            (root / "retained.bin").write_bytes(b"retained")
+            (root / "job.lock").touch()
+            detector = root / "detector"; detector.mkdir()
+            training_job.write_json(detector / "progress.json", {"selected_global_step": 9000})
+            (detector / "checkpoint-009000.pt").write_bytes(b"checkpoint")
+            (detector / "selected.onnx").write_bytes(b"onnx")
+            training_job.write_json(root / "split.json", {"page_split": {}})
+            frozen = {"run_id": "a" * 64, "repository_root": str(root), "dataset_root": str(root),
+                      "native_root": str(root), "dependency_overlay_root": str(overlay),
+                      "container_user": {"uid": 123, "gid": 456}, "recipe": self.config()}
+
+            def execute(command, **_kwargs):
+                mounted = command[command.index("--audit-output") + 1]
+                output = root / "audits" / Path(mounted).name
+                training_job.write_json(output, {"selected_global_step": 9000,
+                    "calibration": {"threshold": .75}})
+                return SimpleNamespace(returncode=0)
+
+            with mock.patch.object(training_job, "verify_audit_source", return_value=(frozen, self.config())), \
+                 mock.patch.object(training_job.subprocess, "run", side_effect=execute), \
+                 mock.patch.object(training_job, "code_identity", return_value={"audit.py": "hash"}):
+                result = training_job.audit(root)
+            self.assertEqual(result["selected_global_step"], 9000)
+            self.assertEqual((root / "retained.bin").read_bytes(), b"retained")
+            self.assertTrue(training_job.read_json(Path(result["output"]))
+                            ["protected_training_evidence"]["unchanged_after_audit"])
+            with mock.patch.object(training_job, "verify_audit_source", return_value=(frozen, self.config())), \
+                 mock.patch.object(training_job, "code_identity", return_value={"audit.py": "hash"}):
+                with self.assertRaisesRegex(training_job.Invalid, "already exists"):
+                    training_job.audit(root)
+
     def test_detector_export_retry_is_cpu_only_and_uses_persisted_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -233,6 +288,22 @@ class TrainingJobTest(unittest.TestCase):
             history = training_job.status(root, history=True)
             self.assertEqual(len(history["attempts"]), 2)
             self.assertEqual(history["history_budget"]["charged_seconds"], 150)
+
+    def test_cumulative_ledger_deduplicates_legacy_copied_attempts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first"; first.mkdir()
+            second = root / "second"; second.mkdir()
+            copied = {"segment": "preflight", "started_at": 100.25,
+                      "elapsed_seconds": 5.5, "state": "failed"}
+            training_job.write_json(first / "state.json", {"attempts": [copied]})
+            training_job.write_json(second / "state.json", {"attempts": [
+                {**copied, "prior_run_id": "old-run"},
+                {"segment": "detector", "started_at": 200.5, "elapsed_seconds": 10,
+                 "state": "complete", "ledger_id": "new:0"}]})
+            ledger = training_job.cumulative_ledger(root)
+            self.assertEqual(ledger["attempt_count"], 2)
+            self.assertEqual(ledger["charged_seconds"], 15.5)
 
     def test_failed_cpu_validation_never_requests_gpu_or_writes_marker(self):
         with tempfile.TemporaryDirectory() as directory:

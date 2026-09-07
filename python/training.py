@@ -197,8 +197,16 @@ class DetectorPages:
         require(preprocessing in {LEGACY_DETECTOR_PREPROCESSING, V2_DETECTOR_PREPROCESSING},
                 "detector preprocessing identifier")
         self.preprocessing = preprocessing
+        # Partial/unsupported diagrams contain visible board-like structure but
+        # no board the complete-path detector is allowed to return.  They are
+        # excluded from optimization and included as no-valid-board cases in
+        # development/calibration so their false detections cannot disappear
+        # from reported metrics or threshold selection.
+        admitted_kinds = {"boards", "negative"}
+        if split != "train":
+            admitted_kinds.update(("partial", "unsupported"))
         self.pages = [index for index, page in enumerate(recipes)
-                      if page_split[index] == split and page.get("kind") in {"boards", "negative"}]
+                      if page_split[index] == split and page.get("kind") in admitted_kinds]
         require(self.pages, f"no detector pages in {split}")
 
     def __len__(self) -> int:
@@ -226,7 +234,9 @@ class DetectorPages:
             targets[target_index] = torch.tensor([0, (left + right) / 2, (top + bottom) / 2,
                                                    right - left, bottom - top])
             boxes.append([left, top, right, bottom])
-        metadata = {"page": page_index, "scale": scale, "boxes": boxes, "negative": not boxes,
+        kind = str(page.get("kind"))
+        metadata = {"page": page_index, "scale": scale, "boxes": boxes, "negative": kind == "negative",
+                    "no_valid_board": not boxes, "evaluation_case": kind,
                     "effect": page["condition"]["degradation"]["variant"], "layout": page["layout"]}
         return torch.from_numpy(np.ascontiguousarray(canvas)), targets, metadata
 
@@ -699,6 +709,17 @@ def score_ordered_matches(predicted: torch.Tensor, truth: torch.Tensor,
     return matches
 
 
+def unit_interval(value: float) -> float:
+    """Clamp floating-point metric accumulation to its mathematical range."""
+    require(math.isfinite(value), "non-finite bounded metric")
+    return min(1.0, max(0.0, float(value)))
+
+
+def metric_threshold_key(value: float) -> str:
+    """Serialize the fixed IoU grid without binary floating-point artifacts."""
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
 @torch.inference_mode()
 def evaluate_detector(model: nn.Module, dataset: DetectorPages, device: torch.device,
                       nms_iou: float) -> dict[str, Any]:
@@ -707,6 +728,8 @@ def evaluate_detector(model: nn.Module, dataset: DetectorPages, device: torch.de
     total_targets = 0
     negative_pages = 0
     false_on_negative = 0
+    no_valid_pages: dict[str, int] = {"negative": 0, "partial": 0, "unsupported": 0}
+    false_on_no_valid: dict[str, int] = {"negative": 0, "partial": 0, "unsupported": 0}
     matched_iou_sum = 0.0
     normalized_box_errors = []
     strata: dict[str, dict[str, dict[str, float]]] = {key: {} for key in ("effect", "layout", "board_count", "size")}
@@ -728,8 +751,14 @@ def evaluate_detector(model: nn.Module, dataset: DetectorPages, device: torch.de
         for result, meta in zip(decoded, metadata):
             truth = torch.tensor(meta["boxes"], device=device, dtype=torch.float32).reshape(-1, 4)
             total_targets += len(truth)
-            negative_pages += int(meta["negative"])
-            false_on_negative += len(result) if meta["negative"] else 0
+            case = str(meta.get("evaluation_case", "negative" if meta.get("negative") else "boards"))
+            if meta.get("no_valid_board", meta.get("negative", False)):
+                no_valid_pages.setdefault(case, 0)
+                false_on_no_valid.setdefault(case, 0)
+                no_valid_pages[case] += 1
+                false_on_no_valid[case] += len(result)
+            negative_pages += int(case == "negative")
+            false_on_negative += len(result) if case == "negative" else 0
             predictions.append((result.detach().cpu(), truth.detach().cpu()))
             matches = score_ordered_matches(result, truth, 0.5)
             matched = len(matches)
@@ -757,7 +786,9 @@ def evaluate_detector(model: nn.Module, dataset: DetectorPages, device: torch.de
     recalls = {}
     precisions = {}
     aps = []
+    ap_by_iou = {}
     for threshold in [0.5 + i * 0.05 for i in range(10)]:
+        threshold_key = metric_threshold_key(threshold)
         scored = []
         positives = 0
         for predicted, truth in predictions:
@@ -778,9 +809,11 @@ def evaluate_detector(model: nn.Module, dataset: DetectorPages, device: torch.de
         ap = 0.0
         for recall_level in [i / 100 for i in range(101)]:
             ap += max((p for p, r in zip(precision_curve, recall_curve) if r >= recall_level), default=0) / 101
-        aps.append(ap)
-        recalls[str(threshold)] = recall_curve[-1] if recall_curve else 0
-        precisions[str(threshold)] = precision_curve[-1] if precision_curve else 0
+        bounded_ap = unit_interval(ap)
+        aps.append(bounded_ap)
+        ap_by_iou[threshold_key] = bounded_ap
+        recalls[threshold_key] = unit_interval(recall_curve[-1] if recall_curve else 0)
+        precisions[threshold_key] = unit_interval(precision_curve[-1] if precision_curve else 0)
     normalized_strata = {kind: {name: {**row,
         "recall_at_iou_0_5": row["matched_at_iou_0_5"] / max(1, row["targets"]),
         "mean_iou_at_0_5_including_misses": row["iou_sum"] / max(1, row["targets"]),
@@ -788,8 +821,11 @@ def evaluate_detector(model: nn.Module, dataset: DetectorPages, device: torch.de
         max(1, row["normalized_box_error_matches"])} for name, row in values.items()}
         for kind, values in strata.items()}
     return {"pages": len(dataset), "targets": total_targets, "negative_pages": negative_pages,
-            "ap50_95": sum(aps) / len(aps), "recall": recalls, "precision": precisions,
+            "ap50_95": unit_interval(sum(aps) / len(aps)), "ap_by_iou": ap_by_iou,
+            "recall": recalls, "precision": precisions,
             "false_detections_on_negative_pages_at_0_01": false_on_negative,
+            "no_valid_board_pages": no_valid_pages,
+            "false_detections_on_no_valid_board_pages_at_0_01": false_on_no_valid,
             "mean_iou_at_0_5_including_misses": matched_iou_sum / max(1, total_targets),
             "mean_normalized_box_error": sum(normalized_box_errors) / max(1, len(normalized_box_errors)),
             "normalized_box_error_definition": "mean coordinate MAE / 416 on one-to-one IoU>=0.5 matches only",
@@ -805,26 +841,39 @@ def calibrate_detector(model: nn.Module, dataset: DetectorPages, device: torch.d
         inputs, _, metadata = batch_detector(dataset, range(start, min(len(dataset), start + 16)), device)
         raw = model(inputs)
         for result, meta in zip(decode_detector(raw, 0.001, nms_iou), metadata):
-            pages.append((result.cpu(), torch.tensor(meta["boxes"], dtype=torch.float32).reshape(-1, 4)))
-    candidates = sorted({float(row[4]) for result, _ in pages for row in result}, reverse=True)
+            pages.append((result.cpu(), torch.tensor(meta["boxes"], dtype=torch.float32).reshape(-1, 4),
+                          str(meta.get("evaluation_case", "negative" if meta.get("negative") else "boards"))))
+    candidates = sorted({float(row[4]) for result, _, _ in pages for row in result}, reverse=True)
     candidates = candidates[::max(1, len(candidates) // 1000)] + [1.0]
-    negative_pages = sum(not len(truth) for _, truth in pages)
-    total_targets = sum(len(truth) for _, truth in pages)
-    selected = {"threshold": 1.0, "recall": 0.0, "false_positives_per_negative_page": 0.0}
+    no_valid_counts = {kind: sum(not len(truth) and case == kind for _, truth, case in pages)
+                       for kind in ("negative", "partial", "unsupported")}
+    no_valid_total = sum(no_valid_counts.values())
+    total_targets = sum(len(truth) for _, truth, _ in pages)
+    selected = {"threshold": 1.0, "recall": 0.0,
+                "false_positives_per_no_valid_board_page": 0.0,
+                "false_positives_per_negative_page": 0.0,
+                "false_detections_on_no_valid_board_pages": {kind: 0 for kind in no_valid_counts},
+                "no_valid_board_pages": no_valid_counts}
     for threshold in candidates:
-        matched, negative_false = 0, 0
-        for result, truth in pages:
+        matched = 0
+        false_by_kind = {kind: 0 for kind in no_valid_counts}
+        for result, truth, case in pages:
             result = result[result[:, 4] >= threshold]
             if not len(truth):
-                negative_false += len(result)
+                false_by_kind.setdefault(case, 0)
+                false_by_kind[case] += len(result)
             else:
                 matched += len(score_ordered_matches(result, truth, 0.5))
-        fp_rate = negative_false / max(1, negative_pages)
+        fp_rate = sum(false_by_kind.values()) / max(1, no_valid_total)
         recall = matched / max(1, total_targets)
         if fp_rate <= 0.05 and recall > selected["recall"]:
             selected = {"threshold": threshold, "recall": recall,
-                        "false_positives_per_negative_page": fp_rate}
-    selected["truth"] = "synthetic TRAIN-purpose calibration; not production calibration"
+                        "false_positives_per_no_valid_board_page": fp_rate,
+                        "false_positives_per_negative_page": false_by_kind.get("negative", 0) /
+                        max(1, no_valid_counts.get("negative", 0)),
+                        "false_detections_on_no_valid_board_pages": false_by_kind,
+                        "no_valid_board_pages": no_valid_counts}
+    selected["truth"] = "synthetic-development-only calibration; not production calibration or qualification"
     return selected
 
 
@@ -1078,6 +1127,76 @@ def export_detector_checkpoint(args: argparse.Namespace, config: dict[str, Any])
         raise
     progress["state"] = "complete"
     write_json(directory / "progress.json", progress)
+
+
+@torch.inference_mode()
+def audit_detector(args: argparse.Namespace, config: dict[str, Any], recipes: list[dict[str, Any]],
+                   page_split: dict[int, str]) -> None:
+    """Re-score a frozen detector without mutating its training lifecycle."""
+    require(args.audit_output is not None, "detector audit output")
+    output = args.audit_output.resolve()
+    require(args.run.resolve() in output.parents and output.name.endswith(".json"),
+            "detector audit output must be a JSON file below the run root")
+    progress = read_json(args.run / "detector" / "progress.json")
+    require(progress.get("state") == "complete" and
+            progress.get("global_step") == progress.get("scheduled_updates") and
+            type(progress.get("selected_global_step")) is int,
+            "detector audit requires a completed selected run")
+    checkpoint_path = args.run / "detector" / f"checkpoint-{progress['selected_global_step']:06d}.pt"
+    onnx_path = args.run / "detector" / "selected.onnx"
+    manifest_path = onnx_path.with_suffix(".manifest.json")
+    manifest = read_json(manifest_path)
+    require(manifest.get("sha256") == sha256(onnx_path), "detector audit ONNX identity")
+    selected = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    validate_checkpoint_state(selected, config["detector"]["stages"], "detector")
+    selected_ema = selected.get("extra", {}).get("ema")
+    require(isinstance(selected_ema, dict), "detector audit EMA checkpoint")
+    weights = selected_ema.get("weights", selected_ema)
+    device = torch.device("cpu")
+    model = detector_model(args.native, device)
+    model.load_state_dict(weights, strict=True)
+    model.eval()
+    model.head.decode_in_inference = False
+    preprocessing = detector_preprocessing(config)
+    development = DetectorPages(args.dataset, recipes, page_split, "development", preprocessing)
+    calibration_pages = DetectorPages(args.dataset, recipes, page_split, "calibration", preprocessing)
+
+    # The complete evaluation uses the frozen native selected weights.  Execute
+    # the already-exported ONNX on the same raw page tensor as a bounded proof
+    # that this audit loaded both frozen artifacts and that their graph boundary
+    # still agrees.
+    import onnxruntime as ort
+    raw, _, _ = development.get(0)
+    raw_batch = raw.numpy()[None]
+    native = DetectorExportWrapper(model, preprocessing).eval()(torch.from_numpy(raw_batch)).numpy()
+    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    onnx = session.run(None, {session.get_inputs()[0].name: raw_batch})[0]
+    parity_max_abs = float(np.max(np.abs(native - onnx)))
+    require(parity_max_abs <= 1e-3, "detector audit native/ONNX parity")
+    model.head.decode_in_inference = True
+
+    started = time.time()
+    development_metrics = evaluate_detector(model, development, device, config["detector"]["nms_iou"])
+    calibration_metrics = evaluate_detector(model, calibration_pages, device, config["detector"]["nms_iou"])
+    calibration = calibrate_detector(model, calibration_pages, device, config["detector"]["nms_iou"])
+    write_json(output, {
+        "schema": "chess-ocr-synthetic-detector-audit/1",
+        "truth": "synthetic-development-only; not real development, calibration, or qualification",
+        "source_run_id": read_json(args.run / "frozen.json")["run_id"],
+        "selected_global_step": progress["selected_global_step"],
+        "artifacts": {"checkpoint_sha256": sha256(checkpoint_path),
+                      "onnx_sha256": sha256(onnx_path),
+                      "onnx_manifest_sha256": sha256(manifest_path),
+                      "split_sha256": sha256(args.split)},
+        "preprocessing": preprocessing,
+        "nms_iou": config["detector"]["nms_iou"],
+        "native_onnx_max_abs": parity_max_abs,
+        "development": development_metrics,
+        "calibration_evaluation": calibration_metrics,
+        "calibration": calibration,
+        "started_at": started,
+        "finished_at": time.time(),
+    })
 
 
 def verify_onnx(path: Path, inputs: dict[str, np.ndarray], expected: np.ndarray,
@@ -1533,13 +1652,14 @@ def preflight(args: argparse.Namespace, config: dict[str, Any], recipes: list[di
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser()
     value.add_argument("segment", choices=("validate", "preflight", "classifier-export", "detector-export",
-                                           "classifier", "detector"))
+                                           "detector-audit", "classifier", "detector"))
     value.add_argument("--recipe", type=Path, required=True)
     value.add_argument("--dataset", type=Path, required=True)
     value.add_argument("--native", type=Path, required=True)
     value.add_argument("--run", type=Path, required=True)
     value.add_argument("--split", type=Path, required=True)
     value.add_argument("--classifier-checkpoint", type=Path)
+    value.add_argument("--audit-output", type=Path)
     return value
 
 
@@ -1557,6 +1677,9 @@ def main() -> None:
         if args.segment == "detector-export":
             export_detector_checkpoint(args, config)
             return
+        if args.segment == "detector-audit":
+            audit_detector(args, config, recipes, page_split)
+            return
         device = configure(config["seed"])
         if args.segment == "preflight":
             preflight(args, config, recipes, page_split, device)
@@ -1569,7 +1692,9 @@ def main() -> None:
         raise SystemExit(75)
     finally:
         if args.run.is_dir():
-            write_json(args.run / f"resource-{args.segment}-{os.getpid()}.json", {
+            resource_root = (args.audit_output.parent if args.segment == "detector-audit" and
+                             args.audit_output is not None else args.run)
+            write_json(resource_root / f"resource-{args.segment}-{os.getpid()}.json", {
                 "segment": args.segment, "pid": os.getpid(), "wall_seconds": time.monotonic() - started_wall,
                 "cpu_seconds": time.process_time() - started_cpu, "finished_at": time.time()})
 

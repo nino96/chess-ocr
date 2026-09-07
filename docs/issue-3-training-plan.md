@@ -50,6 +50,53 @@ detector. No seed sweep, backbone-LR change or model-family addition is authoriz
 The incremental reservation is at most 600 preflight plus 5,400 detector
 GPU-seconds, with the 24,000 CPU-second ceiling retained.
 
+## Completed corrective v2 run and evaluation correction
+
+Run `ec8d5a3fb66d74e5ec9dfafd36173988e8c22bb15b2d5b57cc51dbeb9e83c1ce`
+completed the frozen 9,000-update schedule and selected step 9,000. The preflight
+measured `2.384185791015625e-7` maximum input difference against the pinned
+upstream preprocessing for both non-square pages and the colored sentinel.
+Exact stochastic recovery was zero-difference for live and EMA weights in both
+stages. Live and EMA development recall at IoU 0.5 were 1.0 at steps 1,500,
+2,000 and 9,000, so the prospective transition stop did not fire. The selected
+ONNX/native raw-output maximum difference was `0.0002722740173339844`.
+
+The run used 13.6674 preflight and 3,211.7127 detector GPU-seconds. The
+cross-run deduplicated ledger is 12,496.457073617727 GPU-seconds in 12 unique
+attempt segments. No classifier optimization, new seed, schedule, backbone or
+model family was added.
+
+The original terminal report is retained unchanged even though it serialized
+synthetic AP as `1.0000000000000007` and omitted partial pages from development
+and calibration. Those are reporting/evaluation faults, not reasons to rewrite a
+frozen run. Current code clamps every AP component and aggregate to `[0,1]`,
+admits synthetic partial/unsupported pages as no-valid-board DEV/CAL cases, and
+reports their false detections separately from ordinary negative pages. The
+post-hoc `training audit` command loads the selected checkpoint and ONNX, verifies
+the protected run-file checksums before and after, and writes only ignored audit
+evidence. It performs no optimization and does not alter progress, curves,
+checkpoints, calibration history or exports.
+
+Corrected audit `7763cf7ecd9f80898df65a6e15d1255bcaded8d4a5689b4b83e94f22126f2eb4`
+evaluated all 1,192 development pages (including 28 partials) and all 708
+calibration pages (including 12 partials). Development AP50:95 is
+`0.9825175869014556`, with 1.0 recall at IoU 0.5, zero false detections on 90
+ordinary negatives, and 93 detections on partial pages at the 0.01 reporting
+threshold. Calibration AP50:95 is `0.9888820647714669`, with zero false
+detections on 52 ordinary negatives and 41 on partial pages. Under the frozen
+maximum 0.05 false positives per no-valid-board page, no threshold with nonzero
+recall survives: the corrected threshold is `1.0` with recall 0.0. The audit
+report SHA-256 is `0d1fe1a8f23651c26923e6ad7461421984727299b1d2acb59102b6362d934f80`.
+
+The one bounded diagnosis inspected an original synthetic partial case. It
+contains only five visible grid rows, while retaining enough board texture for
+YOLOX to localize the board-shaped region. This is a required downstream
+refinement/rejection case, not authority to relax calibration, relabel the page,
+retrain, sweep thresholds or change models. A bundle using the corrected
+threshold therefore abstains automatically; any later low detector threshold
+must be explicitly identified as a proposal threshold before nine-line grid
+refinement, never as calibrated board acceptance.
+
 ## Boundaries and hypothesis
 
 Hypothesis: task heads followed by lower-rate adaptation of the pinned native

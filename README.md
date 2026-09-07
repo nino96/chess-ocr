@@ -194,10 +194,11 @@ Corrective triage found that the retained detector used incompatible BGR/divide-
 by-255 transfer preprocessing and a fixed-decay EMA. Its export also failed after
 training/evaluation because lifecycle results were not persisted before export.
 Treat that candidate as `legacy-bgr-div255-v1`, synthetic-only and uncalibrated.
-The classifier checkpoint remains reusable. The pending v2 detector starts from
-the original COCO checkpoint with RGB/ImageNet normalization, ramped resumable EMA,
-durable export states and export-only retry. See the training decision for the
-frozen run and promotion boundaries.
+The classifier checkpoint remains reusable. The completed v2 detector started
+from the original COCO checkpoint with RGB/ImageNet normalization, ramped
+resumable EMA, durable export states and export-only retry. It completed all
+9,000 updates and selected step 9,000. Its saturated synthetic metrics are
+diagnostic only; real development, refinement and browser gates remain open.
 
 From a clean branch based on merged `origin/main`, commit reviewed training code,
 then initialize it with explicit read-only roots for the completed corpus and
@@ -250,6 +251,21 @@ pnpm run training -- init --detector-only \
 pnpm run training -- start --run-root work/training/synthetic-bootstrap-v2-detector
 pnpm run training -- status --run-root work/training/synthetic-bootstrap-v2-detector
 ```
+
+The completed run is immutable. To recompute corrected synthetic DEV/CAL metrics
+from its selected checkpoint and ONNX without optimization or lifecycle changes:
+
+```sh
+pnpm run training -- audit --run-root work/training/synthetic-bootstrap-v2-detector
+pnpm run training -- ledger --training-root work/training
+```
+
+The audit includes partial/unsupported inputs as no-valid-board cases and writes
+only ignored `audits/` evidence plus its log. The ledger deduplicates inherited
+attempt histories across retained runs. The corrected v2 synthetic threshold is
+`1.0` with zero recall because confident region detections remained on partial
+grids. The hash-bound bundle therefore abstains in automatic mode; this is a
+refinement/rejection blocker, not evidence to relax the threshold or retrain.
 
 If a completed v2 detector needs only its failed export retried, use this exact
 export-only command; it does not repeat optimization, final evaluation or

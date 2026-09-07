@@ -28,7 +28,16 @@ exactly (max absolute tensor difference **0**), including MobileNet's antialiase
 bicubic 416->256 resize/224 center crop/ImageNet normalization and the legacy
 YOLOX exact-416 RGB->BGR conversion. This proved browser/native agreement on that
 self-defined tensor, not compatibility with the pinned YOLOX checkpoint's official
-RGB/ImageNet-normalized preprocessing. The corrected parity task remains open in #1.
+RGB/ImageNet-normalized preprocessing.
+
+The corrective v2 preflight subsequently exercised raw OpenCV BGR inputs,
+non-square 612×792 and 792×612 letterboxing, an asymmetric colored-channel
+sentinel, pad value 114, and the pinned helper's ImageNet mean/std. The candidate
+RGB tensor agreed within `2.384185791015625e-7` (required maximum `1e-6`), target
+geometry agreed exactly, and the selected trained ONNX raw output agreed with its
+native checkpoint within `0.0002722740173339844` (required maximum `0.001`). This
+closes the corrective preprocessing-parity task, not the named-laptop or real-page
+recognition gates.
 
 | Model                                      | Browser/native maximum absolute output difference | Elements |
 | ------------------------------------------ | ------------------------------------------------: | -------: |

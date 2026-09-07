@@ -408,11 +408,58 @@ def verify_frozen(run: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     return frozen, config
 
 
+def protected_run_checksums(run: Path) -> dict[str, str]:
+    """Hash retained training evidence, excluding append-only audit outputs."""
+    result = {}
+    for path in sorted(run.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(run)
+        if relative.parts[0] == "audits" or relative.name.startswith("detector-audit"):
+            continue
+        result[str(relative)] = sha256(path)
+    return result
+
+
+def verify_audit_source(run: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Verify a completed frozen run while allowing reviewed audit code changes."""
+    frozen = read_json(run / "frozen.json")
+    recipe_path = REPO / frozen.get("recipe_path", "recipes/synthetic-bootstrap-v1.json")
+    config = configuration(recipe_path)
+    require(frozen.get("recipe") == config and frozen.get("recipe_sha256") == sha256(recipe_path),
+            "training recipe changed")
+    old_head = frozen.get("git", {}).get("head")
+    require(isinstance(old_head, str) and len(old_head) == 40, "frozen training commit")
+    for relative, expected in frozen.get("code", {}).items():
+        source = subprocess.run(["git", "show", f"{old_head}:{relative}"], cwd=REPO,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+        require(source.returncode == 0 and hashlib.sha256(source.stdout).hexdigest() == expected,
+                f"frozen source evidence changed: {relative}")
+    require(frozen.get("container_id") == docker_identity(config["environment"]["image"]),
+            "training image changed")
+    require(frozen.get("dependency_overlay") == directory_identity(Path(frozen["dependency_overlay_root"])),
+            "training dependency overlay changed")
+    verify_dataset(Path(frozen["dataset_root"]), config, verify_images=True)
+    verify_native(Path(frozen["native_root"]), config)
+    split = read_json(run / "split.json")
+    require(identity(split) == frozen["split_sha256"], "split changed")
+    state = read_json(run / "state.json")
+    progress = read_json(run / "detector" / "progress.json")
+    require(state.get("state") == "complete" and progress.get("state") == "complete" and
+            progress.get("global_step") == progress.get("scheduled_updates") == 9000,
+            "detector audit source is incomplete")
+    manifest = read_json(run / "detector" / "selected.manifest.json")
+    require(manifest.get("sha256") == sha256(run / "detector" / "selected.onnx"),
+            "detector audit ONNX manifest hash")
+    return frozen, config
+
+
 def container_name(frozen: dict[str, Any], segment: str) -> str:
     return f"chess-ocr-{frozen['run_id'][:12]}-{segment}"
 
 
-def container_command(run: Path, frozen: dict[str, Any], segment: str) -> list[str]:
+def container_command(run: Path, frozen: dict[str, Any], segment: str,
+                      audit_output: str | None = None) -> list[str]:
     config = frozen["recipe"]
     overlay = Path(frozen["dependency_overlay_root"])
     require(overlay.is_dir() and not overlay.is_symlink(), "verified GPU dependency overlay missing")
@@ -420,7 +467,7 @@ def container_command(run: Path, frozen: dict[str, Any], segment: str) -> list[s
     # Export is deliberately a CPU-only operation.  In particular, a retry must
     # not accidentally reserve a GPU merely because the detector was trained on
     # one.
-    if segment not in {"validate", "classifier-export", "detector-export"}:
+    if segment not in {"validate", "classifier-export", "detector-export", "detector-audit"}:
         command.extend(("--gpus", "all"))
     command.extend([
         "--network", "none", "--read-only",
@@ -443,7 +490,57 @@ def container_command(run: Path, frozen: dict[str, Any], segment: str) -> list[s
         # Insert the read-only checkpoint mount before the environment and image arguments.
         mount_at = command.index("-e")
         command[mount_at:mount_at] = ["-v", f"{checkpoint}:/classifier-checkpoint.pt:ro"]
+    if segment == "detector-audit":
+        require(audit_output is not None and Path(audit_output).name == audit_output and
+                audit_output.endswith(".json"), "detector audit output name")
+        command.extend(("--audit-output", f"/output/audits/{audit_output}"))
     return command
+
+
+def audit(run: Path) -> dict[str, Any]:
+    """Run a bounded CPU-only post-hoc detector evaluation."""
+    run = safe_directory(run)
+    with lock(run):
+        frozen, _ = verify_audit_source(run)
+        implementation = code_identity(REPO / frozen.get(
+            "recipe_path", "recipes/synthetic-bootstrap-v1.json"))
+        selected_step = read_json(run / "detector" / "progress.json")["selected_global_step"]
+        selected_checkpoint = run / "detector" / f"checkpoint-{selected_step:06d}.pt"
+        audit_id = identity({"schema": "chess-ocr-synthetic-detector-audit/1",
+                             "run_id": frozen["run_id"],
+                             "checkpoint_sha256": sha256(selected_checkpoint),
+                             "onnx_sha256": sha256(run / "detector" / "selected.onnx"),
+                             "split_sha256": sha256(run / "split.json"),
+                             "implementation": implementation})
+        output_name = f"detector-evaluation-{audit_id}.json"
+        output = run / "audits" / output_name
+        require(not output.exists(), "identical detector audit evidence already exists")
+        before = protected_run_checksums(run)
+        log_path = run / f"detector-audit-{audit_id}.log"
+        try:
+            with log_path.open("ab") as log:
+                result = subprocess.run(container_command(run, frozen, "detector-audit", output_name), stdout=log,
+                                        stderr=subprocess.STDOUT, timeout=4 * 60 * 60)
+        except subprocess.TimeoutExpired:
+            stop_container(frozen, "detector-audit")
+            raise Invalid("detector audit timed out; retained training state is unchanged") from None
+        require(result.returncode == 0, "detector audit failed; inspect detector-audit.log")
+        after = protected_run_checksums(run)
+        require(before == after, "detector audit modified retained training evidence")
+        report = read_json(output)
+        require(code_identity(REPO / frozen.get("recipe_path", "recipes/synthetic-bootstrap-v1.json")) ==
+                implementation, "audit implementation changed while evaluation was running")
+        report["audit_id"] = audit_id
+        report["audit_implementation_sha256"] = implementation
+        report["protected_training_evidence"] = {
+            "file_count": len(before), "checksums": before,
+            "unchanged_after_audit": True,
+        }
+        report["audit_log_sha256"] = sha256(log_path)
+        write_json(output, report)
+        return {"state": "complete", "output": str(output), "sha256": sha256(output),
+                "selected_global_step": report["selected_global_step"],
+                "calibration_threshold": report["calibration"]["threshold"]}
 
 
 def validate_before_gpu(run: Path, frozen: dict[str, Any]) -> dict[str, Any]:
@@ -484,8 +581,14 @@ def remaining_seconds(state: dict[str, Any], segment: str, resources: dict[str, 
 
 def attempt_key(attempt: dict[str, Any], ordinal: int) -> str:
     """Stable identity for copied ledgers (old records have no explicit id)."""
-    return str(attempt.get("ledger_id") or
-               f"{attempt.get('source_run_id', attempt.get('prior_run_id', 'current'))}:{attempt.get('source_attempt_index', ordinal)}")
+    if attempt.get("ledger_id"):
+        return str(attempt["ledger_id"])
+    if attempt.get("started_at") is not None:
+        return f"legacy:{float(attempt['started_at']):.9f}:{attempt.get('segment', 'unknown')}"
+    source = attempt.get("source_run_id") or attempt.get("prior_run_id")
+    if source:
+        return f"{source}:{attempt.get('source_attempt_index', ordinal)}"
+    return f"current:{ordinal}"
 
 
 def unique_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -501,6 +604,27 @@ def unique_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def current_attempts(state: dict[str, Any]) -> list[dict[str, Any]]:
     return [attempt for attempt in unique_attempts(state.get("attempts", [])) if not attempt.get("inherited")]
+
+
+def cumulative_ledger(training_root: Path) -> dict[str, Any]:
+    """Deduplicate attempts across every retained run below one training root."""
+    training_root = safe_directory(training_root)
+    attempts = []
+    for state_path in sorted(training_root.glob("*/state.json")):
+        state = read_json(state_path)
+        for attempt in state.get("attempts", []):
+            require(attempt.get("ledger_id") or attempt.get("started_at") is not None,
+                    f"attempt has no cumulative ledger identity: {state_path}")
+            attempts.append({**attempt, "retained_run": state_path.parent.name})
+    unique = unique_attempts(attempts)
+    segments = sorted({str(item.get("segment")) for item in unique})
+    return {"unit": "GPU-seconds (unique retained attempt segments)",
+            "attempt_count": len(unique),
+            "charged_seconds": sum(float(item.get("elapsed_seconds", 0)) for item in unique),
+            "by_segment": {segment: sum(float(item.get("elapsed_seconds", 0)) for item in unique
+                                         if item.get("segment") == segment)
+                           for segment in segments},
+            "attempts": unique}
 
 
 def detector_export_evidence(run: Path) -> dict[str, Any]:
@@ -850,6 +974,10 @@ def parser() -> argparse.ArgumentParser:
     export_command = sub.add_parser("export")
     export_command.add_argument("--run-root", type=Path, default=DEFAULT_RUN)
     export_command.add_argument("--segment", required=True, choices=("detector",))
+    audit_command = sub.add_parser("audit")
+    audit_command.add_argument("--run-root", type=Path, default=DEFAULT_RUN)
+    ledger_command = sub.add_parser("ledger")
+    ledger_command.add_argument("--training-root", type=Path, default=REPO / "work" / "training")
     return value
 
 
@@ -866,6 +994,10 @@ def main() -> None:
             result = status(args.run_root, history=args.history)
         elif args.command == "export":
             result = export(args.run_root, args.segment)
+        elif args.command == "audit":
+            result = audit(args.run_root)
+        elif args.command == "ledger":
+            result = cumulative_ledger(args.training_root)
         else:
             run_worker(args.run_root)
             result = status(args.run_root)

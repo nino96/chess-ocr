@@ -161,12 +161,16 @@ attempt segments. This includes failed preflights, classifier attempts and the
 completed detector optimization followed by export failure.
 
 Reserve at most 600 additional preflight GPU-seconds plus 5,400 detector
-GPU-seconds for the first corrected v2 run. The maximum resulting cumulative usage
-is 15,271.1 seconds, within the existing 28,800-second project allocation. Retain
-the 24,000 CPU-second future-run ceiling and 16 GiB output ceiling; this does not
-authorize a classifier rerun, new seed, model family or sweep. Ordinary status
-must remain current-run-only, while `--history` owns the complete deduplicated
-ledger.
+GPU-seconds for the first corrected v2 run. That run completed using 13.6674
+preflight plus 3,211.7127 detector GPU-seconds. Across every retained run,
+`pnpm run training -- ledger --training-root work/training` deduplicates copied
+legacy attempts by immutable start time and new attempts by ledger ID: **12,496.5
+cumulative unique GPU-seconds consumed** (12,496.457073617727 unrounded) in 12
+attempt segments. This is within the existing 28,800-second project allocation.
+Retain the 24,000 CPU-second future-run ceiling and 16 GiB output ceiling; this
+does not authorize a classifier rerun, new seed, model family or sweep. Ordinary
+status remains current-run-only, `status --history` owns one run's inherited
+history, and `ledger` owns the cross-run cumulative accounting.
 
 The concrete sequence and acceptance boundaries are in
 [dataset kickoff](dataset-kickoff.md). Reviewed public inventories/URLs/hashes and

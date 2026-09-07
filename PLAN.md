@@ -524,3 +524,11 @@ BN policy and learning rates; do not add a seed sweep, backbone-LR change or mod
 family without corrected live-model evidence. Reserve at most 600 preflight plus
 5,400 detector GPU-seconds and retain the 24,000 CPU-second ceiling. This remains
 a synthetic bootstrap, not promotion or issue completion.
+
+Implementation status: the corrected run completed all 9,000 updates and selected
+step 9,000, using 3,225.3801 GPU-seconds including preflight. The selected ONNX
+passed native raw-output parity. Its original synthetic report remains immutable;
+an evaluation-only audit now clamps AP to `[0,1]` and includes partial/unsupported
+pages as separately reported no-valid-board cases. These saturated synthetic
+results do not change the required shared grid refinement, reference-first real
+development comparison, named-laptop budget or qualification gates.
