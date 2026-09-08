@@ -125,6 +125,43 @@
       #review-workspace button {
         border-color: #b7cac0;
       }
+      #duplicate-workspace {
+        background: #102c26;
+        color: white;
+      }
+      #duplicate-workspace h2 {
+        margin-top: 0;
+      }
+      .duplicate-comparison {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin: 12px 0;
+      }
+      .duplicate-page {
+        min-width: 0;
+        background: #f3f5f2;
+        color: #233c3b;
+        border-radius: 6px;
+        padding: 8px;
+      }
+      .duplicate-page h3 {
+        margin: 0 0 8px;
+        font-size: 1rem;
+      }
+      .duplicate-scroll {
+        height: min(60vh, 680px);
+        overflow: auto;
+        background: #d8dfda;
+        touch-action: pan-x pan-y;
+      }
+      .duplicate-image {
+        display: block;
+        height: auto;
+      }
+      #duplicate-workspace[data-zoom="fit"] .duplicate-image {
+        width: 100%;
+      }
       .danger {
         color: #9d2525;
         border-color: #9d2525;
@@ -143,6 +180,14 @@
       }
       [hidden] {
         display: none !important;
+      }
+      @media (max-width: 700px) {
+        .duplicate-comparison {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .duplicate-scroll {
+          height: 48vh;
+        }
       }
     </style>
     <script type="module" src="/app.js"></script>
@@ -253,16 +298,58 @@
         </div>
         <iframe id="editor" title="Page annotation editor"></iframe>
       </section>
-      <details class="panel" id="duplicates-panel">
-        <summary>Cross-split leakage candidates</summary>
+      <section
+        class="panel"
+        id="duplicate-workspace"
+        aria-label="Cross-split duplicate comparison"
+        hidden
+      >
+        <h2>Cross-split leakage candidate</h2>
         <p>
           Same-split similarities are retained automatically and do not need
           owner adjudication. Investigate cross-split candidates before export;
           do not use an arbitrary “distinct” decision to clear a leakage issue.
-          Exact byte matches cannot be marked distinct.
         </p>
-        <div id="duplicates"></div>
-      </details>
+        <div class="row" aria-label="Duplicate pair navigation">
+          <strong id="duplicate-count" role="status"></strong>
+          <span id="duplicate-reason"></span>
+          <button id="duplicate-previous" aria-keyshortcuts="ArrowLeft">
+            Previous pair
+          </button>
+          <button id="duplicate-next" aria-keyshortcuts="ArrowRight">
+            Next pair
+          </button>
+        </div>
+        <div class="row" aria-label="Comparison zoom">
+          <span>Shared zoom</span>
+          <button id="duplicate-zoom-fit" aria-pressed="true">Fit</button>
+          <button id="duplicate-zoom-100" aria-pressed="false">100%</button>
+          <button id="duplicate-zoom-200" aria-pressed="false">200%</button>
+        </div>
+        <div
+          id="duplicate-comparison"
+          class="duplicate-comparison"
+          tabindex="0"
+          aria-label="Side-by-side original-resolution duplicate comparison. Use left and right arrow keys to change pairs."
+        >
+          <article class="duplicate-page">
+            <h3 id="duplicate-label-a"></h3>
+            <div class="duplicate-scroll">
+              <img id="duplicate-image-a" class="duplicate-image" />
+            </div>
+          </article>
+          <article class="duplicate-page">
+            <h3 id="duplicate-label-b"></h3>
+            <div class="duplicate-scroll">
+              <img id="duplicate-image-b" class="duplicate-image" />
+            </div>
+          </article>
+        </div>
+        <div class="row" aria-label="Duplicate decision">
+          <button id="duplicate-distinct">Different artwork / pages</button>
+          <button id="duplicate-mark" class="primary">Mark duplicate</button>
+        </div>
+      </section>
       <details class="panel">
         <summary>Ingest PDFs from the local inbox</summary>
         <p>

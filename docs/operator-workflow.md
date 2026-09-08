@@ -159,10 +159,13 @@ corrections create a new revision needing a human review. Old revision/hash
 submissions fail without overwriting accepted edits.
 
 The dashboard exposes existing start/stop, validation, candidate export, inbox
-ingestion with its explicit authorization checkbox, and duplicate decisions. It
-does not upload PDFs: place intended files in `work/dataset/inbox/` through VS
-Code/the local workspace, then ingest that existing inbox. Under **Proposal run
-controls**, choose localization and label providers separately, select an
+ingestion with its explicit authorization checkbox, and duplicate decisions. Its
+cross-split comparison shows the active unresolved pair side by side with shared
+zoom and independent page scrolling; confirm **Different artwork / pages** or
+**Mark duplicate** there before advancing. It does not upload PDFs: place intended
+files in `work/dataset/inbox/` through VS Code/the local workspace, then ingest
+that existing inbox. Under **Proposal run controls**, choose localization and
+label providers separately, select an
 authorized nonqualification train/dev scope, and start a bounded proposal run.
 Use **Stop proposals** independently of
 the acquisition **Stop job**; `Ctrl+C` stops only the web app. Rendering uses the

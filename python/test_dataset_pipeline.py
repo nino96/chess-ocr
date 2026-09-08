@@ -192,6 +192,9 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(report["errors"], [])
             self.assertEqual(report["same_split_duplicate_audit"]["pairs"], [{
                 "pair": sorted((first, second)), "reason": "exact", "split": "train"}])
+        for decision in ("distinct", "duplicate"):
+            with self.assertRaisesRegex(p.Invalid, "cross-split"):
+                p.resolve_duplicate(first, second, decision)
         result = p.export_dataset()
         path = p.local_path("exports/" + result["export"])
         self.assertEqual(len(p.read_json(path / "records.json")["records"]), 2)

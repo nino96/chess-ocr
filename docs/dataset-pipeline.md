@@ -247,8 +247,13 @@ list and confirm deletion of the remaining files. No automatic retry or restore
 is performed. Uninspectable entries are disabled and need local operator cleanup.
 
 Exact page hashes and perceptual page/rectified-board hashes propose duplicate
-pairs. Perceptual similarity is not proof of duplication: inspect both local
-review pages before recording a decision:
+pairs. Perceptual similarity is not proof of duplication. The dashboard shows
+only one active unresolved cross-split pair at a time in a side-by-side workspace,
+with original-resolution pages, shared Fit/100%/200% zoom, independent scrolling,
+generic document/page/split labels and previous/next navigation. Page images are
+available only to the active dashboard session while the pair remains unresolved;
+responses are not cached, and navigation releases the old browser image sources.
+Confirm a decision beside the comparison, or use the equivalent command:
 
 ```sh
 pnpm run dataset duplicate SAMPLE_A SAMPLE_B distinct
@@ -259,7 +264,8 @@ Exact duplicate pixels cannot be declared distinct. Unresolved cross-split pairs
 and detected cross-split duplicates block export. Same-split candidates need no
 human decision: they remain retained, not declared distinct, and are recorded in
 `same-split-duplicate-audit.json` with a within-split multiplicity warning. The
-dashboard only lists cross-split candidates as actionable. Existing explicit
+dashboard only lists cross-split candidates as actionable, and exact or
+board-exact pairs cannot expose the distinct decision. Existing explicit
 same-split duplicate decisions conservatively
 exclude one entire page, even if only a board was repeated; this can discard useful
 additional boards and is reported. Hash screening cannot certify all artwork is

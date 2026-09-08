@@ -844,8 +844,14 @@ def resolve_duplicate(a, b, decision):
     a, b = sorted((token(a), token(b)))
     require(decision in {"distinct", "duplicate"}, "invalid duplicate decision")
     with writer(), connect() as db:
-        pair = db.execute("SELECT * FROM duplicates WHERE a=? AND b=?", (a, b)).fetchone()
-        require(pair is not None and pair["decision"] is None, "unknown or already resolved pair")
+        pair = db.execute("""SELECT d.* FROM duplicates d
+            JOIN samples a ON a.id=d.a JOIN sources sa ON a.source=sa.id
+            JOIN samples b ON b.id=d.b JOIN sources sb ON b.source=sb.id
+            WHERE d.a=? AND d.b=? AND d.decision IS NULL
+            AND json_extract(sa.body, '$.split') != json_extract(sb.body, '$.split')
+            AND a.source NOT IN (SELECT source FROM exclusions)
+            AND b.source NOT IN (SELECT source FROM exclusions)""", (a, b)).fetchone()
+        require(pair is not None, "unknown, inactive or already resolved cross-split pair")
         require(not (pair["reason"] in {"exact", "board-exact"} and decision == "distinct"), "exact bytes cannot be declared distinct")
         db.execute("UPDATE duplicates SET decision=? WHERE a=? AND b=?", (decision, a, b))
     return {"state": "recorded"}
