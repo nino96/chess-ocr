@@ -64,6 +64,10 @@ let submitting = false;
 let profile: { reviewer: string; human: boolean } | undefined;
 let selectedArchive: Archive | undefined;
 let currentImageSha = "";
+let duplicateIndex = 0;
+let duplicateZoom: "fit" | "100" | "200" = "fit";
+let duplicateUrls: string[] = [];
+let duplicateLoad = 0;
 const note = (message: string) => {
   el("message").textContent = message;
 };
@@ -194,6 +198,148 @@ function button(text: string, action: () => Promise<void>): HTMLButtonElement {
   });
   return b;
 }
+function releaseDuplicateImages(): void {
+  for (const url of duplicateUrls) URL.revokeObjectURL(url);
+  duplicateUrls = [];
+  for (const image of document.querySelectorAll<HTMLImageElement>(
+    ".duplicate-image",
+  ))
+    image.removeAttribute("src");
+}
+function activeDuplicate(): Queue["duplicates"][number] | undefined {
+  return data?.duplicates[duplicateIndex];
+}
+function duplicatePageLabel(id: string): string {
+  const page = data?.pages.find((candidate) => candidate.id === id);
+  if (!page) return "Document · page unavailable";
+  const source = data?.sources.find(
+    (candidate) => candidate.id === page.source,
+  );
+  return `${source?.label ?? "Document"} · page ${page.page} · ${source?.split ?? "unknown"}`;
+}
+function renderDuplicateZoom(): void {
+  const workspace = el("duplicate-workspace");
+  workspace.dataset.zoom = duplicateZoom;
+  for (const image of document.querySelectorAll<HTMLImageElement>(
+    ".duplicate-image",
+  )) {
+    if (duplicateZoom === "fit") {
+      image.style.removeProperty("width");
+      image.style.removeProperty("max-width");
+    } else if (image.naturalWidth > 0) {
+      image.style.width = `${image.naturalWidth * (duplicateZoom === "100" ? 1 : 2)}px`;
+      image.style.maxWidth = "none";
+    }
+  }
+  for (const value of ["fit", "100", "200"] as const) {
+    const control = el<HTMLButtonElement>(`duplicate-zoom-${value}`);
+    control.setAttribute("aria-pressed", String(value === duplicateZoom));
+  }
+}
+async function loadDuplicateImages(
+  pair: Queue["duplicates"][number],
+): Promise<void> {
+  const load = ++duplicateLoad;
+  releaseDuplicateImages();
+  const images = [
+    el<HTMLImageElement>("duplicate-image-a"),
+    el<HTMLImageElement>("duplicate-image-b"),
+  ];
+  images.forEach((image) => {
+    image.alt = "Loading original-resolution page…";
+  });
+  try {
+    const responses = await Promise.all(
+      [pair.a, pair.b].map(async (sample) => {
+        const response = await fetch(
+          `/duplicate-image/${encodeURIComponent(sample)}`,
+          {
+            cache: "no-store",
+          },
+        );
+        if (!response.ok)
+          throw new Error("Could not load duplicate comparison image.");
+        if (
+          response.headers.get("Content-Type")?.split(";", 1)[0] !== "image/png"
+        )
+          throw new Error("Duplicate comparison image had an invalid type.");
+        return response.blob();
+      }),
+    );
+    if (load !== duplicateLoad || activeDuplicate() !== pair) return;
+    duplicateUrls = responses.map((blob) => URL.createObjectURL(blob));
+    images.forEach((image, index) => {
+      image.alt = `Original-resolution ${duplicatePageLabel(index ? pair.b : pair.a)}`;
+      image.addEventListener("load", renderDuplicateZoom, { once: true });
+      image.src = duplicateUrls[index] ?? "";
+    });
+  } catch (error) {
+    if (load !== duplicateLoad) return;
+    releaseDuplicateImages();
+    note(
+      error instanceof Error
+        ? error.message
+        : "Could not load duplicate comparison images.",
+    );
+  }
+}
+function renderDuplicateWorkspace(): void {
+  const pairs = data?.duplicates ?? [];
+  const workspace = el("duplicate-workspace");
+  if (!pairs.length) {
+    duplicateIndex = 0;
+    ++duplicateLoad;
+    releaseDuplicateImages();
+    workspace.hidden = true;
+    return;
+  }
+  duplicateIndex = Math.min(duplicateIndex, pairs.length - 1);
+  const pair = pairs[duplicateIndex];
+  if (!pair) return;
+  workspace.hidden = false;
+  el("duplicate-count").textContent =
+    `Pair ${duplicateIndex + 1} of ${pairs.length}`;
+  el("duplicate-reason").textContent = `Reason: ${pair.reason}`;
+  el("duplicate-label-a").textContent = duplicatePageLabel(pair.a);
+  el("duplicate-label-b").textContent = duplicatePageLabel(pair.b);
+  el<HTMLButtonElement>("duplicate-previous").disabled = duplicateIndex === 0;
+  el<HTMLButtonElement>("duplicate-next").disabled =
+    duplicateIndex === pairs.length - 1;
+  el<HTMLButtonElement>("duplicate-distinct").disabled = [
+    "exact",
+    "board-exact",
+  ].includes(pair.reason);
+  renderDuplicateZoom();
+  void loadDuplicateImages(pair);
+}
+async function navigateDuplicate(delta: number): Promise<void> {
+  const next = duplicateIndex + delta;
+  if (!data || next < 0 || next >= data.duplicates.length) return;
+  duplicateIndex = next;
+  renderDuplicateWorkspace();
+}
+async function decideDuplicate(
+  decision: "distinct" | "duplicate",
+): Promise<void> {
+  const pair = activeDuplicate();
+  if (!pair) return;
+  if (decision === "distinct" && ["exact", "board-exact"].includes(pair.reason))
+    throw new Error("Exact duplicate pixels cannot be marked distinct.");
+  if (
+    !window.confirm(
+      decision === "distinct"
+        ? "Record Different artwork / pages for this pair?"
+        : "Record Mark duplicate for this pair?",
+    )
+  )
+    return;
+  await api("/api/duplicate", { a: pair.a, b: pair.b, decision });
+  ++duplicateLoad;
+  releaseDuplicateImages();
+  el("duplicate-workspace").hidden = true;
+  await refresh();
+  note("Duplicate decision saved.");
+}
 function renderQueue(): void {
   const pages = filtered();
   el("queue-count").textContent =
@@ -215,43 +361,7 @@ function renderQueue(): void {
     }),
   );
   el("more").hidden = pages.length <= limit;
-  el("duplicates").replaceChildren(
-    ...(data?.duplicates ?? []).map((pair) => {
-      const row = document.createElement("div");
-      row.className = "panel";
-      const text = document.createElement("p");
-      text.textContent = `Possible duplicate (${pair.reason})`;
-      row.append(text);
-      for (const [name, id] of [
-        ["Inspect first page", pair.a],
-        ["Inspect second page", pair.b],
-      ] as const) {
-        row.append(
-          button(name, async () => {
-            const page = data?.pages.find((p) => p.id === id);
-            if (page) await openPage(page);
-          }),
-        );
-      }
-      for (const decision of ["distinct", "duplicate"]) {
-        const b = button(
-          decision === "distinct"
-            ? "Different artwork / pages"
-            : "Mark duplicate",
-          async () => {
-            await api("/api/duplicate", { a: pair.a, b: pair.b, decision });
-            await refresh();
-            note("Duplicate decision saved.");
-          },
-        );
-        b.disabled =
-          decision === "distinct" &&
-          ["exact", "board-exact"].includes(pair.reason);
-        row.append(b);
-      }
-      return row;
-    }),
-  );
+  renderDuplicateWorkspace();
 }
 async function refresh(): Promise<void> {
   const sequence = ++refreshSequence;
@@ -637,6 +747,7 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
   }
 });
 window.addEventListener("beforeunload", (event) => {
+  releaseDuplicateImages();
   if (generation !== persisted || submitting) {
     event.preventDefault();
     event.returnValue = "";
@@ -742,6 +853,28 @@ for (const id of ["document", "filter"])
 el("more").addEventListener("click", () => {
   limit += 50;
   renderQueue();
+});
+el("duplicate-previous").addEventListener("click", () => {
+  void run(() => navigateDuplicate(-1));
+});
+el("duplicate-next").addEventListener("click", () => {
+  void run(() => navigateDuplicate(1));
+});
+for (const value of ["fit", "100", "200"] as const)
+  el(`duplicate-zoom-${value}`).addEventListener("click", () => {
+    duplicateZoom = value;
+    renderDuplicateZoom();
+  });
+el("duplicate-distinct").addEventListener("click", () => {
+  void run(() => decideDuplicate("distinct"));
+});
+el("duplicate-mark").addEventListener("click", () => {
+  void run(() => decideDuplicate("duplicate"));
+});
+el("duplicate-comparison").addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  event.preventDefault();
+  void run(() => navigateDuplicate(event.key === "ArrowLeft" ? -1 : 1));
 });
 el("previous").addEventListener("click", () => {
   void run(() => navigate(-1));

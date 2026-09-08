@@ -34,8 +34,12 @@ def stop(*_):
     raise KeyboardInterrupt()
 signal.signal(signal.SIGTERM, stop)
 try:
-    for name in ('first', 'second', 'third'):
-        fixture.sample(name, group=name)
+    fixture.sample('first', 'train', 'first')
+    fixture.sample('second', 'dev', 'second')
+    fixture.sample('third', 'dev', 'third')
+    with server.p.connect() as db:
+        db.execute("INSERT INTO duplicates VALUES (?,?,?,NULL)", ('first-1', 'second-1', 'perceptual'))
+        db.execute("INSERT INTO duplicates VALUES (?,?,?,NULL)", ('first-1', 'third-1', 'exact'))
     server.initialize()
     class Candidate:
         public_identity = {'name': 'test-candidate', 'version': '1', 'qualification': 'synthetic-development-only'}
@@ -85,17 +89,117 @@ finally:
     const origin = `http://127.0.0.1:${port}`;
     browser = await chromium.launch();
     const context = await browser.newContext();
+    await context.addInitScript(() => {
+      const revoke = URL.revokeObjectURL.bind(URL);
+      window.__duplicateReleases = 0;
+      URL.revokeObjectURL = (url) => {
+        window.__duplicateReleases += 1;
+        revoke(url);
+      };
+    });
     const page = await context.newPage();
     const errors = [];
     const external = [];
     page.on("pageerror", (e) => errors.push(e.message));
     context.on("request", (r) => {
-      if (!r.url().startsWith(origin) && !r.url().startsWith("data:"))
+      if (
+        !r.url().startsWith(origin) &&
+        !r.url().startsWith("data:") &&
+        !r.url().startsWith("blob:")
+      )
         external.push(r.url());
     });
     await page.goto(origin);
     await page.locator(".page-card").first().waitFor();
     assert.equal(await page.locator(".page-card").count(), 3);
+    await page.locator("#duplicate-workspace").waitFor({ state: "visible" });
+    await page.getByText("Pair 1 of 2", { exact: true }).waitFor();
+    await page.locator("#duplicate-image-a[src^='blob:']").waitFor();
+    await page.locator("#duplicate-image-b[src^='blob:']").waitFor();
+    await page
+      .locator("#duplicate-image-a")
+      .evaluate((image) => image.decode());
+    await page
+      .locator("#duplicate-image-b")
+      .evaluate((image) => image.decode());
+    assert.match(
+      await page.locator("#duplicate-image-a").getAttribute("src"),
+      /^blob:/,
+    );
+    assert.match(
+      await page.locator("#duplicate-label-a").textContent(),
+      /Document 1 · page 1 · train/,
+    );
+    assert.match(
+      await page.locator("#duplicate-label-b").textContent(),
+      /Document 2 · page 1 · dev/,
+    );
+    await page.getByRole("button", { name: "200%", exact: true }).click();
+    assert.equal(
+      await page.locator("#duplicate-workspace").getAttribute("data-zoom"),
+      "200",
+    );
+    assert.deepEqual(
+      await page.locator("#duplicate-image-a").evaluate((image) => ({
+        naturalWidth: image.naturalWidth,
+        renderedWidth: image.width,
+      })),
+      { naturalWidth: 160, renderedWidth: 320 },
+    );
+    await page.getByRole("button", { name: "100%", exact: true }).click();
+    assert.deepEqual(
+      await page.locator("#duplicate-image-a").evaluate((image) => ({
+        naturalWidth: image.naturalWidth,
+        renderedWidth: image.width,
+      })),
+      { naturalWidth: 160, renderedWidth: 160 },
+    );
+    await page.locator(".duplicate-comparison").press("ArrowRight");
+    await page.getByText("Pair 2 of 2", { exact: true }).waitFor();
+    await page.locator("#duplicate-image-a[src^='blob:']").waitFor();
+    await page
+      .locator("#duplicate-image-a")
+      .evaluate((image) => image.decode());
+    assert.ok(await page.evaluate(() => window.__duplicateReleases >= 2));
+    assert.equal(
+      await page
+        .getByRole("button", { name: "Different artwork / pages", exact: true })
+        .isDisabled(),
+      true,
+    );
+    await page
+      .getByRole("button", { name: "Previous pair", exact: true })
+      .click();
+    await page.getByText("Pair 1 of 2", { exact: true }).waitFor();
+    const releasesBeforeDecision = await page.evaluate(
+      () => window.__duplicateReleases,
+    );
+    let failQueueRefresh = true;
+    await page.route("**/api/queue", (route) => {
+      if (failQueueRefresh) return route.abort();
+      return route.continue();
+    });
+    page.once("dialog", (dialog) => void dialog.accept());
+    await page
+      .getByRole("button", { name: "Different artwork / pages", exact: true })
+      .click();
+    await page.locator("#duplicate-workspace").waitFor({ state: "hidden" });
+    assert.equal(
+      await page.locator("#duplicate-image-a").getAttribute("src"),
+      null,
+    );
+    assert.ok(
+      await page.evaluate(
+        (before) => window.__duplicateReleases >= before + 2,
+        releasesBeforeDecision,
+      ),
+    );
+    failQueueRefresh = false;
+    await page
+      .getByRole("button", { name: "Refresh status", exact: true })
+      .click();
+    await page.getByText("Pair 1 of 1", { exact: true }).waitFor();
+    await page.unroute("**/api/queue");
     await page
       .getByRole("button", { name: "Review next page", exact: true })
       .click();
@@ -253,6 +357,23 @@ finally:
     });
     const touchPage = await touchContext.newPage();
     await touchPage.goto(origin);
+    await touchPage
+      .locator("#duplicate-workspace")
+      .waitFor({ state: "visible" });
+    assert.equal(
+      await touchPage
+        .locator(".duplicate-comparison")
+        .evaluate(
+          (element) =>
+            getComputedStyle(element).gridTemplateColumns.split(" ").length,
+        ),
+      1,
+    );
+    await touchPage.getByRole("button", { name: "100%", exact: true }).tap();
+    assert.equal(
+      await touchPage.locator("#duplicate-workspace").getAttribute("data-zoom"),
+      "100",
+    );
     await touchPage.locator("#filter").selectOption("all");
     await touchPage.locator(".page-card").nth(1).tap();
     const touchEditor = touchPage.frameLocator("#editor");
@@ -265,6 +386,14 @@ finally:
       "negative",
     );
     await touchContext.close();
+    page.once("dialog", (dialog) => void dialog.accept());
+    await page
+      .getByRole("button", { name: "Mark duplicate", exact: true })
+      .click();
+    await page
+      .getByText("Duplicate decision saved.", { exact: true })
+      .waitFor();
+    await page.locator("#duplicate-workspace").waitFor({ state: "hidden" });
     await page.getByText("Start over", { exact: true }).click();
     await page
       .getByRole("button", { name: "Start over…", exact: true })

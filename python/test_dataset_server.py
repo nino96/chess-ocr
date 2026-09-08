@@ -193,8 +193,82 @@ class DatasetServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         duplicates = json.loads(body)["duplicates"]
         self.assertEqual([(pair["a"], pair["b"]) for pair in duplicates], [tuple(sorted((self.sample, cross_split)))])
+        request = {"a": self.sample, "b": same_split, "decision": "duplicate"}
+        self.assertEqual(self.post("/api/duplicate", request, self.write_headers(cookie))[0], 409)
         with p.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM duplicates").fetchone()[0], 2)
+            self.assertIsNone(db.execute(
+                "SELECT decision FROM duplicates WHERE a=? AND b=?",
+                tuple(sorted((self.sample, same_split)))).fetchone()[0])
+
+    def test_duplicate_images_require_active_cross_split_pair_and_valid_session(self):
+        cross_split = self.make_second_sample("cross", "dev")
+        with p.connect() as db:
+            db.execute("INSERT INTO duplicates VALUES (?,?,'perceptual',NULL)",
+                       tuple(sorted((self.sample, cross_split))))
+        self.assertEqual(self.request("GET", f"/duplicate-image/{self.sample}")[0], 400)
+        cookie = self.handshake()
+        for sample in (self.sample, cross_split):
+            status, headers, body = self.request(
+                "GET", f"/duplicate-image/{sample}", headers={"Cookie": cookie})
+            self.assertEqual(status, 200)
+            self.assertEqual(headers["Content-Type"], "image/png")
+            self.assertEqual(headers["Cache-Control"], "no-store")
+            self.assertEqual(body[:8], b"\x89PNG\r\n\x1a\n")
+
+        self.assertEqual(self.request(
+            "GET", "/duplicate-image/../state.sqlite3", headers={"Cookie": cookie})[0], 400)
+        self.assertEqual(self.request(
+            "GET", "/duplicate-image/unknown", headers={"Cookie": cookie})[0], 400)
+        with p.connect() as db:
+            db.execute("UPDATE samples SET image='originals/test.png' WHERE id=?", (self.sample,))
+        self.assertEqual(self.request(
+            "GET", f"/duplicate-image/{self.sample}", headers={"Cookie": cookie})[0], 400)
+
+    def test_duplicate_image_rejects_corruption_dimensions_bounds_and_exclusion(self):
+        cross_split = self.make_second_sample("cross", "dev")
+        pair = tuple(sorted((self.sample, cross_split)))
+        with p.connect() as db:
+            db.execute("INSERT INTO duplicates VALUES (?,?,'perceptual',NULL)", pair)
+        cookie = self.handshake()
+        page = p.local_path("pages/test-1.png")
+        original = page.read_bytes()
+
+        p.atomic(page, b"corrupt")
+        self.assertEqual(self.request(
+            "GET", f"/duplicate-image/{self.sample}", headers={"Cookie": cookie})[0], 400)
+        page.unlink()
+        p.atomic(page, original)
+        with p.connect() as db:
+            db.execute("UPDATE samples SET width=159 WHERE id=?", (self.sample,))
+        self.assertEqual(self.request(
+            "GET", f"/duplicate-image/{self.sample}", headers={"Cookie": cookie})[0], 400)
+        with p.connect() as db:
+            db.execute("UPDATE samples SET width=160 WHERE id=?", (self.sample,))
+        with patch.object(s, "MAX_DUPLICATE_IMAGE_BYTES", len(original) - 1):
+            self.assertEqual(self.request(
+                "GET", f"/duplicate-image/{self.sample}", headers={"Cookie": cookie})[0], 400)
+        with p.connect() as db:
+            db.execute("INSERT INTO exclusions VALUES (?,?,?)", ("cross", "test-exclusion", 0))
+        self.assertEqual(self.request(
+            "GET", f"/duplicate-image/{self.sample}", headers={"Cookie": cookie})[0], 400)
+        self.assertEqual(self.request(
+            "GET", f"/duplicate-image/{cross_split}", headers={"Cookie": cookie})[0], 400)
+
+    def test_exact_duplicate_decision_restriction_and_resolution_revoke_images(self):
+        cross_split = self.make_second_sample("cross", "dev")
+        pair = tuple(sorted((self.sample, cross_split)))
+        with p.connect() as db:
+            db.execute("INSERT INTO duplicates VALUES (?,?,'exact',NULL)", pair)
+        cookie = self.handshake()
+        headers = self.write_headers(cookie)
+        request = {"a": self.sample, "b": cross_split, "decision": "distinct"}
+        self.assertEqual(self.post("/api/duplicate", request, headers)[0], 409)
+        request["decision"] = "duplicate"
+        self.assertEqual(self.post("/api/duplicate", request, headers)[0], 200)
+        for sample in pair:
+            self.assertEqual(self.request(
+                "GET", f"/duplicate-image/{sample}", headers={"Cookie": cookie})[0], 400)
 
     def test_size_and_path_integrity_rejections(self):
         cookie = self.handshake()

@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import io
 import json
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
 from pathlib import Path
 import secrets
 import socket
+import stat
 import urllib.parse
 
 if __package__:
@@ -23,6 +26,7 @@ else:
 
 UI = Path(__file__).parent / "dataset_app.html"
 SCRIPT = p.REPO / "work/dataset-ui/dataset-app.js"
+MAX_DUPLICATE_IMAGE_BYTES = p.MAX_PIXELS * 4
 
 
 def initialize():
@@ -44,6 +48,54 @@ def sample_row(db, sample_id):
                      (sample_id,)).fetchone()
     p.require(row is not None, "page unavailable")
     return row
+
+
+def duplicate_image(sample_id):
+    p.token(sample_id)
+    with p.connect() as db:
+        row = db.execute("""SELECT s.* FROM samples s
+            WHERE s.id=? AND s.source NOT IN (SELECT source FROM exclusions)
+            AND EXISTS (
+                SELECT 1 FROM duplicates d
+                JOIN samples a ON a.id=d.a JOIN sources sa ON a.source=sa.id
+                JOIN samples b ON b.id=d.b JOIN sources sb ON b.source=sb.id
+                WHERE d.decision IS NULL
+                AND json_extract(sa.body, '$.split') != json_extract(sb.body, '$.split')
+                AND a.source NOT IN (SELECT source FROM exclusions)
+                AND b.source NOT IN (SELECT source FROM exclusions)
+                AND (d.a=s.id OR d.b=s.id)
+            )""", (sample_id,)).fetchone()
+    p.require(row is not None, "page unavailable")
+    p.sha256(row["sha"])
+    p.require(row["image"] == f"pages/{row['id']}.png", "unmanaged page path")
+    path = p.local_path(row["image"])
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        p.require(stat.S_ISREG(metadata.st_mode)
+                  and 0 < metadata.st_size <= MAX_DUPLICATE_IMAGE_BYTES,
+                  "page image byte ceiling")
+        chunks, size = [], 0
+        while chunk := os.read(descriptor, min(65536, MAX_DUPLICATE_IMAGE_BYTES + 1 - size)):
+            chunks.append(chunk)
+            size += len(chunk)
+            p.require(size <= MAX_DUPLICATE_IMAGE_BYTES, "page image byte ceiling")
+        payload = b"".join(chunks)
+        p.require(size == metadata.st_size
+                  and hashlib.sha256(payload).hexdigest() == row["sha"], "corrupt page")
+    finally:
+        os.close(descriptor)
+    Image = p.pillow()
+    with Image.open(io.BytesIO(payload)) as image:
+        p.require(image.format == "PNG" and getattr(image, "n_frames", 1) == 1,
+                  "invalid page image")
+        p.require(0 < image.width <= p.MAX_EDGE and 0 < image.height <= p.MAX_EDGE
+                  and image.width * image.height <= p.MAX_PIXELS,
+                  "decoded raster limit")
+        p.require(image.width == row["width"] and image.height == row["height"],
+                  "page dimensions changed")
+        image.load()
+    return payload
 
 
 def draft_state(value):
@@ -124,7 +176,8 @@ def queue(candidate=None):
             JOIN samples b ON b.id=d.b JOIN sources sb ON b.source=sb.id
             WHERE d.decision IS NULL AND json_extract(sa.body, '$.split') != json_extract(sb.body, '$.split')
             AND a.source NOT IN (SELECT source FROM exclusions)
-            AND b.source NOT IN (SELECT source FROM exclusions)""")]
+            AND b.source NOT IN (SELECT source FROM exclusions)
+            ORDER BY d.a,d.b""")]
     return {"schema": "chess-ocr-dataset-app/1", "sources": sources, "pages": pages,
             "duplicates": duplicates, "status": p.status(),
             "proposal_status": proposals.status(),
@@ -202,7 +255,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
-        self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'")
         if cookie:
             self.send_header("Set-Cookie", f"dataset_session={self.server.session}; HttpOnly; SameSite=Strict; Path=/")
         self.end_headers()
@@ -247,6 +300,10 @@ class Handler(BaseHTTPRequestHandler):
                 if query:
                     p.token(query["session"][0])
                 self.reply(200, review_html(route.path.removeprefix("/review/")), "text/html; charset=utf-8")
+            elif route.path.startswith("/duplicate-image/"):
+                p.require(not route.query and not route.fragment, "invalid duplicate image request")
+                self.reply(200, duplicate_image(route.path.removeprefix("/duplicate-image/")),
+                           "image/png")
             elif self.path.startswith("/thumbnail/"):
                 with p.connect() as db:
                     row = sample_row(db, self.path.removeprefix("/thumbnail/"))
