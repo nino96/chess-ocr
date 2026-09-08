@@ -168,6 +168,8 @@ test("offline review edits image-relative labels, exports versioned decisions an
       0,
     );
     page.once("dialog", (dialog) => dialog.accept());
+    await page.getByLabel("I am a human reviewer", { exact: true }).check();
+    await page.locator("#complete-page").check();
     await page
       .getByRole("button", { name: "Use proposed board 1", exact: true })
       .click();
@@ -175,11 +177,21 @@ test("offline review edits image-relative labels, exports versioned decisions an
       await page.getByLabel("Square a8", { exact: true }).inputValue(),
       "P",
     );
+    assert.equal(
+      await page
+        .getByLabel("I am a human reviewer", { exact: true })
+        .isChecked(),
+      false,
+    );
+    assert.equal(await page.locator("#complete-page").isChecked(), false);
+    assert.equal(await page.locator("#elapsed").textContent(), "0");
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     assert.equal(
       await page.getByLabel("Square a8", { exact: true }).inputValue(),
       "K",
     );
+    await page.getByLabel("I am a human reviewer", { exact: true }).uncheck();
+    await page.locator("#complete-page").uncheck();
     await page.getByLabel("Square a8", { exact: true }).focus();
     await page.keyboard.press("Alt+ArrowRight");
     assert.equal(

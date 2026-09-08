@@ -1,6 +1,13 @@
 import { readFile, readdir, access } from "node:fs/promises";
 import { resolve, dirname, relative, sep } from "node:path";
-const files = ["README.md", "PLAN.md", "AGENTS.md"];
+import GithubSlugger from "github-slugger";
+const files = [
+  "README.md",
+  "PLAN.md",
+  "AGENTS.md",
+  ".agents/delegation.md",
+  ".codex/instructions.md",
+];
 const payloadRoots = [
   "work",
   "artifacts",
@@ -21,17 +28,9 @@ async function walk(dir) {
   }
 }
 await walk("docs");
-function slug(text) {
-  return text
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
-    .trim()
-    .replace(/\s/g, "-");
-}
 function headingSlugs(content) {
   const slugs = new Set();
-  const seen = new Map();
+  const slugger = new GithubSlugger();
   let fenced = false;
   for (const line of content.split("\n")) {
     if (/^\s*(```|~~~)/.test(line)) {
@@ -41,11 +40,9 @@ function headingSlugs(content) {
     if (fenced) continue;
     const heading = /^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$/.exec(line);
     if (!heading) continue;
-    const base = slug(heading[1]);
-    if (!base) continue;
-    const n = seen.get(base) ?? 0;
-    seen.set(base, n + 1);
-    slugs.add(n === 0 ? base : `${base}-${n}`);
+    const text = heading[1].replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+    const slug = slugger.slug(text);
+    if (slug) slugs.add(slug);
   }
   return slugs;
 }
@@ -115,7 +112,7 @@ for (const file of files) {
     }
     if (!anchor) continue;
     if (!path.endsWith(".md")) continue;
-    const decoded = decodeURIComponent(anchor).toLowerCase();
+    const decoded = decodeURIComponent(anchor);
     const slugs = await slugsFor(path);
     anchors++;
     if (!slugs.has(decoded)) {

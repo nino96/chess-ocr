@@ -96,7 +96,8 @@ positional legality are not ground truth.
 ## Proposals are never truth
 
 A proposal is a visible, editable draft and nothing more. Proposal jobs run on
-TRAIN pages only. They never:
+TRAIN pages, or on prospectively assigned development pages for a bounded
+development comparison. They never:
 
 - enumerate qualification;
 - change an existing annotation;

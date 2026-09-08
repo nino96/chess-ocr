@@ -24,6 +24,9 @@ importers:
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
+      github-slugger:
+        specifier: 2.0.0
+        version: 2.0.0
       prettier:
         specifier: 3.6.2
         version: 3.6.2
@@ -318,6 +321,9 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  github-slugger@2.0.0:
+    resolution: {integrity: sha512-IaOQ9puYtjrkq7Y0Ygl9KDZnrf/aiUJYUpVf89y8kyaxbRG7Y1SrX/jaumrv81vc61+kiMempujsM3Yw7w5qcw==}
 
   guid-typescript@1.0.9:
     resolution: {integrity: sha512-Y8T4vYhEfwJOTbouREvG+3XDsjr8E3kIr7uf+JZ0BYloFsttiHU0WfvANVsR7TxNUJa/WpCnw/Ino/p+DeBhBQ==}
@@ -663,6 +669,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  github-slugger@2.0.0: {}
 
   guid-typescript@1.0.9: {}
 

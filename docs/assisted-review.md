@@ -21,8 +21,10 @@ complete the source-diverse dataset, or qualify recognition.
 - A valid proposal may prefill only a new, untouched draft. Loading or switching
   a proposal after human interaction preserves the current draft and displays
   the candidate for comparison. Replacing an edited board is an explicit,
-  confirmed per-board action and remains undoable.
-- Proposal jobs can use TRAIN pages only. They never enumerate qualification,
+  confirmed per-board action, remains undoable, and clears the human-review
+  declarations and accumulated review time until the changed draft is inspected.
+- Proposal jobs can use TRAIN pages, or prospectively assigned development pages
+  for the bounded promotion comparison. They never enumerate qualification,
   change annotations, accept pages, infer orientation, legalize a position, or
   invent FEN fields. One human pixel review independent of the proposal remains
   the only acceptance path; a second reviewer is optional.
