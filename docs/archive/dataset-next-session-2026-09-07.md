@@ -1,4 +1,10 @@
-# Continue dataset creation in a fresh session
+# Dataset session-bootstrap prompt — 2026-09-07
+
+Record written on host gx10-b210 at the 2026-09-07 dataset-branch state. Nothing
+in this file is current: it is a session-bootstrap prompt that was superseded by
+later work, its preamble and its quoted body disagree, and its quoted text
+hard-codes one author's absolute machine path. It is retained only as evidence of
+what a fresh session was told on that date.
 
 Current implementation update: the renderer, perspective/print effects and
 independent fidelity checks are delivered; use the status commands before doing

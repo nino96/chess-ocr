@@ -3,11 +3,19 @@
 These are the repository-wide rules. Tool-specific instruction files must
 point here rather than create competing policies.
 
-## Codex sandbox execution
+These rules do not restate what already has a home. Read the owning document:
 
-- In the restricted Codex sandbox, request escalation before `pnpm run check`,
-  Playwright/browser suites, Git writes, and networked Git/GitHub commands. Do
-  not first retry these known-incompatible commands inside the sandbox.
+| Concern | Document |
+| --- | --- |
+| Every document in this repository | [docs/index.md](docs/index.md) |
+| Writing and organizing prose | [documentation standards](docs/documentation-standards.md) |
+| Standing claims and scope boundaries | [scope and standing claims](docs/scope-and-claims.md) |
+| Resource ceilings, reservations and charges | [project ledger](docs/budget.md) |
+| What a fresh clone can rebuild | [public provenance and reproducibility](docs/reproducibility.md) |
+
+Codex sandbox specifics are in [.codex/instructions.md](.codex/instructions.md).
+Delegation and token-efficient execution are in
+[.agents/delegation.md](.agents/delegation.md).
 
 ## Read first and own the outcome
 
@@ -30,73 +38,22 @@ own constraints. Surface conflicts before changing either.
   hypotheses, not mandatory models to rescue. Escalate changes with measured
   reasons; do not silently start sweeps or add model families.
 - Primary agent owns design, integration, review and final validation. Use
-  subagents for useful independent research/review or disjoint bounded tasks;
-  one writer per file, no worker Git/branch changes without lead coordination.
-  Prefer a capable lower-cost available model for bounded work; do not pin model
-  IDs or provider settings in shared policy. Delegation never widens authority.
-
-## Token-efficient execution
-
-- The user selects the primary model. The lead retains consequential design,
-  integration, review and final validation; do not lower acceptance criteria to
-  save tokens. Put exact model/effort routing in personal runtime configuration,
-  not shared repository policy.
-- Delegate only when a bounded independent task is likely to save total work or
-  provide necessary independent evidence. Keep small edits and tightly coupled
-  reasoning local. Use a capable inexpensive worker for clear lookup/check tasks,
-  a stronger coding worker for bounded implementation, and the lead or a stronger
-  reviewer for ambiguity, experimental design and consequential correctness.
-- State the chosen model/effort and reason briefly when delegating, using supported
-  runtime controls. Supply only the objective, relevant files/instructions,
-  decisions, owned paths, acceptance checks and a concise return format. Prefer
-  a fresh bounded context over forking the full conversation. Do not reread or
-  investigate the same material in both lead and worker without a review need.
-- Workers do not spawn other agents. Reuse a suitable existing worker for a
-  related follow-up; do not create a roster of speculative agents. Respect the
-  personal concurrency cap. Escalate a concrete reasoning gap to the lead after
-  one unsuccessful bounded attempt instead of cycling through cheap retries.
-- Read required governing documents once per task/context and reuse a compact
-  evidence summary; reread changed or missing sections when necessary. Use targeted
-  searches and bounded tool output. Return findings, file references, checks and
-  blockers rather than transcripts or repeated plans.
-- Before an experiment, record the hypothesis, changed inputs, reusable hashed
-  evidence, command, resource ceiling, completion/stop condition and next decision
-  in the owning issue or ignored local status artifact as privacy permits. One
-  failed comparison triggers one bounded diagnosis, not automatic new seeds,
-  model families or sweeps. Additional runs need a new evidence-based reason and
-  must fit the authorized budget. Preserve complete meaningful schedules.
-- Run long acquisition/training/evaluation as resumable local jobs with persisted
-  status and start/status/stop commands. Do not keep an AI turn or subagent alive
-  merely to poll logs, sleep or narrate progress; hand off the running job when
-  no independent work remains and inspect results on completion/resumption.
-- Run narrow checks while editing and the required integration gates once at
-  handoff. Reuse unchanged valid evidence with its hashes and original command;
-  rerun for relevant changes or unresolved failures. Never weaken tests, omit
-  required gates or label incomplete recognition successful to reduce usage.
-- Keep reports concise and evidence-bearing. At handoff record the next action,
-  changed hashes and unresolved blockers so work resumes without reconstructing
-  the session. Report measured token/quota usage only when available; neither a
-  model choice nor a concurrency cap guarantees a weekly allowance or savings.
+  subagents for useful independent research/review or disjoint bounded tasks, on
+  the terms in [.agents/delegation.md](.agents/delegation.md). Delegation never
+  widens authority.
 
 ## Product boundary
 
-- Build a standalone recognition library with a small browser demo and an
-  optional server adapter. Do not recreate a PDF/EPUB reader, chess engine,
-  accounts or study database. chess-reader consumes a versioned contract.
-- First target: printed 2D diagrams from pages/selections, not physical 3D boards.
-- Required default: offline ONNX Runtime Web WASM CPU inference in a worker.
-  WebGPU is optional acceleration, never a substitute for WASM acceptance.
-- The complete path is page/selection -> board localization -> inner-grid
-  refinement/rectification -> piece placement -> editable, uncertain output.
-  Exact-crop accuracy cannot establish localization or end-to-end success.
-- Preserve source-image geometry and 64 image-relative labels/probabilities.
-  Orientation may be unknown. Do not invent side-to-move, castling, en passant
-  or counters; do not alter visible pieces to satisfy chess legality.
-- User edits survive late/out-of-order results, retries and backend switches.
-- Optional GB10/cloud mode is deliberate and visibly selected, never silent
-  fallback. No upload without explicit informed consent for that input/endpoint.
-  Request authority before cloud provisioning/spending, external exposure,
-  paid APIs, permission outreach or uploading private material.
+The product boundary and every standing claim are defined once in
+[scope and standing claims](docs/scope-and-claims.md): what this repository is
+and is not, what the output may contain, and what the words diagnostic,
+development and qualification each decide. Build to that document rather than to
+a summary of it. The agent-facing obligations it implies are:
+
+- Never widen the claim to fit what finished. An optional GB10 or cloud mode is
+  deliberate and visibly selected, never a silent fallback.
+- Request authority before cloud provisioning or spending, external exposure,
+  paid APIs, permission outreach, or uploading private material.
 
 ## Assets, privacy and licensing
 
@@ -111,20 +68,23 @@ own constraints. Surface conflicts before changing either.
   fixtures may be tracked under fixtures/synthetic with provenance/hash/expected
   output records. Downloaded assets do not become original synthetic fixtures.
   Any other fixture exception needs explicit reviewed policy/ignore changes.
-- Owner update (2026-09-07): public-source provenance belongs in Git after review,
-  not only in ignored work folders. Record public URLs, immutable revisions,
-  original/evidence SHA-256 values, licenses/attribution, selected pages, lineage,
-  splits and reconstruction recipes under provenance/ and docs/. Never copy an
-  operational database or mixed public/private manifest wholesale. Publish only
-  explicitly public, reviewed records; strip local paths, account/reviewer identity,
-  credentials and private-derived details. Public access still is not permission
-  to redistribute original assets, crops, fonts, datasets or weights.
-- Reproducibility requires more than source links: commit generator code, dependency
-  locks, public selection/seed/configuration and safe public annotation versions as
-  each is delivered. State which outputs a clean checkout can actually rebuild.
-  If exact reconstruction requires unshared human annotations or private inputs,
-  say so and preserve those locally; never claim full reproducibility from a plan.
-  Validate public manifests and keep the payload/private-record protections intact.
+- Reviewed public-source provenance belongs in Git, not only in ignored work
+  folders. Record public URLs, immutable revisions, original/evidence SHA-256
+  values, licenses/attribution, selected pages, lineage, splits and reconstruction
+  recipes under `provenance/` and [docs/provenance/](docs/provenance/artifacts.md).
+  Never copy an operational database or mixed public/private manifest wholesale.
+  Commit only explicitly public, reviewed records; strip local paths,
+  account/reviewer identity, credentials and private-derived details. Public
+  access is still not permission to redistribute original assets, crops, fonts,
+  datasets or weights.
+- Reproducibility requires more than source links, and what a clean checkout can
+  actually rebuild is recorded in
+  [public provenance and reproducibility](docs/reproducibility.md). Commit
+  generator code, dependency locks, public selection/seed/configuration and safe
+  public annotation versions as each is delivered. If exact reconstruction
+  requires unshared human annotations or private inputs, say so and preserve
+  those locally; never claim full reproducibility from a plan. Validate public
+  manifests and keep the payload/private-record protections intact.
 - Private diagnostic inputs never enter training without explicit approval.
   Do not publish their identities, names, paths, contents, images, derivatives,
   FENs or results in Git, issues, PRs, logs or attachments. Do not read unrelated
@@ -155,9 +115,9 @@ own constraints. Surface conflicts before changing either.
 - Notation, PDF glyph placements, legality and model agreement propose/check
   labels; they do not prove them. Compare actual pixels with rendered labels,
   inspect every new glyph family, audit accepted labels independently, preserve
-  edits, and quarantine ambiguity. Qualification truth needs one human pixel check
-  independent of model/agent proposals; a second human review is optional, never
-  mandatory for acceptance. Describe agent-only verification honestly.
+  edits, and quarantine ambiguity. Acceptance follows the
+  [one-human-pixel-review rule](docs/scope-and-claims.md#the-one-human-pixel-review-rule).
+  Describe agent-only verification honestly.
 - Verify render fidelity BEFORE bulk synthesis. Transform geometry with whole
   pages; crop jitter and degradation must preserve labels or be quarantined.
   Evaluate real-only reference sets; report synthetic stress tests separately.
@@ -170,13 +130,28 @@ own constraints. Surface conflicts before changing either.
 - Small-group oversampling and class weighting require explicit justification.
   Starting native checkpoint fidelity does not prove a learning recipe is good.
   Control normalization/BN state and verify actual image-label/tensor ordering.
-- Keep one project budget ledger; approvals in another repository do not
-  automatically fund new models here. Declare source/download/page/CPU/storage,
-  active review and GPU ceilings, plus per-run reservations and failed attempts.
-  No paid service or enlarged budget inferred from this roadmap.
-- Run long acquisition as bounded resumable local jobs with persisted status
-  and owner-ready start/status/stop commands. No AI polling while waiting. New
-  sources and rights/label decisions are not delegated to an unattended downloader.
+- Before an experiment, record the hypothesis, changed inputs, reusable hashed
+  evidence, command, resource ceiling, completion/stop condition and next decision
+  in the owning issue or ignored local status artifact as privacy permits. One
+  failed comparison triggers one bounded diagnosis, not automatic new seeds,
+  model families or sweeps. Additional runs need a new evidence-based reason and
+  must fit the authorized budget. Preserve complete meaningful schedules.
+- [The project ledger](docs/budget.md) is the one home for every ceiling,
+  reservation and charge; declare and record them there rather than in another
+  document. Approvals in another repository do not automatically fund new models
+  here, and no paid service or enlarged budget is inferred from this roadmap.
+- Run long acquisition, generation, training and evaluation as bounded resumable
+  local jobs with persisted status and owner-ready start/status/stop commands. Do
+  not keep an AI turn or subagent alive merely to poll logs, sleep or narrate
+  progress; hand off the running job when no independent work remains and inspect
+  results on completion or resumption. New sources and rights/label decisions are
+  never delegated to an unattended downloader.
+- **Commit reviewed code before every unattended launch.** A background job —
+  acquisition, synthetic generation, training — starts only from reviewed,
+  committed code. Do not launch from a dirty working tree: when a run has to be
+  explained, retried or charged, the exact bytes that produced it must be
+  recoverable from git, and a job that outlives the turn cannot be reconstructed
+  from an uncommitted diff.
 - Stopping for a real limit is legitimate; label it blocked/incomplete rather
   than successful recognition or architecture impossibility. Do not truncate a
   meaningful training schedule solely because a mechanics pilot completed.
@@ -201,18 +176,24 @@ own constraints. Surface conflicts before changing either.
 - Tests use local synthetic/approved fixtures, never the public internet.
   Do not add green placeholders, empty suites, unconditional skips, weakened
   assertions or silently relaxed accuracy/runtime thresholds.
-- Issue #1 supplies setup/check/test/eval commands and locks; keep README
-  aligned with the implemented command surface. Never claim a command works
-  before it exists. Documentation-only changes need link, whitespace and scope checks.
-- Run narrow checks frequently. Full browser/runtime/security matrices occur
-  at affected integration gates, not for each rejected offline seed. Record
-  unrun OS/hardware gates and why; physical iPad is not simulated WebKit.
+- Run narrow checks while editing; full browser/runtime/security matrices occur
+  once at the affected integration gate, not for each rejected offline seed.
+  Reuse unchanged valid evidence with its hashes and original command; rerun for
+  relevant changes or unresolved failures. Never weaken tests, omit required
+  gates or label incomplete recognition successful to reduce usage. Record unrun
+  OS/hardware gates and why; physical iPad is not simulated WebKit.
 - Report commit, environment/device, commands, schema, source/model hashes and
   raw artifact references. Report distributions and coverage, not cherry-picked
   times or aggregate tile accuracy hiding confident board errors.
 - Preserve owner changes and unrelated repositories. No destructive resets,
   shared-history rewrites, force pushes or bypassed checks. Review staged paths
   for payloads/private details before each commit/push.
-- Keep README/PLAN and the implemented command surface current. Proposed
-  functionality stays labeled proposed. Final handoff lists delivered outcome,
-  exact checks/results, unrun gates, delegated work and remaining limitations.
+- Keep README, PLAN and the documented command surface aligned with what is
+  implemented; never claim a command works before it exists. Proposed
+  functionality stays labeled proposed. Every documentation change satisfies
+  [documentation standards](docs/documentation-standards.md), including its rule
+  that a changed rule is edited rather than annotated with a supersession note —
+  the history belongs in [docs/decisions/](docs/decisions/index.md) or
+  [docs/archive/](docs/archive/index.md).
+- Final handoff lists the delivered outcome, exact checks and results, unrun
+  gates, delegated work and remaining limitations.

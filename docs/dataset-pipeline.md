@@ -3,12 +3,13 @@
 For the step-by-step process and division of responsibilities, read the
 [operator workflow](operator-workflow.md). This page is the command reference.
 
-This is issue #2 tooling, independent of physical laptop/iPad qualification.
-It is not a delivered training collection or evidence of recognition accuracy.
+What this tooling does and does not claim is stated once in
+[scope and standing claims](scope-and-claims.md).
+
 All originals, private-source details, operational review history and exported
-tensors stay under ignored `work/dataset/`. The 2026-09-07 owner update permits
-reviewed public-source provenance and reproduction recipes in Git, but not asset
-payloads or mixed/private records. See [reproducibility](reproducibility.md).
+tensors stay under ignored `work/dataset/`. Reviewed public-source provenance and
+reproduction recipes belong in Git; asset payloads and mixed/private records do
+not. See [public provenance and reproducibility](reproducibility.md).
 
 ## Dataset design
 
@@ -37,7 +38,7 @@ The 300–500-board first-learning target and larger reference targets in PLAN
 remain targets, not guarantees. Native YOLOX and ImageNet checkpoints are starting
 hypotheses; qualification must measure the complete path on unseen real books.
 
-The [synthetic-first kickoff](dataset-kickoff.md) now permits an early synthetic
+The [synthetic-first kickoff](decisions/2026-09-07-synthetic-first-kickoff.md) now permits an early synthetic
 bootstrap before the large real tranche. It must not replace real
 training pages, copy held-out artwork, or count as new independent sources. Bulk
 synthesis and degradation are deliberately not implemented before renderer/design
@@ -62,28 +63,26 @@ pnpm run dataset init
 installs dependencies or downloads runtime assets automatically. `init` is
 idempotent and starts with zero acquisition/compute/storage allocation.
 
-The owner approved the following bounded kickoff allocation on 2026-09-07, and it
-is configured in the current workspace. Apply it explicitly on a fresh workspace:
+A fresh workspace starts at zero allocation and must be given ceilings before it
+can acquire anything:
 
 ```sh
-pnpm run dataset budget --sources 64 --pages 2000 --download-bytes 10737418240 --storage-bytes 68719476736 --cpu-seconds 720000 --review-limit 2000
+pnpm run dataset budget --sources SOURCES --pages PAGES --download-bytes BYTES --storage-bytes BYTES --cpu-seconds SECONDS --review-limit DECISIONS
 ```
 
-This caps admitted sources and rendered pages, downloaded bytes, total local
-workspace storage, conservatively reserved compute time, and up to 2,000 review
-**decisions**. One human decision accepts a matching page; corrections are further
-decisions. Failed/interrupted attempts retain full reservations. Inspect measured
-review time and corrections/ambiguities; this is capacity, not assigned human work.
-No paid services or permission outreach is included. The shared project ledger
-separately bounds conditional #3 GPU bootstrap; it is not launched by this command.
-The shared project ledger is [budget.md](budget.md); per-attempt records
-and actual ceilings are persisted locally in SQLite.
+The command sets **total cumulative ceilings**, not additional allowances, and
+requires every field. The figures to use are the current ones in the
+[project ledger](budget.md), which is the only home for them; per-attempt records
+and applied ceilings are persisted locally in SQLite.
 
-The former 20-decision/four-hour feasibility limits are superseded. Accounting
-still charges 90 seconds per rendered page even when an attempt finishes faster;
-the new compute ceiling covers retries and subsequent preparation. A source ceiling
-does not represent that many selected or rights-cleared books. Begin with the
-smaller increments in the [budget ledger](budget.md), not all capacity at once.
+The ceilings cap admitted sources and rendered pages, downloaded bytes, total local
+workspace storage, conservatively reserved compute time, and review **decisions**.
+One human decision accepts a matching page; corrections are further decisions.
+Failed and interrupted attempts retain full reservations, and accounting charges
+90 seconds per rendered page even when an attempt finishes faster. A source ceiling
+does not represent that many selected or rights-cleared books, and a review ceiling
+is capacity, not assigned human work. Begin with the smaller increments in the
+ledger, not all capacity at once.
 
 ## Paste PDFs and ingest
 
@@ -169,8 +168,8 @@ port private.
 
 Use the dashboard queue and page thumbnails to open the next review. It autosaves
 server-side drafts, lets you mark **No board** explicitly, and submits **Submit
-review & next** only after the human declarations are complete. One human pixel
-review, independent of any model/agent proposal, accepts a matching annotation;
+review & next** only after the human declarations are complete. Acceptance follows
+the [one-human-pixel-review rule](scope-and-claims.md#the-one-human-pixel-review-rule);
 corrections create a new revision requiring a human review. The dashboard provides
 the existing start/stop, validation, candidate export, inbox ingestion (with its
 explicit local-use checkbox), and duplicate inspection/resolution actions. It
@@ -182,40 +181,16 @@ accept a page or set either human declaration; see
 
 ### Assisted proposals
 
-The dashboard has separate localizer and labeler selectors. A valid proposal
-prefills only an untouched new draft. Once a reviewer interacts, loading or
-switching providers preserves the draft and shows the proposal for comparison;
-replacing an edited board is explicit, confirmed and undoable. Uncertain squares
-are highlighted, but every square and the complete page still require human pixel
-inspection. Deferral is recorded locally and never accepts a page.
+The dashboard has separate localizer and labeler selectors, and the same providers
+run as bounded detached jobs. Provider identity, run scopes and limits, the
+prefill and draft-preservation rules, manifests, schemas, the issue #3 integration
+boundary and the metric definitions are all specified once in
+[assisted dataset review](assisted-review.md); the commands live there too.
 
-The default pair is FENShot localization plus FENShot labels; the deterministic
-classical grid localizer is a diagnostic/fallback for a small smoke screen. The
-meaningful promotion comparison will be the issue #3 model versus FENShot. List
-and operate the bounded detached jobs with:
-
-```sh
-pnpm run dataset proposals providers
-pnpm run dataset proposals start --localizer fenshot-localizer-v1 --labeler fenshot-labeler-v1 --scope train-pending --max-pages 20
-pnpm run dataset proposals status
-pnpm run dataset proposals stop
-pnpm run dataset proposals resume RUN_ID
-```
-
-Use `--scope train-all` or `accepted-train` only for a recorded training
-diagnostic. After development sources are prospectively assigned, `dev-pending`,
-`dev-all`, and `accepted-dev` support the paired promotion comparison.
-Qualification is not a valid scope. Runs are capped at 100 pages/two hours and
-attempts reserve 45 CPU seconds in the existing ledger. Add `--after-repair` to
-resume only after diagnosing a provider failure. Result visibility is bound to
-the current sample revision and image SHA-256. Provider manifests, schemas,
-issue #3 integration boundary and metric definitions are in
-[assisted dataset review](assisted-review.md).
-
-Use **Stop job** for the separate acquisition/export worker; `Ctrl+C` stops only
-the web app. The app and worker share one writer lock, so active rendering can
-temporarily block a draft save. Stop the job, then choose **Retry saving draft**;
-your browser draft remains available for that retry.
+One pipeline-specific consequence: the web app and the acquisition/export worker
+share a single writer lock, so active rendering can temporarily block a draft
+save. Use **Stop job** for the worker — `Ctrl+C` stops only the web app — then
+choose **Retry saving draft**; your browser draft remains available for that retry.
 
 ## Optional standalone HTML fallback
 
@@ -230,12 +205,10 @@ pnpm run dataset import-review work/dataset/REVIEW_FILE.json
 The self-contained HTML uses no server, external fonts, telemetry or network
 requests. It displays the whole source page, selected grid and editable 64-square
 labels alongside Unicode label rendering. Unicode is a review aid with explicit
-font limitations, not a certified synthetic renderer. One self-attested human
-review of the pixels accepts a matching annotation. Corrections create a new
-revision and need a human review of that revision. A second human review is
-optional and never a page-acceptance prerequisite. Do not claim agent-generated
-or model-generated output is human truth; “independent” here means independent of
-the proposal/model, not necessarily a second reviewer.
+font limitations, not a certified synthetic renderer. Acceptance follows the
+[one-human-pixel-review rule](scope-and-claims.md#the-one-human-pixel-review-rule):
+one self-attested human review of the pixels accepts a matching annotation, and
+corrections create a new revision needing a human review of that revision.
 
 All labels are image-relative row-major; `.` is empty, uppercase white, lowercase
 black. Orientation may remain unknown. Page kind and complete-page review are
@@ -258,8 +231,8 @@ The confirmation-required **Start over** action archives managed state under
 ignored `work/dataset/archives/<timestamp-id>/`. It retains the inbox and approved
 budget, while carrying cumulative acquisition reservations and review decision/time
 use into the new ledger. Reset is not a budget refund: the archive still counts
-against storage. No current real dataset has been reset, and there is no automated
-restore command; recover an archive only through an operator-led local procedure.
+against storage. There is no automated restore command; recover an archive only
+through an operator-led local procedure.
 
 Open **Archives** in the dashboard to see each archive's UTC date and size.
 Choose **Delete archive…**, type `DELETE`, then choose **Permanently delete
@@ -313,7 +286,8 @@ pnpm run dataset export-start           # detached, deterministic train/dev snap
 pnpm run dataset status
 ```
 
-`export` runs synchronously. `stop` also interrupts export between boards; restart
+`export-start` detaches; the plain `export` subcommand runs the same work
+synchronously in the foreground. `stop` also interrupts export between boards; restart
 export to rebuild its deterministic partial directory. Completed snapshots are
 immutable and identified by recipe/input/source/annotation/code hashes. A repeated
 completed export is rejected with a reuse instruction. Original byte/source rights
@@ -352,6 +326,26 @@ pnpm test
 pnpm run build
 pnpm run test:dataset-review            # requires installed Chromium
 ```
+
+**Run the dataset tests only by that canonical invocation. Do not use
+`unittest discover`.** Discovery makes both `dataset_pipeline` and
+`python.dataset_pipeline` importable as separate modules; a test can then patch
+the root of one while the server imports the other, and a destructive test will
+operate on the live dataset. This has happened once and cost the accepted seed
+(see the [test-isolation incident](archive/dataset-incident-2026-09-07.md)).
+
+Four mechanisms enforce the separation, and none of them replaces using the right
+command:
+
+- **Package-relative imports.** Package code imports package-relative modules;
+  script execution uses the matching direct-import modules. The server and the
+  reset tests assert module identity rather than trusting the import.
+- **An explicit test-mode flag.** Dataset test processes set it. It is not
+  inferred from the environment.
+- **Live-root refusal.** With test mode set, dataset path resolution refuses the
+  live dataset root outright, even if a future test imports the wrong module.
+- **A regression test.** It imports both module names, checks ownership, and
+  directly asserts that test-mode access to the live root is rejected.
 
 Tests generate original synthetic rasters/PDFs in temporary storage and make no
 internet requests. Their passing demonstrates tool mechanics, not dataset quality.

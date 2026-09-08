@@ -1,8 +1,9 @@
 # Chess OCR
 
 Training and evaluation of printed 2D chess-diagram recognition, with a standalone
-TypeScript contract and a small offline browser demo. This is not an ebook reader,
-chess engine or generalized recognition claim.
+TypeScript contract and a small offline browser demo. What this project does and
+does not claim is stated once, in
+[scope and standing claims](docs/scope-and-claims.md).
 
 ## Run the browser baseline
 
@@ -62,12 +63,9 @@ macOS/Windows/iPad qualification. CI configuration is not proof a remote job ran
 
 ## Native models and parity
 
-[Native runtime setup](docs/native-runtime.md) provides the Python 3.12 Linux
-ARM64 lock, artifact-specific provenance, safe loading and exact export commands.
-Native COCO YOLOX-Nano and ImageNet MobileNetV3 heads stay unchanged. They are
-runtime/export probes, not chess-trained alternatives to FENShot.
-
-After preparing their documented local artifacts:
+[Native runtime setup](docs/native-runtime.md) owns the Python 3.12 Linux ARM64
+lock, artifact provenance, safe loading and the exact export commands. After
+preparing the local artifacts it documents:
 
 ```sh
 pnpm run test:parity
@@ -75,9 +73,7 @@ pnpm run test:parity
 
 The parity harness checks artifact hashes, independently reproduces preprocessing
 in JavaScript, and executes both ONNX graphs in WASM workers. Missing artifacts
-or numeric disagreement fail the command. `pnpm run eval` measures only original
-procedural synthetic inputs and writes raw timing evidence to ignored
-`work/evidence/`; it is not an accuracy benchmark. Dataset qualification is #2/#3.
+or numeric disagreement fail the command.
 
 ## Library contract
 
@@ -95,10 +91,6 @@ user corrections. Side-to-move, castling, en passant and counters are not inferr
 
 ## Status and boundaries
 
-For a plain-language explanation of the completed training audit, paired browser
-diagnostic, shared runtime, privacy model, and remaining gates, start with
-[understanding the v2 evaluation work](docs/v2-evaluation-guide.md).
-
 Issue [#1](https://github.com/nino96/chess-ocr/issues/1) implements the runnable
 baseline; see [evidence and remaining gates](docs/issue-1-evidence.md).
 [#2](https://github.com/nino96/chess-ocr/issues/2) owns real source-diverse data,
@@ -108,200 +100,26 @@ and [#4](https://github.com/nino96/chess-ocr/issues/4) owns optional server work
 FENShot 0.1.4 comes directly from npm. Its core and model are unchanged; confidence
 is uncalibrated, automatic detection returns at most one axis-aligned board, and
 manual selection does not demonstrate automatic localization. Unsupported skew,
-misses and source diversity remain real limitations. The native runtime probes
-have no demonstrated chess accuracy advantage.
+misses and source diversity remain real limitations.
 
-[Reuse review](docs/reuse.md) records the chess-reader components and evidence
-used here. [Artifact review](docs/artifacts.md) preserves third-party attribution
-and exact hashes. Original repository source is licensed under the MIT License;
-third-party packages, models and notices retain their separate terms.
+[Reuse review](docs/provenance/reuse.md) records the chess-reader components and
+evidence used here. [Artifact review](docs/provenance/artifacts.md) preserves
+third-party attribution and exact hashes. Original repository source is licensed
+under the MIT License; third-party packages, models and notices retain their
+separate terms.
 
-Read [AGENTS.md](AGENTS.md) and [PLAN.md](PLAN.md) before contributing. Keep
-originals, datasets, weights, exports and generated runs under ignored
-`data/`, `cache/`, `work/` or `artifacts/`. Never commit payloads, private positions
-or credentials. No paid service, telemetry, runtime CDN or server upload is part
-of this baseline.
+[AGENTS.md](AGENTS.md) owns the contribution rules: commit hygiene, the ignored
+payload roots, and what must never be committed. Read it and [PLAN.md](PLAN.md)
+before contributing.
 
-## Dataset collection (issue #2)
+## Documentation
 
-The current [synthetic-first kickoff](docs/dataset-kickoff.md) starts asset
-collection and an audited synthetic seed alongside real-source acquisition.
-It replaces bulk manual labeling as the collection strategy. Generation now has
-an executable fidelity gate. The [assisted-review framework](docs/assisted-review.md)
-now provides separately switchable localization/label providers and editable
-proposals. FENShot remains the baseline, classical localization is diagnostic,
-and the pending promotion comparison is the issue #3 model versus FENShot.
-Same-split duplicate candidates are retained with an export audit, not a required
-human task. Cross-split leakage remains blocking.
+| Start here                                     | For                                                                  |
+| ---------------------------------------------- | -------------------------------------------------------------------- |
+| [operator workflow](docs/operator-workflow.md) | The stage-by-stage narrative and your review checkpoints.            |
+| [architecture](docs/architecture.md)           | Pipeline shape, vocabulary, diagnostic modes, subsystem-to-file map. |
+| [dataset pipeline](docs/dataset-pipeline.md)   | The local dataset CLI and review dashboard.                          |
+| [training runbook](docs/training-runbook.md)   | The GPU training controller, its gates and stop conditions.          |
+| [reproducibility](docs/reproducibility.md)     | What a fresh clone can and cannot rebuild.                           |
 
-Start with the [operator workflow](docs/operator-workflow.md) for the sequence
-from feasibility collection to larger-budget approval and planned model training,
-including your review/approval checkpoints and the agent's responsibilities.
-
-The [local dataset pipeline](docs/dataset-pipeline.md) accepts PDFs placed in
-ignored `work/dataset/inbox/`, uses explicit resource limits, and runs resumable
-background acquisition/rendering with `pnpm run dataset start`, `status` and
-`stop`. For review, start the primary local dashboard with:
-
-```sh
-pnpm run dataset serve --port 8766
-```
-
-It binds to loopback only. In VS Code use **Ports** → **Forward a Port** → `8766`
-→ **Open Browser**. The dashboard keeps server-side drafts, presents the queue and
-page thumbnails, and accepts a page after one human pixel review; model or agent
-proposals cannot accept it. `ingest` records explicit local-use authorization and
-a conservative source/artwork group. Validation and hashed train/dev exports are
-implemented; no real collection or recognition qualification is claimed.
-An explicitly configured, hash-bound local trained candidate can populate an
-editable starting proposal without accepting it; see
-[local candidate testing](docs/local-candidate.md). The browser demo likewise
-keeps FENShot as its default and loads candidate ONNX files only after the user
-selects and verifies them locally.
-Use **Archives** to see dated archive sizes and permanently delete an old recovery
-copy after confirmation. Active data, inbox PDFs and cumulative usage are retained.
-Proposal jobs are explicit, nonqualification, resumable, and bounded:
-
-```sh
-pnpm run dataset proposals providers
-pnpm run dataset proposals start --localizer fenshot-localizer-v1 --labeler fenshot-labeler-v1 --scope train-pending --max-pages 20
-pnpm run dataset proposals status
-pnpm run dataset proposals stop
-```
-
-Hash-bound v2 ONNX localizer/labeler manifests are executable through the same
-runner, including prospectively assigned `dev-*` scopes. The browser also has a
-reference-first paired diagnostic against unchanged FENShot with automatic and
-manual four-corner modes. See [local candidate testing](docs/local-candidate.md).
-Neither interface accesses qualification or accepts model proposals as truth.
-
-Reviewed public-source provenance is tracked for
-[reproducibility](docs/reproducibility.md). Private source details, operational
-history, downloaded assets and generated datasets remain local and ignored.
-
-The [synthetic renderer and job controller](docs/synthetic-dataset.md) implement
-deterministic recipes, independent fidelity gating, bounded generation, lazy
-training inputs and resumable `pnpm run synthetic start/status/stop` commands.
-Bulk use requires current fidelity evidence. Coverage and recognition limitations
-remain explicit. The [public dataset screen](docs/public-dataset-review.md)
-distinguishes physical-board datasets from the printed-page collection.
-
-Dataset work suffered a
-[test-isolation and recovery incident](docs/dataset-incident-2026-09-07.md).
-The reviewed seed was lost; the owner waived recovery and authorized continuation.
-Rebuilt real labels are unverified proposals. See the synthetic status command and
-current fidelity evidence below the pipeline documentation; no dataset-readiness
-or recognition gain is claimed.
-
-## First native training bootstrap (issue #3)
-
-The [frozen training decision](docs/issue-3-training-plan.md) authorizes one
-synthetic-only MobileNetV3 classifier plus YOLOX-Nano detector schedule. It is
-diagnostic and may assist annotation; it is not real-page qualification and does
-not replace the shipped FENShot baseline.
-
-Corrective triage found that the retained detector used incompatible BGR/divide-
-by-255 transfer preprocessing and a fixed-decay EMA. Its export also failed after
-training/evaluation because lifecycle results were not persisted before export.
-Treat that candidate as `legacy-bgr-div255-v1`, synthetic-only and uncalibrated.
-The classifier checkpoint remains reusable. The completed v2 detector started
-from the original COCO checkpoint with RGB/ImageNet normalization, ramped
-resumable EMA, durable export states and export-only retry. It completed all
-9,000 updates and selected step 9,000. Its saturated synthetic metrics are
-diagnostic only; real development, refinement and browser gates remain open.
-
-From a clean branch based on merged `origin/main`, commit reviewed training code,
-then initialize it with explicit read-only roots for the completed corpus and
-admitted native artifacts. The commands below describe the retained v1 controller;
-do not start another v1 detector run:
-
-```sh
-pnpm run training -- init \
-  --dataset-root /absolute/path/to/chess-ocr/work/dataset/synthetic \
-  --native-root /absolute/path/to/chess-ocr \
-  --overlay-root /absolute/path/to/ignored/training-overlay
-pnpm run training -- start
-pnpm run training -- status
-pnpm run training -- stop
-```
-
-Initialization rejects dirty code, stale corpus/model hashes, an unavailable
-pinned container, unsafe paths and insufficient free space. Before allocating a
-GPU, `start` runs the frozen container's CPU-only input/dependency/output validation;
-failure is retained without a GPU charge. It returns after the bounded background
-supervisor is live. Checkpoints, curves, exports and raw logs remain under ignored
-`work/training/`; do not publish them without the separate artifact rights review
-required by this repository.
-
-Commands without `--run-root` always address the default
-`work/training/synthetic-bootstrap-v1` directory; they do not discover the
-newest repaired attempt. If initialization uses a repaired directory such as
-`work/training/synthetic-bootstrap-v1-repair-3`, pass that same `--run-root` to
-every later `status`, `start`, and `stop` command.
-
-Status reports the current run and a budget summary by default. GPU budget is
-measured in GPU-seconds: one second while a scheduled training container owns
-the GPU. It includes preflight and optimization segments, and a retry consumes
-the same frozen reservation. The summary shows total capacity, consumed time,
-remaining time, and each segment's allocation. Add `--history` when the full
-attempt ledger is needed for audit or diagnosis.
-
-The corrected detector-only run uses `recipes/synthetic-bootstrap-v2.json` and
-the original COCO detector; it reuses the completed classifier checkpoint
-without charging classifier GPU time. Initialize it without `--prior-run`:
-
-```sh
-pnpm run training -- init --detector-only \
-  --recipe recipes/synthetic-bootstrap-v2.json \
-  --classifier-checkpoint /absolute/path/to/synthetic-bootstrap-v1-detector-3/classifier/checkpoint-010000.pt \
-  --dataset-root /absolute/path/to/chess-ocr/work/dataset/synthetic \
-  --native-root /absolute/path/to/chess-ocr \
-  --overlay-root /absolute/path/to/ignored/training-overlay \
-  --run-root work/training/synthetic-bootstrap-v2-detector
-pnpm run training -- start --run-root work/training/synthetic-bootstrap-v2-detector
-pnpm run training -- status --run-root work/training/synthetic-bootstrap-v2-detector
-```
-
-The completed run is immutable. To recompute corrected synthetic DEV/CAL metrics
-from its selected checkpoint and ONNX without optimization or lifecycle changes:
-
-```sh
-pnpm run training -- audit --run-root work/training/synthetic-bootstrap-v2-detector
-pnpm run training -- ledger --training-root work/training
-```
-
-The audit includes partial/unsupported inputs as no-valid-board cases and writes
-only ignored `audits/` evidence plus its log. The ledger deduplicates inherited
-attempt histories across retained runs. The corrected v2 synthetic threshold is
-`1.0` with zero recall because confident region detections remained on partial
-grids. The hash-bound bundle therefore abstains in automatic mode; this is a
-refinement/rejection blocker, not evidence to relax the threshold or retrain.
-
-If a completed v2 detector needs only its failed export retried, use this exact
-export-only command; it does not repeat optimization, final evaluation or
-calibration:
-
-```sh
-pnpm run training -- export --run-root work/training/synthetic-bootstrap-v2-detector --segment detector
-```
-
-If a completed classifier checkpoint needs to be reused after a v1 export-only
-failure, initialize a fresh detector-only v1 run without `--prior-run`. This gives
-the new run its own frozen reservation while retaining the old run as evidence:
-
-```sh
-pnpm run training -- init --detector-only \
-  --classifier-checkpoint /absolute/path/to/repair-3/classifier/checkpoint-010000.pt \
-  --dataset-root /absolute/path/to/chess-ocr/work/dataset/synthetic \
-  --native-root /absolute/path/to/chess-ocr \
-  --overlay-root /absolute/path/to/ignored/training-overlay \
-  --run-root work/training/synthetic-bootstrap-v1-detector-1
-pnpm run training -- start --run-root work/training/synthetic-bootstrap-v1-detector-1
-```
-
-The controller verifies the checkpoint schema, completed schedule, selected-candidate
-evidence and hash, exports it with native-to-ONNX parity before detector optimization,
-marks the classifier complete without classifier GPU charges, and then runs the
-detector schedule. It reuses retained development evidence instead of repeating a
-full CPU evaluation. Choose the new reservation in the reviewed
-recipe before initialization; omitting `--prior-run` is what makes it fresh.
+[docs/index.md](docs/index.md) is the full map of every document and its kind.

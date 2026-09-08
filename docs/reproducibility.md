@@ -31,7 +31,7 @@ report the missing original; URL availability is not guaranteed by a hash.
 The [synthetic generator](synthetic-dataset.md) and public seed recipe are now
 implemented, with a required independent fidelity gate before bulk use. The original
 human-reviewed seed and its review history were lost in the documented
-[test-isolation incident](dataset-incident-2026-09-07.md). The owner waived recovery;
+[test-isolation incident](archive/dataset-incident-2026-09-07.md). The owner waived recovery;
 public-source links cannot reconstruct those decisions. Neither this machine nor
 a fresh clone currently has that human truth. New real annotations begin as
 proposals until separately confirmed, never as reconstructed review history.

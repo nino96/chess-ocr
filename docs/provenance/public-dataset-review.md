@@ -14,7 +14,7 @@ replaces printed-page training, source-held-out development, or qualification.
 
 ## Reviewed historical acquisition
 
-[Public metadata](../provenance/public-historical-increment.json) pins three
+[Public metadata](../../provenance/public-historical-increment.json) pins three
 original scans and the captured rights evidence. Each selection is PDF pages
 20–43, frozen before inference, including text-only pages. These are candidates,
 not accepted truth. No human annotation or recognition score is published here.
@@ -38,7 +38,8 @@ may change even for the same revision, so the captured HTML SHA-256 identifies
 the reviewed local evidence snapshot, not guaranteed byte-identical future HTML.
 The original PDF hashes must match exactly. No glyph/font extraction or original,
 crop, dataset or model publication is authorized by this metadata review.
-# Additional printed-page review
+
+## Additional printed-page review
 
 - [Manual de Xadrez](https://commons.wikimedia.org/wiki/File:Manual_xadrez.pdf)
   is a 52-page modern educational manual attributed to Hélio Neto. Commons
@@ -50,7 +51,7 @@ crop, dataset or model publication is authorized by this metadata review.
   supplies a fixed modern textbook layout under stated CC BY-SA 3.0/GFDL terms.
   Shared Wikimedia diagram artwork may overlap other sources. The byte-pinned
   2006 PDF is now admitted for fixed pages 20–43, TRAIN layout coverage only,
-  under [reviewed reconstruction metadata](../provenance/public-wikibook-increment.json).
+  under [reviewed reconstruction metadata](../../provenance/public-wikibook-increment.json).
   A bounded pixel inspection confirmed printed color-board/text layout. It is
   not an independently established held-out artwork group; no human labels exist.
 - [ChessPrint](https://github.com/Nairwolf/chessprint) is a printable exercise

@@ -15,18 +15,19 @@ uncalibrated; preserve its old diagnostic bundle unchanged. V2 is
 synthetic-development-only. The executable browser/provider integration uses
 schema 3 because it binds the shared refiner, tensor shapes, separate proposal
 and acceptance thresholds, and resource limits. Older bundles are rejected.
-Neither model is qualified; saturated synthetic metrics are not real-page
-generalization.
+Neither model is qualified: see
+[scope and standing claims](scope-and-claims.md#synthetic-evidence-is-not-recognition-accuracy).
 
 ## Prepare the ignored manifest
 
 From the repository/worktree containing the run:
 
-The corrected post-hoc audit admits partial pages as no-valid-board cases. No
-nonzero-recall threshold met its false-positive limit, so the exact calibrated
-threshold is `1.0`. The lower `0.01` value feeds region proposals to the refiner;
-it is not an accepted-board threshold. Prepare the hash-bound v2 bundle and its
-two immutable ignored provider manifests with both values:
+The bundle carries two distinct thresholds, and what each one means is explained
+in the training runbook under
+[proposal threshold versus acceptance threshold](training-runbook.md#proposal-threshold-versus-acceptance-threshold).
+For this run the calibrated acceptance threshold is `1.0` and the proposal
+threshold is `0.01`. Prepare the hash-bound v2 bundle and its two immutable
+ignored provider manifests with both values:
 
 ```sh
 pnpm run candidate -- prepare \
@@ -53,8 +54,10 @@ work/training/synthetic-bootstrap-v2-detector/detector/selected.onnx
 
 ## Browser test UI
 
-Start the usual demo with `pnpm run dev`, expand **Test a trained local
-candidate**, select those three files, and choose **Verify and load candidate**.
+Start the demo as described in
+[run the browser baseline](../README.md#run-the-browser-baseline), expand **Test a
+trained local candidate**, select those three files, and choose **Verify and load
+candidate**.
 The app checks model sizes and hashes before creating the local WASM worker. Use
 **Recognition backend** to switch back to FENShot without reloading the page.
 
@@ -71,9 +74,14 @@ only the aggregate summary is publication-safe.
 
 Register the generated provider manifests, then list their immutable IDs:
 
+`candidate prepare` names each manifest after the short model and refiner hashes,
+so the exact filenames differ per run. List the directory and register what is
+there:
+
 ```sh
-pnpm run dataset proposals register work/candidates/providers/v2-localizer-DET-HASH-REFINER-HASH.json
-pnpm run dataset proposals register work/candidates/providers/v2-labeler-CLS-HASH-REFINER-HASH.json
+ls work/candidates/providers/     # e.g. v2-localizer-2bdc13f5-2c5cff3b.json
+pnpm run dataset proposals register work/candidates/providers/v2-localizer-<det>-<refiner>.json
+pnpm run dataset proposals register work/candidates/providers/v2-labeler-<cls>-<refiner>.json
 pnpm run dataset proposals providers
 ```
 
@@ -87,7 +95,8 @@ Verify the actual retained artifacts in Node WASM and all production browser
 engines with:
 
 ```sh
-pnpm run candidate:verify work/candidates/providers/LOCALIZER.json work/candidates/providers/LABELER.json
+pnpm run candidate:verify work/candidates/providers/v2-localizer-<det>-<refiner>.json \
+  work/candidates/providers/v2-labeler-<cls>-<refiner>.json
 pnpm run build
 pnpm run candidate:verify:browser work/candidates/synthetic-bootstrap-v2-detector-v3.json \
   work/training/synthetic-bootstrap-v2-detector/classifier/selected.onnx \
@@ -104,5 +113,6 @@ inference. The editor is inert while the bounded local proposal request runs;
 generation checks discard a result if its draft or page nevertheless changes.
 
 These interfaces are diagnostic and annotation-assistance tools. Their output is
-not qualification evidence, and one independent human pixel review is still
-required before any dataset page is accepted.
+not qualification evidence, and the
+[one-human-pixel-review rule](scope-and-claims.md#the-one-human-pixel-review-rule)
+still governs acceptance of any dataset page.
