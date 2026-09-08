@@ -14,6 +14,8 @@ import {
   createCandidateBrowserClient,
 } from "./browser.ts";
 import { loadCandidateFiles, type CandidateConfig } from "./candidate.ts";
+import { REMOTE_CANDIDATE_META } from "./remote-candidate-api.ts";
+import { loadConfiguredRemoteCandidate } from "./remote-candidate.ts";
 import { decodeRaster } from "./image.ts";
 import { mountDiagnostic } from "./diagnostic.ts";
 const el = <T extends HTMLElement>(id: string): T =>
@@ -27,21 +29,34 @@ let backend: "baseline" | "candidate" = "baseline";
 let bitmap: ImageBitmap | null = null,
   selection: Rect | null = null,
   generation = 0,
-  busy = false;
+  busy = false,
+  candidateLoading = false,
+  candidateAbort: AbortController | null = null;
+const remoteCandidateAvailable = Boolean(
+  document.querySelector(`meta[name="${REMOTE_CANDIDATE_META}"]`),
+);
+el<HTMLButtonElement>("load-remote-candidate").hidden =
+  !remoteCandidateAvailable;
+const initialBackend = el<HTMLSelectElement>("backend");
+initialBackend.value = "baseline";
+initialBackend.options[1]!.disabled = true;
 const status = (text: string): void => {
   el("status").textContent = text;
 };
 function controls(): void {
   el<HTMLButtonElement>("detect").disabled = !bitmap || busy;
   el<HTMLButtonElement>("recognize").disabled = !bitmap || !selection || busy;
-  el<HTMLButtonElement>("cancel").disabled = !busy;
+  el<HTMLButtonElement>("cancel").disabled = !busy && !candidateLoading;
   el<HTMLFieldSetElement>("bounds").disabled = !bitmap;
   el<HTMLButtonElement>("export").disabled = !editor.board;
   el<HTMLButtonElement>("load-candidate").disabled =
     busy ||
+    candidateLoading ||
     !el<HTMLInputElement>("candidate-manifest").files?.[0] ||
     !el<HTMLInputElement>("candidate-classifier").files?.[0] ||
     !el<HTMLInputElement>("candidate-detector").files?.[0];
+  el<HTMLButtonElement>("load-remote-candidate").disabled =
+    busy || candidateLoading || !remoteCandidateAvailable;
 }
 function draw(): void {
   if (!bitmap) {
@@ -122,11 +137,26 @@ function placement(): void {
     editor.placement() ?? "Placement needs all squares and an orientation.";
 }
 function stop(): void {
+  candidateAbort?.abort();
+  candidateAbort = null;
+  candidateLoading = false;
   client.cancel();
   editor.invalidate();
   busy = false;
   generation++;
   controls();
+}
+
+function installCandidate(loaded: CandidateConfig): void {
+  candidate = loaded;
+  backend = "candidate";
+  client = createCandidateBrowserClient(candidate);
+  const select = el<HTMLSelectElement>("backend");
+  select.options[1]!.disabled = false;
+  select.value = "candidate";
+  status(
+    `Loaded ${candidate.manifest.name} ${candidate.manifest.version}. It is synthetic-only and unqualified; every square will remain marked for review.`,
+  );
 }
 function setSelection(rect: Rect): void {
   if (!bitmap) return;
@@ -291,32 +321,61 @@ for (const id of [
   el(id).addEventListener("change", controls);
 el("load-candidate").addEventListener("click", () => {
   void (async () => {
+    const manifest = el<HTMLInputElement>("candidate-manifest").files?.[0];
+    const classifier = el<HTMLInputElement>("candidate-classifier").files?.[0];
+    const detector = el<HTMLInputElement>("candidate-detector").files?.[0];
+    if (!manifest || !classifier || !detector) return;
+    stop();
+    const token = generation;
+    candidateLoading = true;
+    controls();
     try {
-      const manifest = el<HTMLInputElement>("candidate-manifest").files?.[0];
-      const classifier = el<HTMLInputElement>("candidate-classifier")
-        .files?.[0];
-      const detector = el<HTMLInputElement>("candidate-detector").files?.[0];
-      if (!manifest || !classifier || !detector) return;
       status("Verifying local candidate files…");
       const loaded = await loadCandidateFiles(manifest, classifier, detector);
-      stop();
-      candidate = loaded;
-      backend = "candidate";
-      client = createCandidateBrowserClient(candidate);
-      const select = el<HTMLSelectElement>("backend");
-      select.options[1]!.disabled = false;
-      select.value = "candidate";
-      status(
-        `Loaded ${candidate.manifest.name} ${candidate.manifest.version}. It is synthetic-only and unqualified; every square will remain marked for review.`,
-      );
+      if (token === generation) installCandidate(loaded);
     } catch (error) {
-      status(
-        error instanceof Error
-          ? error.message
-          : "Could not load the local candidate files.",
-      );
+      if (token === generation)
+        status(
+          error instanceof Error
+            ? error.message
+            : "Could not load the local candidate files.",
+        );
     } finally {
-      controls();
+      if (token === generation) {
+        candidateLoading = false;
+        controls();
+      }
+    }
+  })();
+});
+el("load-remote-candidate").addEventListener("click", () => {
+  void (async () => {
+    if (!remoteCandidateAvailable) return;
+    stop();
+    const token = generation;
+    const controller = new AbortController();
+    candidateAbort = controller;
+    candidateLoading = true;
+    controls();
+    status(
+      "Downloading and verifying the configured candidate for this browser session…",
+    );
+    try {
+      const loaded = await loadConfiguredRemoteCandidate(controller.signal);
+      if (token === generation) installCandidate(loaded);
+    } catch (error) {
+      if (token === generation)
+        status(
+          error instanceof Error
+            ? error.message
+            : "Could not load the configured remote candidate.",
+        );
+    } finally {
+      if (token === generation) {
+        candidateAbort = null;
+        candidateLoading = false;
+        controls();
+      }
     }
   })();
 });
@@ -337,9 +396,15 @@ el("backend").addEventListener("change", () => {
   }
 });
 el("cancel").addEventListener("click", () => {
+  const loadingCandidate = candidateLoading;
   stop();
-  status("Recognition cancelled. Your edits are preserved.");
+  status(
+    loadingCandidate
+      ? "Candidate loading cancelled. The previous backend remains selected."
+      : "Recognition cancelled. Your edits are preserved.",
+  );
 });
+window.addEventListener("pagehide", () => candidateAbort?.abort());
 el("orientation").addEventListener("change", () => {
   editor.orient(
     orientationSchema.parse(el<HTMLSelectElement>("orientation").value),

@@ -136,19 +136,20 @@ The operating commands are in [assisted dataset review](assisted-review.md) and
 
 ## Where the implementation lives
 
-| Area                                            | Primary files                                                                                                               |
+| Area                                            | Primary files                                                                                                                |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Shared candidate preprocessing/decode           | `src/candidate-runtime.ts`                                                                                                  |
-| Grid search and rectification                   | `src/grid.ts`                                                                                                               |
-| Candidate manifest validation                   | `src/candidate.ts`                                                                                                          |
-| Browser worker                                  | `src/trained-worker.ts`                                                                                                     |
-| Paired diagnostic state/UI logic                | `src/diagnostic.ts`                                                                                                         |
-| Reference, private export, summary, and metrics | `src/evaluation.ts`                                                                                                         |
-| Browser markup/styles                           | `index.html`, `src/style.css`                                                                                               |
-| Dataset providers                               | `src/proposals/index.ts`                                                                                                    |
-| Detached proposal job                           | `scripts/proposal-runner.ts`, `python/dataset_proposals.py`                                                                 |
-| Bundle/provider preparation                     | `scripts/candidate.mjs`                                                                                                     |
-| Actual-model verification                       | `scripts/candidate-verify.mjs`, `scripts/candidate-browser-verify.mjs`                                                      |
+| Shared candidate preprocessing/decode           | `src/candidate-runtime.ts`                                                                                                   |
+| Grid search and rectification                   | `src/grid.ts`                                                                                                                |
+| Candidate manifest validation                   | `src/candidate.ts`                                                                                                           |
+| Session-protected remote candidate convenience  | `scripts/remote-candidate-server.ts`, `src/remote-candidate.ts`                                                              |
+| Browser worker                                  | `src/trained-worker.ts`                                                                                                      |
+| Paired diagnostic state/UI logic                | `src/diagnostic.ts`                                                                                                          |
+| Reference, private export, summary, and metrics | `src/evaluation.ts`                                                                                                          |
+| Browser markup/styles                           | `index.html`, `src/style.css`                                                                                                |
+| Dataset providers                               | `src/proposals/index.ts`                                                                                                     |
+| Detached proposal job                           | `scripts/proposal-runner.ts`, `python/dataset_proposals.py`                                                                  |
+| Bundle/provider preparation                     | `scripts/candidate.mjs`                                                                                                      |
+| Actual-model verification                       | `scripts/candidate-verify.mjs`, `scripts/candidate-browser-verify.mjs`                                                       |
 | Executable tests                                | `tests/*candidate*`, `tests/grid.test.ts`, `tests/evaluation.test.ts`, `tests/diagnostic.test.ts`, `tests/proposals.test.ts` |
 
 ## FENShot baseline adapter

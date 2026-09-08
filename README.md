@@ -23,6 +23,8 @@ Edit any of the 64 squares and choose orientation before exporting placement.
 Uppercase letters are white pieces, lowercase black, and `·` is empty.
 Alt+arrow keys move between square editors; native select keys change a piece.
 Files remain in memory, and no input is uploaded or added to training.
+For an opt-in candidate bundle served through an SSH tunnel, follow
+[the remote candidate instructions](docs/local-candidate.md#load-through-a-remote-ssh-tunnel).
 
 For offline reload, use a production build:
 

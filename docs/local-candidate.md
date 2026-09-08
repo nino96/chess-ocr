@@ -70,6 +70,38 @@ image decoded, hides results until the reference is saved, and supports automati
 and manual four-corner modes. Its private export is sensitive local evidence;
 only the aggregate summary is publication-safe.
 
+### Load through a remote SSH tunnel
+
+When the repository and candidate artifacts are on an SSH host but the demo is
+open in a laptop browser, start the loopback development server with the fixed v2
+bundle explicitly enabled:
+
+```sh
+CHESS_OCR_REMOTE_CANDIDATE=1 pnpm run dev
+```
+
+The protected endpoint requires a Linux SSH host so it can bind every opened file
+descriptor to its approved managed root. On another host, use the file-picker
+fallback.
+
+Forward the printed loopback port through SSH and open that forwarded loopback
+URL. Expand **Test a trained local candidate** and choose **Load configured remote
+candidate**. The server configuration exposes only the three paths listed under
+[Prepare the ignored manifest](#prepare-the-ignored-manifest). It fails startup
+if a path leaves its managed `work/candidates` or `work/training` root, contains a
+symbolic link, exceeds its role bound, disagrees with the schema or hashes, or has
+an incompatible ONNX tensor contract.
+
+The endpoint exists only for this opt-in development-server session. It binds to
+loopback, accepts only fixed manifest/classifier/detector roles from the active
+same-origin session, and returns `Cache-Control: no-store`. The browser requests
+the bytes only after the button is pressed, repeats its existing manifest and
+hash checks, and keeps the verified bundle in memory for that page session. A
+reload returns to FENShot and does not reload the bundle automatically. The bytes
+travel through the SSH tunnel for local browser WASM inference; this is neither
+remote inference nor model publication. The three file pickers remain the
+fallback.
+
 ## Dataset dashboard
 
 Register the generated provider manifests, then list their immutable IDs:
