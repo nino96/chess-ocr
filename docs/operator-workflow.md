@@ -1,19 +1,17 @@
 # Operator workflow: feasibility, collection and model training
 
-**Current direction (2026-09-07):** follow the
-[synthetic-first kickoff](dataset-kickoff.md). The initial manual feasibility stage
-has served its purpose. The owner approved the bounded larger allocation in
-[the ledger](budget.md); the agent starts asset/real-source acquisition and
-implements audited generation and assisted review. The owner is not expected to
-manually create bulk labels or resolve same-split duplicates. Historical
-feasibility steps below remain command reference, not a request to repeat them.
-
 Use this guide to see what happens next and where your input is needed. The
 [command reference](dataset-pipeline.md) explains each implemented command and
 its limits. Run commands from the repository root on the Linux collection host.
-The pipeline and its environment are already initialized in the current workspace,
-and the approved feasibility budget is configured. A fresh clone requires the
-setup and budget commands in the reference.
+A fresh clone must first run the setup and budget commands in that reference.
+
+The collection strategy is the
+[synthetic-first kickoff](decisions/2026-09-07-synthetic-first-kickoff.md): the
+agent starts asset and real-source acquisition and implements audited generation
+and assisted review. The owner is not expected to create bulk labels manually or
+to resolve same-split duplicates. What is and is not claimed along the way is
+stated once in [scope and standing claims](scope-and-claims.md); every resource
+ceiling and charge lives in the [project ledger](budget.md).
 
 ## Who does what
 
@@ -36,14 +34,15 @@ implementation sends no notifications and does not schedule its own human review
 
 Your immediate decisions are which optional local books to contribute and who will
 perform the human pixel review. Public-source discovery can be done by the agent;
-you do not have to find or upload books. The current source ceiling is twelve
-admitted documents, not a list of twelve selected titles and not twelve proven
-independent artwork groups. Public-source lists and rights references are now
-tracked after privacy review; private lists/evidence remain local.
+you do not have to find or upload books. The source ceiling in
+[the ledger](budget.md) counts admitted documents; it is neither a list of
+selected titles nor a count of proven independent artwork groups. Public-source
+lists and rights references are tracked after privacy review; private lists and
+evidence remain local.
 
 Start with two or three candidate design families and a small, explicit page
 selection. Keep enough review allowance to cover different designs and negative
-or difficult pages. Do not attempt to exhaust all twelve source slots immediately.
+or difficult pages. Do not attempt to exhaust the source ceiling immediately.
 A sample with no diagrams is useful yield evidence; it is not a training tranche.
 
 Before ingestion, agree on a conservative family/group identifier and initial
@@ -52,12 +51,11 @@ split. The local inbox defaults to train and does not admit qualification direct
 Reserve distinct candidate families for later evaluation before tuning models on
 them; merely leaving pages unlabelled does not prove they are independent.
 
-The historical 20-decision feasibility limit has been replaced by the kickoff
-allocation; review capacity is not a request for more manual labeling. Assisted
-proposals can now reduce editing, but annotation remains a real human task.
-One human pixel review, independent of any model/agent proposal, accepts the page.
-A second reviewer is optional and never mandatory. An agent review cannot accept
-or overwrite a human-accepted annotation.
+The review ceiling in [the ledger](budget.md) is capacity, not a request for more
+manual labeling. Assisted proposals reduce editing, but annotation remains a real
+human task, and acceptance follows the
+[one-human-pixel-review rule](scope-and-claims.md#the-one-human-pixel-review-rule).
+An agent review cannot accept or overwrite a human-accepted annotation.
 
 ## 2. Ingest and start rendering
 
@@ -81,7 +79,7 @@ rights-reviewed, hash-pinned source manifests and register them with `dataset ad
 The app can then start/resume the admitted acquisition queue. Starting the worker
 with no pending jobs does not search for more material: it stops at a review,
 source, repair or budget boundary. The missing app controls and scale work are
-recorded in the [dashboard enhancement plan](../PLAN.md#planned-dashboard-enhancements-before-larger-collection).
+recorded in the [dashboard enhancement plan](decisions/2026-09-06-dashboard-enhancements.md).
 
 Equivalent CLI commands for local PDFs:
 
@@ -154,11 +152,11 @@ preserve printed pieces even for illegal teaching positions. Mark partial or
 unsupported pages accurately rather than creating a false negative.
 
 The dashboard autosaves drafts on the local server. Complete the reviewer, human
-and complete-page declarations, then choose **Submit review & next**. One human
-pixel review independent of model/agent proposals accepts a matching annotation;
-corrections create a new revision needing a human review. A second review is
-optional evidence, never an acceptance gate. Old revision/hash submissions fail
-without overwriting accepted edits.
+and complete-page declarations, then choose **Submit review & next**. Acceptance
+follows the
+[one-human-pixel-review rule](scope-and-claims.md#the-one-human-pixel-review-rule);
+corrections create a new revision needing a human review. Old revision/hash
+submissions fail without overwriting accepted edits.
 
 The dashboard exposes existing start/stop, validation, candidate export, inbox
 ingestion with its explicit authorization checkbox, and duplicate decisions. It
@@ -213,7 +211,7 @@ commands and the provider boundary are in [assisted dataset review](assisted-rev
 
 Automatic board proposals and piece-label prefilling are implemented framework
 work. The
-[recorded decision](../PLAN.md#decision-automatic-annotation-proposals-after-feasibility)
+[recorded decision](decisions/2026-09-06-automatic-annotation-proposals.md)
 keeps FENShot as baseline and classical localization as a diagnostic. The
 still-pending promotion comparison is the issue #3 model versus FENShot. The agent
 owns running and reporting it; your role is the agreed short independent review.
@@ -230,18 +228,16 @@ After the first review batch, the agent should bring you a concrete proposal wit
 - Any required implementation changes, including append-only page extension and
   revised compute accounting, separately identified from collection operations.
 
-The current worker charges the full 90 seconds per rendered page. Four hours
-therefore allow fewer than 160 pages after other work, despite the 2,000-page
-admission ceiling. Do not extrapolate actual fast render times into a larger
-queue while ignoring this enforced accounting. Any accounting change needs tests
-and must retain prior attempt history.
+The worker charges the full 90-second reservation for every rendered page, even
+when an attempt finishes faster. Size any increment against the current ceilings in
+[the ledger](budget.md), not against observed fast render times. Any accounting
+change needs tests and must retain prior attempt history.
 
 You approve the concrete follow-up allocation; the agent can then apply it with
 `dataset budget`. That command sets **total cumulative ceilings**, not additional
-allowances, and requires every budget field. Existing reservations/review decisions
-remain counted. Do not copy an arbitrary larger number into configuration merely
-to unblock a run. The 2026-09-07 kickoff approval supersedes that initial allocation;
-use the current ledger rather than repeating the feasibility-budget command.
+allowances, and requires every budget field. Existing reservations and review
+decisions remain counted. Do not copy an arbitrary larger number into
+configuration merely to unblock a run.
 
 ## 6. Build and export the first useful learning tranche
 

@@ -754,6 +754,14 @@
           render();
           notifyDraft();
         }
+        function restartReviewAfterProposalChange() {
+          state.human = false;
+          state.complete = false;
+          activeSeconds = 0;
+          sessionStartSeconds = 0;
+          lastActive = Date.now();
+          lastInteraction = lastActive;
+        }
         function render() {
           renderButtons();
           renderGeometry();
@@ -828,10 +836,11 @@
                   return;
                 remember();
                 state.boards[i] = JSON.parse(JSON.stringify(proposedBoards[i]));
+                restartReviewAfterProposalChange();
                 touchedBoards.add("replace:" + i);
                 touched = true;
                 proposalStatus =
-                  "Proposal copied into current board; compare overlay remains available.";
+                  "Proposal copied into current board; review declarations and time were cleared, and the compare overlay remains available.";
                 changed();
               });
               host.append(replace);
@@ -849,10 +858,11 @@
                 remember();
                 state.kind = "boards";
                 state.boards.push(JSON.parse(JSON.stringify(proposal)));
+                restartReviewAfterProposalChange();
                 selected = state.boards.length - 1;
                 touchedBoards.add("add-proposal:" + proposalIndex);
                 proposalStatus =
-                  "Proposed board added explicitly; inspect its geometry and every square.";
+                  "Proposed board added explicitly; review declarations and time were cleared, so inspect its geometry and every square.";
                 changed();
               });
               host.append(add);

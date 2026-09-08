@@ -1,4 +1,8 @@
-# Dataset review app evidence
+# Dataset review app evidence — 2026-09-06
+
+Record produced on host Linux ARM64 GX10 against base commit
+`9ae98fdae04be05384ee0eec08c0dd63e9c457e0`, 2026-09-06 through 2026-09-07.
+Nothing in this file is current; it is retained as evidence only.
 
 2026-09-06; issue #2. Implemented against base commit
 `9ae98fdae04be05384ee0eec08c0dd63e9c457e0` in the working tree. This is tooling
@@ -45,7 +49,7 @@ Core inference is unchanged, so its full runtime matrix was not rerun. At this
 2026-09-06 checkpoint, browser PDF upload and automatic annotation proposals were
 unimplemented; the assisted-review follow-up below supersedes the second
 limitation. Archive restoration still needs operator handling. See the
-[operator workflow](operator-workflow.md).
+[operator workflow](../operator-workflow.md).
 
 ## Archive management follow-up
 
@@ -93,7 +97,7 @@ remain in ignored `work/dataset/bootstrap/`, not this public evidence report.
 Initial rights-reviewed asset acquisition and static SVG/contact-sheet inspection
 are complete locally. This is not independent renderer/extraction fidelity, bulk
 synthetic generation, trained improvement or a delivered real tranche. Those next
-gates are explicit in [the kickoff plan](dataset-kickoff.md). No GPU training ran.
+gates are explicit in [the synthetic-first kickoff decision](../decisions/2026-09-07-synthetic-first-kickoff.md). No GPU training ran.
 Core inference was unchanged; full inference/browser/physical-device matrices
 were not rerun. A bounded research worker gathered primary references and a coding
 worker implemented the duplicate policy/tests; the lead owned decisions, integration,
@@ -141,4 +145,4 @@ explicit post-merge integration point. The owner subsequently removed the
 classical-versus-FENShot human winner-selection gate: classical remains diagnostic
 and FENShot remains baseline. The issue #3 model versus FENShot comparison, real
 review-time benefit, full browser matrix and physical device checks remain unrun.
-See [assisted dataset review](assisted-review.md).
+See [assisted dataset review](../assisted-review.md).

@@ -1,20 +1,22 @@
-# Issue #3 synthetic bootstrap decision
+# Issue #3 synthetic bootstrap run log — 2026-09-07
 
-Owner decision, 2026-09-07. This is the first bounded experiment in issue #3,
-not recognition delivery or qualification. The completed issue #2 synthetic seed
-permits training both starting browser candidates in one schedule: the 13-class
-MobileNetV3 square classifier and one-class YOLOX-Nano inner-grid detector.
-This supersedes the earlier classifier-only wording for this bootstrap without
-adding a seed, model family, sweep, or GPU time.
+Record of the issue #3 training attempts on host gx10-b210 (NVIDIA GB10), from
+the first preflight attempt through the completed corrective v2 detector run and
+its evaluation correction, 2026-09-07. Nothing in this file is current.
 
-The machine-readable source of truth is
-[`synthetic-bootstrap-v1.json`](../recipes/synthetic-bootstrap-v1.json). It binds
-the completed 12,000-page/15,923-board corpus, starting checkpoint identities,
-single seed, split policy, preprocessing, trainable stages, update counts,
-selection rules and resource ceilings. Operational paths and run state stay in
-ignored `work/training/`.
+The durable half of the original document — the hypothesis and boundaries, the
+GPU-second accounting, the controller commands, the gates and stop conditions,
+and what may be delivered after the bootstrap — is in
+[the training runbook](../training-runbook.md). The decision that authorized this
+work is
+[the joint issue #3 bootstrap decision](../decisions/2026-09-07-joint-issue-3-bootstrap.md).
 
-## Corrective v2 triage — 2026-09-07
+The machine-readable sources of truth these attempts froze are
+[`synthetic-bootstrap-v1.json`](../../recipes/synthetic-bootstrap-v1.json) and
+[`synthetic-bootstrap-v2.json`](../../recipes/synthetic-bootstrap-v2.json). Both
+are immutable; the v1 recipe remains evidence for retained v1 runs only.
+
+## Corrective v2 triage
 
 The completed v1 run is retained as diagnostic evidence, not repaired in place.
 Its detector and ONNX export are `legacy-bgr-div255-v1`, synthetic-only and
@@ -39,7 +41,7 @@ retry that cannot repeat optimization, final development evaluation or
 calibration.
 
 The corrected machine-readable source of truth is
-[`synthetic-bootstrap-v2.json`](../recipes/synthetic-bootstrap-v2.json). The v1
+`synthetic-bootstrap-v2.json`. The v1
 recipe remains immutable evidence for retained runs and must not be reused for
 the corrected detector.
 
@@ -97,101 +99,15 @@ threshold therefore abstains automatically; any later low detector threshold
 must be explicitly identified as a proposal threshold before nine-line grid
 refinement, never as calibrated board acceptance.
 
-## Boundaries and hypothesis
+## Cumulative GPU-second totals
 
-Hypothesis: task heads followed by lower-rate adaptation of the pinned native
-checkpoints can learn the audited synthetic piece designs and page geometry well
-enough to reduce proposal corrections on separately reviewed real pages. Training
-both models now tests the available positive, negative, multiple-board, small-board,
-affine and projective cases. It does not establish real localization because the
-seed lacks source diversity and several target detector conditions.
-
-All synthetic pages retain TRAIN purpose. A deterministic 85/10/5 internal
-train/development/calibration partition keeps each page, repeated position parent
-and shared degradation seed connected. It is used for optimization, checkpoint
-selection and diagnostic calibration only. It is never qualification.
-The frozen seed contains 11,751 white-bottom and 4,172 black-bottom boards; every
-internal partition must contain both. Metrics report the two orientations
-separately. Recognition remains image-relative and orientation remains unknown
-until the user selects it unless a later orientation model is independently
-validated.
-
-The GPU ceiling remains eight hours total: twenty minutes for mandatory native
-parity/backward/tiny-fit/throughput/recovery gates, 100 minutes for the classifier,
-340 minutes for the detector, and twenty minutes for at most one bounded diagnosis.
-Future runs reserve 24,000 CPU-seconds (six hours forty minutes) and 16 GiB of
-output storage while preserving at least 30% filesystem free space. The CPU ceiling
-retains the measured 8,806 CPU-seconds used by the completed classifier path and
-adds provisional detector and contingency capacity; it does not enlarge the
-unchanged eight-hour GPU ceiling. Each initialized run keeps the exact recipe value
-it froze, so this revision does not alter an active or historical run. Failed and
-interrupted attempts remain charged.
-
-## Gates and stop conditions
-
-Before substantive optimization, verify corpus and checkpoint hashes, actual
-image/label/tensor ordering, finite gradients, expected parameter updates, tiny
-known-label fit, negative-page loss, native preprocessing and actual stochastic
-checkpoint recovery. Use the existing digest-pinned NVIDIA container with cuDNN
-disabled; its default cuDNN path previously failed native parity. If backward,
-resume, deterministic execution or the complete schedule's measured projection
-fails, stop before the run and report the specific blocker.
-
-The container runs as the invoking host UID/GID, writes only through `/output`,
-and resolves NumPy 2.2.4, Pillow 11.1.0, ONNX 1.17.0, ONNX Runtime 1.20.1,
-OpenCV headless 4.11.0.86, safetensors 0.5.3 and timm 1.0.15 from a hash-frozen ignored overlay built from
-the existing local wheelhouse. A repaired attempt imports every prior attempt and
-charge; a new run directory cannot reset the cumulative reservation when
-`--prior-run` is supplied. A reviewed detector-only continuation may instead omit
-`--prior-run`, provide the hash-verified completed classifier checkpoint, and
-consume a separately frozen reservation without redoing classifier optimization.
-The continuation validates that the checkpoint is the complete development-selected
-candidate, reuses its retained development evidence, and performs bounded native-to-ONNX
-parity. It does not repeat the full development/calibration evaluation.
-
-Before `start` can allocate a GPU, the exact frozen, network-disabled container
-runs a CPU-only validation segment. The v1 segment verified dependency pins,
-output writes, classifier tensors/labels, BGR/padding geometry and a self-defined
-divide-by-255 detector tensor. That detector check was internally consistent but
-not checkpoint-compatible. V2 must instead compare an OpenCV BGR source against
-the pinned upstream helper using non-square geometry, colored channel sentinels,
-actual ImageNet RGB mean/std and a maximum tensor difference of `1e-6`. Failure
-leaves a retained validation log and consumes no GPU time; timeout cleanup stops
-the named validation container before returning control.
-
-The v2 graph boundary is raw letterboxed RGB float32 `0..255`, pad `114`; its graph
-wrapper divides by 255, subtracts ImageNet RGB mean and divides by ImageNet RGB
-standard deviation. Training feeds the equivalent normalized RGB tensor directly.
-Native export and browser preprocessing must agree on that identifier.
-
-The detector recipe clips its head/full-model gradient norm at 10.0. This is a
-mechanics-stability guard justified by the bounded diagnosis: the configured
-0.005 head learning rate produced non-finite gradients after one un-clipped
-synthetic update, while the clipped path remained finite and reduced loss across
-five CPU updates. No seed, model family, corpus or schedule length changed.
-
-The schedule is complete only after 10,000 classifier and 9,000 detector updates
-plus all frozen development/calibration evaluations. Do not shorten it to call a
-mechanics pilot successful. One failed comparison permits one bounded causal
-diagnosis, not a new seed, resolution, model family or sweep.
-
-Report full curves and effective class/design/effect exposure. For the classifier,
-report exact boards, square confusion, occupied/class/color errors, NLL, confidence
-coverage and confident errors. For the detector, report multi-board recall, negative
-false positives, AP, IoU and normalized box error by size/layout/effect. Compare
-the selected candidates with unchanged FENShot on identical inputs.
-
-## Delivery after the bootstrap
-
-A candidate may prefill issue #2 reviews only as a visible proposal. The next
-promotion decision requires separately reviewed real development data, the bounded
-classical detector comparison, shared inner-grid refinement and paired end-to-end
-evidence. Fresh human-checked qualification remains untouched until candidate
-freeze. FENShot stays the shipped default until all issue #3 quality, offline WASM,
-runtime and browser gates pass.
-
-Checkpoints, ONNX files and raw evidence remain ignored. Model publication and a
-public artifact mechanism require separate rights review and owner approval.
+The corrected run completed all 9,000 updates and selected step 9,000, using
+3,225.3801 GPU-seconds including preflight. The selected ONNX passed native
+raw-output parity. Its original synthetic report remains immutable; an
+evaluation-only audit clamps AP to `[0,1]` and includes partial/unsupported
+pages as separately reported no-valid-board cases. These saturated synthetic
+results do not change the required shared grid refinement, reference-first real
+development comparison, named-laptop budget or qualification gates.
 
 ## Preflight attempt record
 
@@ -265,7 +181,7 @@ artifacts and return `export_failed`; `pnpm run training -- export --run-root PA
 
 The retained classifier and detector ONNX exports can now be loaded explicitly
 into both local review surfaces through a hash-bound ignored candidate manifest;
-the operator commands and limitations are in [local candidate testing](local-candidate.md).
+the operator commands and limitations are in [local candidate testing](../local-candidate.md).
 That v1 bundle remains legacy diagnostic evidence and is not promoted into the
 schema-3 paired runtime. The v2 bundle binds the shared refiner, tensor contracts,
 separate proposal/calibrated thresholds and limits. FENShot remains the browser

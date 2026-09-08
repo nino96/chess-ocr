@@ -1,5 +1,10 @@
 # Dataset test-isolation incident — 2026-09-07
 
+Record of an incident on host gx10-b210 at the 2026-09-07 dataset-branch commit.
+Nothing in this file is current. The prevention changes it describes are now
+standing rules; the live statements of those rules are in
+[the dataset pipeline guide](../dataset-pipeline.md) and [AGENTS.md](../../AGENTS.md).
+
 The lead ran `python -m unittest discover -s python -p 'test_dataset*.py'`
 instead of the documented canonical-package invocation. Discovery made both
 `dataset_pipeline` and `python.dataset_pipeline` importable. The server's
@@ -29,10 +34,15 @@ proposals as recovered truth, or silently substitute regenerated labels.
 - A regression imports both module names and checks ownership, and directly checks
   that test-mode live-root access is rejected.
 
-The synthetic bulk job was not launched. Its latest independent comparison passes
-the 39 design/class calibration controls and 2,496 piece-identity checks, but
-three small transformed-board controls still exceed the retained MAE limit.
-Those were the gate results at the incident commit, not final fidelity evidence.
+The synthetic bulk job was not launched. Its independent comparison at the
+incident commit passed the 39 design/class calibration controls and 2,496
+piece-identity checks, while three small transformed-board controls still
+exceeded the retained MAE limit. **Superseded:** that MAE failure was fixed; the
+later passing prelaunch validation is
+[the 2026-09-07 synthetic prelaunch record](synthetic-prelaunch-validation-2026-09-07.md),
+and the current fidelity gate is described in
+[the synthetic dataset guide](../synthetic-dataset.md). Those were the gate
+results at the incident commit, not final fidelity evidence.
 
 The owner subsequently stated there is no backup, explicitly abandoned the lost
 labeled documents, and authorized continuing the dataset goal. Recovery of those

@@ -1,5 +1,5 @@
 // Asset imports adapted from nino96/chess-reader c2ece9a, recognition/assets.ts.
-// Source provenance and intentional contract differences: docs/reuse.md.
+// Source provenance and intentional contract differences: docs/provenance/reuse.md.
 import modelUrl from "@scoriiu/fenshot/model/chess-tiles-v2.onnx?url";
 import ortWasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.wasm?url";
 import ortMjsUrl from "onnxruntime-web/ort-wasm-simd-threaded.mjs?url";

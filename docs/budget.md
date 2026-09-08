@@ -1,5 +1,9 @@
 # Project local resource ledger
 
+The single home for resource ceilings, reservations and charges. Other documents
+link here rather than restate a figure. What the spending may and may not be used
+to claim is stated once in [scope and standing claims](scope-and-claims.md).
+
 ## Owner update — local budget discretion, 2026-09-07
 
 The owner authorizes the lead to increase local CPU/GPU, acquisition, review and
@@ -84,17 +88,19 @@ the 2026-09-07 owner update in [reproducibility](reproducibility.md).
 This is an initial acquisition/review feasibility allocation, not a demonstrated
 budget for the complete first learning tranche or model improvement. Twelve is
 an admission ceiling; no twelve-book source list has been selected or admitted.
-One human review accepts a matching page, so 20 decisions can accept at most 20
-unchanged pages; corrections consume further decisions. The worker charges the full
+Under the
+[one-human-pixel-review rule](scope-and-claims.md#the-one-human-pixel-review-rule),
+20 decisions can accept at most 20 unchanged pages; corrections consume further
+decisions. The worker charges the full
 90-second reservation for every rendered page, even on successful fast attempts.
 Four hours therefore covers at most 160 page-render attempts before acquisition,
 inspection and export charges; the 2,000-page ceiling is not achievable within
 that compute allocation under current accounting. No GPU training is included.
 
 Use the first reviews to measure diagram yield, review time, corrections/ambiguity,
-artwork independence and rendering cost. A disagreement rate requires a separately
-chosen comparison review; it cannot be inferred from one reviewer. A complete
-learning tranche requires
+artwork independence and rendering cost, and report them as
+[scope and standing claims](scope-and-claims.md#the-one-human-pixel-review-rule)
+requires. A complete learning tranche requires
 an evidence-based follow-up allocation and separately budgeted training; approval
 of these initial limits does not imply either. These feasibility limits are now
 superseded by the owner-authorized kickoff below.
@@ -173,5 +179,5 @@ status remains current-run-only, `status --history` owns one run's inherited
 history, and `ledger` owns the cross-run cumulative accounting.
 
 The concrete sequence and acceptance boundaries are in
-[dataset kickoff](dataset-kickoff.md). Reviewed public inventories/URLs/hashes and
+[dataset kickoff](decisions/2026-09-07-synthetic-first-kickoff.md). Reviewed public inventories/URLs/hashes and
 selection recipes are tracked; private details and operational job state stay ignored.
