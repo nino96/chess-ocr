@@ -6,7 +6,13 @@ import {
   restoreManualGridResult,
 } from "./browser.ts";
 import type { RecognitionClient } from "./client.ts";
-import { VERSION, type Label, type Request } from "./contract.ts";
+import {
+  VERSION,
+  type Board,
+  type Label,
+  type Request,
+  type Result,
+} from "./contract.ts";
 import {
   PRIVATE_EVALUATION_VERSION,
   compareResult,
@@ -17,6 +23,12 @@ import {
   type Reference,
 } from "./evaluation.ts";
 import { decodeRaster, inspectRaster } from "./image.ts";
+import {
+  rectifyGrid,
+  type GridCorners,
+  type Point,
+  type RgbaRaster,
+} from "./grid.ts";
 
 const SENSITIVE_WARNING =
   "SENSITIVE LOCAL EVIDENCE: contains image hashes, geometry, positions, and raw model results; do not publish";
@@ -62,6 +74,78 @@ type QueueItem = {
 type RunMode = "automatic" | "manual-grid";
 type Entry = PrivateEvaluation["entries"][number];
 type Draft = Omit<Entry, "results"> & { results?: Entry["results"] };
+type MutableCorners = [Point, Point, Point, Point];
+type ReferenceDraft = {
+  kind: Reference["kind"];
+  corners: MutableCorners;
+  orientation: "unknown" | "white-bottom" | "black-bottom";
+  labels: Label[];
+};
+
+const CORNER_NAMES = ["top-left", "top-right", "bottom-right", "bottom-left"];
+const PIECE_SYMBOLS: Record<Label, string> = {
+  empty: "·",
+  P: "♙",
+  N: "♘",
+  B: "♗",
+  R: "♖",
+  Q: "♕",
+  K: "♔",
+  p: "♟",
+  n: "♞",
+  b: "♝",
+  r: "♜",
+  q: "♛",
+  k: "♚",
+};
+
+export function imageEdgeCorners(
+  width: number,
+  height: number,
+): MutableCorners {
+  return [
+    { x: 0, y: 0 },
+    { x: width - 1, y: 0 },
+    { x: width - 1, y: height - 1 },
+    { x: 0, y: height - 1 },
+  ];
+}
+
+export function gridSegments(corners: GridCorners): Array<[Point, Point]> {
+  const lerp = (a: Point, b: Point, amount: number): Point => ({
+    x: a.x + (b.x - a.x) * amount,
+    y: a.y + (b.y - a.y) * amount,
+  });
+  const segments: Array<[Point, Point]> = [];
+  for (let index = 0; index <= 8; index++) {
+    const amount = index / 8;
+    segments.push([
+      lerp(corners[0], corners[3], amount),
+      lerp(corners[1], corners[2], amount),
+    ]);
+    segments.push([
+      lerp(corners[0], corners[1], amount),
+      lerp(corners[3], corners[2], amount),
+    ]);
+  }
+  return segments;
+}
+
+export function closestBoard(
+  result: Result,
+  reference: Reference,
+): Board | null {
+  if (!result.boards.length) return null;
+  if (reference.kind !== "board") return result.boards[0]!;
+  const error = (board: Board) =>
+    board.corners.reduce((sum, point, index) => {
+      const expected = reference.corners[index]!;
+      return sum + Math.hypot(point.x - expected.x, point.y - expected.y);
+    }, 0);
+  return result.boards.reduce((best, board) =>
+    error(board) < error(best) ? board : best,
+  );
+}
 
 const byId = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -105,6 +189,12 @@ export function mountDiagnostic(
   let running = false;
   let activeBitmap: ImageBitmap | null = null;
   let activeBitmapIndex = -1;
+  let referenceDrafts = new Map<number, ReferenceDraft>();
+  let cornerPlacements = new Map<number, number>();
+  let cornerPlacement = 0;
+  let draggingCorner: number | null = null;
+  let selectedCorner = 0;
+  let visualGeneration = 0;
   let fenshotClient: RecognitionClient | null = null;
   let v2Client: { identity: string; client: RecognitionClient } | null = null;
   let mainThreadHeapPeakBytes: number | null = null;
@@ -133,33 +223,289 @@ export function mountDiagnostic(
     return value ?? null;
   };
 
-  const labels = (): Label[] =>
-    Array.from({ length: 64 }, (_, index) => {
-      const value = byId<HTMLSelectElement>(`diagnostic-label-${index}`).value;
-      return (value || "empty") as Label;
+  const sourceCanvas = byId<HTMLCanvasElement>("diagnostic-source");
+  const sourceContext = sourceCanvas.getContext("2d")!;
+  const activeDraft = (): ReferenceDraft | null =>
+    referenceDrafts.get(selected) ?? null;
+  const syncCornerInputs = (corners: GridCorners): void => {
+    corners
+      .flatMap((point) => [point.x, point.y])
+      .forEach((value, index) => {
+        byId<HTMLInputElement>(`diagnostic-corner-${index}`).value = String(
+          Math.round(value),
+        );
+      });
+  };
+  const syncReferenceControls = (): void => {
+    const draft = activeDraft();
+    if (!draft) return;
+    byId<HTMLSelectElement>("diagnostic-reference-kind").value = draft.kind;
+    byId<HTMLSelectElement>("diagnostic-orientation").value = draft.orientation;
+    syncCornerInputs(draft.corners);
+    draft.labels.forEach((label, index) => {
+      byId<HTMLSelectElement>(`diagnostic-label-${index}`).value = label;
     });
-  const reference = (): Reference => {
-    const kind = byId<HTMLSelectElement>("diagnostic-reference-kind").value;
-    if (kind !== "board") return referenceSchema.parse({ kind });
-    const numbers = Array.from({ length: 8 }, (_, index) =>
-      Number(byId<HTMLInputElement>(`diagnostic-corner-${index}`).value),
+  };
+  const scalePoint = (point: Point, scaleX: number, scaleY: number): Point => ({
+    x: point.x * scaleX,
+    y: point.y * scaleY,
+  });
+  const strokeGrid = (
+    context: CanvasRenderingContext2D,
+    corners: GridCorners,
+    scaleX: number,
+    scaleY: number,
+    handles: boolean,
+  ): void => {
+    context.save();
+    context.strokeStyle = "#096ccc";
+    context.fillStyle = "#096ccc";
+    context.lineWidth = Math.max(2, context.canvas.width / 320);
+    for (const [from, to] of gridSegments(corners)) {
+      const start = scalePoint(from, scaleX, scaleY);
+      const end = scalePoint(to, scaleX, scaleY);
+      context.beginPath();
+      context.moveTo(start.x, start.y);
+      context.lineTo(end.x, end.y);
+      context.stroke();
+    }
+    if (handles)
+      corners.forEach((point, index) => {
+        const scaled = scalePoint(point, scaleX, scaleY);
+        const radius = Math.max(7, context.canvas.width / 80);
+        context.beginPath();
+        context.arc(scaled.x, scaled.y, radius, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "white";
+        context.font = `${Math.max(11, radius)}px sans-serif`;
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText(String(index + 1), scaled.x, scaled.y);
+        context.fillStyle = "#096ccc";
+      });
+    context.restore();
+  };
+  const drawDiagnosticSource = (bitmap: ImageBitmap): void => {
+    const maximumWidth = 1000;
+    const scale = Math.min(1, maximumWidth / bitmap.width);
+    sourceCanvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    sourceCanvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    sourceContext.drawImage(
+      bitmap,
+      0,
+      0,
+      sourceCanvas.width,
+      sourceCanvas.height,
     );
+    const draft = activeDraft();
+    if (draft?.kind === "board")
+      strokeGrid(
+        sourceContext,
+        draft.corners,
+        sourceCanvas.width / bitmap.width,
+        sourceCanvas.height / bitmap.height,
+        true,
+      );
+  };
+  const rgbaRaster = (bitmap: ImageBitmap): RgbaRaster => {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("Canvas is unavailable");
+    context.drawImage(bitmap, 0, 0);
+    const data = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    return {
+      data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+      width: bitmap.width,
+      height: bitmap.height,
+    };
+  };
+  const drawOverlay = (
+    canvas: HTMLCanvasElement,
+    bitmap: ImageBitmap,
+    corners: GridCorners | null,
+  ): void => {
+    const scale = Math.min(1, 480 / bitmap.width, 360 / bitmap.height);
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d")!;
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    if (corners)
+      strokeGrid(
+        context,
+        corners,
+        canvas.width / bitmap.width,
+        canvas.height / bitmap.height,
+        false,
+      );
+  };
+  const drawRectified = (
+    canvas: HTMLCanvasElement,
+    raster: RgbaRaster,
+    corners: GridCorners,
+  ): void => {
+    const size = 256;
+    const rectified = rectifyGrid(raster, corners, 4, size);
+    canvas.width = size;
+    canvas.height = size;
+    canvas
+      .getContext("2d")!
+      .putImageData(
+        new ImageData(new Uint8ClampedArray(rectified.data), size, size),
+        0,
+        0,
+      );
+  };
+
+  const reference = (): Reference => {
+    const draft = activeDraft();
+    if (!draft) throw new Error("Choose a diagnostic image first.");
+    if (draft.kind !== "board")
+      return referenceSchema.parse({ kind: draft.kind });
+    if (cornerPlacement < 4)
+      throw new Error(
+        "Click all four grid corners before saving the reference.",
+      );
     return referenceSchema.parse({
       kind: "board",
-      corners: [
-        { x: numbers[0]!, y: numbers[1]! },
-        { x: numbers[2]!, y: numbers[3]! },
-        { x: numbers[4]!, y: numbers[5]! },
-        { x: numbers[6]!, y: numbers[7]! },
-      ],
-      orientation: byId<HTMLSelectElement>("diagnostic-orientation").value,
-      labels: labels(),
+      corners: draft.corners,
+      orientation: draft.orientation,
+      labels: draft.labels,
     });
   };
   const existing = (index: number, mode: RunMode) =>
     entries.find((entry) => entry.index === index && entry.mode === mode);
   const mode = (): RunMode =>
     byId<HTMLSelectElement>("diagnostic-mode").value as RunMode;
+  const boardView = (
+    values: readonly (Label | null)[],
+    expected?: readonly Label[],
+  ): HTMLElement => {
+    const board = document.createElement("div");
+    board.className = "diagnostic-board";
+    board.setAttribute("role", "img");
+    board.setAttribute("aria-label", "Board pieces in image row order");
+    values.forEach((label, index) => {
+      const square = document.createElement("span");
+      square.className = `diagnostic-square ${
+        (Math.floor(index / 8) + (index % 8)) % 2 ? "dark" : ""
+      } ${expected && label !== expected[index] ? "wrong" : ""}`;
+      square.textContent = label ? PIECE_SYMBOLS[label] : "?";
+      square.title = `Row ${Math.floor(index / 8) + 1}, column ${(index % 8) + 1}: ${label ?? "unknown"}`;
+      board.append(square);
+    });
+    return board;
+  };
+  const resultCard = (
+    title: string,
+    result: Result,
+    reference: Reference,
+    bitmap: ImageBitmap,
+    raster: RgbaRaster,
+  ): HTMLElement => {
+    const card = document.createElement("article");
+    card.className = "diagnostic-result-card";
+    const heading = document.createElement("h4");
+    heading.textContent = title;
+    card.append(heading);
+    const board = closestBoard(result, reference);
+    const state = document.createElement("p");
+    state.textContent = board
+      ? `${result.status}; ${result.boards.length} board${result.boards.length === 1 ? "" : "s"} returned`
+      : `${result.status}; no board returned`;
+    card.append(state);
+    const overlayCaption = document.createElement("p");
+    overlayCaption.textContent = board
+      ? "Returned grid over the source"
+      : "Source image; no grid returned";
+    card.append(overlayCaption);
+    const overlay = document.createElement("canvas");
+    overlay.className = "diagnostic-overlay";
+    overlay.setAttribute("aria-label", `${title} grid over source image`);
+    drawOverlay(overlay, bitmap, board?.corners ?? null);
+    card.append(overlay);
+    if (board) {
+      const rectifiedCaption = document.createElement("p");
+      rectifiedCaption.textContent = "Rectified view from the returned grid";
+      card.append(rectifiedCaption);
+      const rectified = document.createElement("canvas");
+      rectified.className = "diagnostic-rectified";
+      rectified.setAttribute(
+        "aria-label",
+        `${title} board rectified from returned grid`,
+      );
+      drawRectified(rectified, raster, board.corners);
+      card.append(rectified);
+      const piecesCaption = document.createElement("p");
+      piecesCaption.textContent =
+        "Predicted pieces; red cells disagree with you";
+      card.append(piecesCaption);
+      card.append(
+        boardView(
+          board.squares.map((square) => square.label),
+          reference.kind === "board" ? reference.labels : undefined,
+        ),
+      );
+    }
+    return card;
+  };
+  const renderVisuals = async (): Promise<void> => {
+    const generation = ++visualGeneration;
+    const item = queue[selected];
+    const panel = byId<HTMLElement>("diagnostic-image-panel");
+    if (!item) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    try {
+      const bitmap = await decodeActive(item);
+      if (generation !== visualGeneration) return;
+      drawDiagnosticSource(bitmap);
+      const entry = existing(selected, mode());
+      if (!entry?.results) return;
+      const cards = byId("diagnostic-result-cards");
+      cards.replaceChildren();
+      if (entry.reference.kind === "board") {
+        const referenceCard = document.createElement("article");
+        referenceCard.className = "diagnostic-result-card";
+        const heading = document.createElement("h4");
+        heading.textContent = "Your reference";
+        const caption = document.createElement("p");
+        caption.textContent = "Expected pieces in source-image row order";
+        referenceCard.append(
+          heading,
+          caption,
+          boardView(entry.reference.labels),
+        );
+        cards.append(referenceCard);
+      }
+      const raster = rgbaRaster(bitmap);
+      cards.append(
+        resultCard(
+          "v2 candidate",
+          entry.results.v2.result,
+          entry.reference,
+          bitmap,
+          raster,
+        ),
+        resultCard(
+          "FENShot",
+          entry.results.fenshot.result,
+          entry.reference,
+          bitmap,
+          raster,
+        ),
+      );
+    } catch (error) {
+      status(
+        error instanceof Error
+          ? error.message
+          : "Could not draw diagnostic image.",
+      );
+    }
+  };
   const render = (): void => {
     const item = queue[selected];
     byId("diagnostic-current").textContent = item
@@ -167,14 +513,30 @@ export function mountDiagnostic(
       : "No local images queued.";
     byId<HTMLButtonElement>("diagnostic-save-reference").disabled =
       !item || running;
+    byId<HTMLButtonElement>("diagnostic-previous").disabled =
+      !item || running || selected === 0;
+    byId<HTMLButtonElement>("diagnostic-next").disabled =
+      !item || running || selected === queue.length - 1;
     byId<HTMLButtonElement>("diagnostic-run").disabled =
       !item || !existing(selected, mode()) || running;
     const complete =
       entries.length > 0 && entries.every((entry) => entry.results);
     byId<HTMLButtonElement>("diagnostic-export-private").disabled = !complete;
     byId<HTMLButtonElement>("diagnostic-export-summary").disabled = !complete;
+    const draft = activeDraft();
+    const isBoard = draft?.kind === "board";
+    byId<HTMLElement>("diagnostic-corner-details").hidden = !isBoard;
+    byId<HTMLElement>("diagnostic-labels").hidden = !isBoard;
+    byId<HTMLSelectElement>("diagnostic-orientation").disabled = !isBoard;
+    byId<HTMLButtonElement>("diagnostic-restart-corners").disabled = !isBoard;
+    byId<HTMLButtonElement>("diagnostic-use-image-edges").disabled = !isBoard;
+    byId("diagnostic-corner-help").textContent = !isBoard
+      ? "This reference does not require board corners."
+      : cornerPlacement < 4
+        ? `Click corner ${cornerPlacement + 1}: ${CORNER_NAMES[cornerPlacement]}.`
+        : `Grid ready. Drag a numbered corner to adjust it. For keyboard adjustment, press 1–4 to choose a corner, then use arrow keys; corner ${selectedCorner + 1} is selected.`;
     const result = existing(selected, mode());
-    const output = byId("diagnostic-result");
+    const output = byId<HTMLElement>("diagnostic-result");
     output.hidden = !result?.results;
     if (result?.results) {
       const v2 = compareResult(result.reference, result.results.v2.result);
@@ -182,8 +544,10 @@ export function mountDiagnostic(
         result.reference,
         result.results.fenshot.result,
       );
-      output.textContent = `v2: ${JSON.stringify(v2)}\nFENShot: ${JSON.stringify(fenshot)}`;
+      byId("diagnostic-result-metrics").textContent =
+        `v2: ${JSON.stringify(v2)}\nFENShot: ${JSON.stringify(fenshot)}`;
     }
+    void renderVisuals();
   };
   const device = () => ({
     label: byId<HTMLInputElement>("diagnostic-device").value.trim(),
@@ -397,6 +761,220 @@ export function mountDiagnostic(
     }
   };
 
+  const invalidateReference = (): void => {
+    entries = entries.filter(
+      (entry) => entry.index !== selected || entry.mode !== mode(),
+    );
+  };
+  const sourcePoint = (event: PointerEvent): Point | null => {
+    const item = queue[selected];
+    if (!item) return null;
+    const bounds = sourceCanvas.getBoundingClientRect();
+    return {
+      x: Math.round(
+        Math.max(
+          0,
+          Math.min(
+            item.width - 1,
+            ((event.clientX - bounds.left) * item.width) / bounds.width,
+          ),
+        ),
+      ),
+      y: Math.round(
+        Math.max(
+          0,
+          Math.min(
+            item.height - 1,
+            ((event.clientY - bounds.top) * item.height) / bounds.height,
+          ),
+        ),
+      ),
+    };
+  };
+  const updateCorner = (index: number, point: Point): void => {
+    const draft = activeDraft();
+    if (!draft || draft.kind !== "board") return;
+    draft.corners[index] = point;
+    selectedCorner = index;
+    invalidateReference();
+    syncCornerInputs(draft.corners);
+    if (activeBitmap) drawDiagnosticSource(activeBitmap);
+  };
+  const nearestCorner = (event: PointerEvent): number | null => {
+    const draft = activeDraft();
+    const point = sourcePoint(event);
+    const item = queue[selected];
+    if (!draft || !point || !item) return null;
+    const bounds = sourceCanvas.getBoundingClientRect();
+    const threshold =
+      30 * Math.max(item.width / bounds.width, item.height / bounds.height);
+    let nearest = 0;
+    for (let index = 1; index < 4; index++)
+      if (
+        Math.hypot(
+          draft.corners[index]!.x - point.x,
+          draft.corners[index]!.y - point.y,
+        ) <
+        Math.hypot(
+          draft.corners[nearest]!.x - point.x,
+          draft.corners[nearest]!.y - point.y,
+        )
+      )
+        nearest = index;
+    return Math.hypot(
+      draft.corners[nearest]!.x - point.x,
+      draft.corners[nearest]!.y - point.y,
+    ) <= threshold
+      ? nearest
+      : null;
+  };
+
+  sourceCanvas.addEventListener("pointerdown", (event) => {
+    const point = sourcePoint(event);
+    const draft = activeDraft();
+    if (!point || draft?.kind !== "board") return;
+    if (cornerPlacement < 4) {
+      draggingCorner = cornerPlacement;
+      updateCorner(cornerPlacement, point);
+    } else {
+      draggingCorner = nearestCorner(event);
+      if (draggingCorner === null) {
+        status("Drag one of the four numbered corner handles.");
+        return;
+      }
+      selectedCorner = draggingCorner;
+    }
+    sourceCanvas.classList.add("is-dragging");
+    sourceCanvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  sourceCanvas.addEventListener("pointermove", (event) => {
+    if (draggingCorner === null) return;
+    const point = sourcePoint(event);
+    if (point) updateCorner(draggingCorner, point);
+  });
+  const finishCornerDrag = (): void => {
+    if (draggingCorner === null) return;
+    if (cornerPlacement < 4) cornerPlacement++;
+    cornerPlacements.set(selected, cornerPlacement);
+    draggingCorner = null;
+    sourceCanvas.classList.remove("is-dragging");
+    status(
+      cornerPlacement < 4
+        ? `Now click the ${CORNER_NAMES[cornerPlacement]} corner.`
+        : "Grid ready. Drag any numbered corner for fine adjustment, then check the 64 reference squares.",
+    );
+    render();
+  };
+  sourceCanvas.addEventListener("pointerup", finishCornerDrag);
+  sourceCanvas.addEventListener("pointercancel", finishCornerDrag);
+  sourceCanvas.addEventListener("keydown", (event) => {
+    const numeric = Number(event.key);
+    if (numeric >= 1 && numeric <= 4) {
+      selectedCorner = numeric - 1;
+      render();
+      return;
+    }
+    const delta = {
+      ArrowLeft: { x: -1, y: 0 },
+      ArrowRight: { x: 1, y: 0 },
+      ArrowUp: { x: 0, y: -1 },
+      ArrowDown: { x: 0, y: 1 },
+    }[event.key];
+    const draft = activeDraft();
+    const item = queue[selected];
+    if (!delta || draft?.kind !== "board" || !item) return;
+    event.preventDefault();
+    const amount = event.shiftKey ? 10 : 1;
+    const point = draft.corners[selectedCorner]!;
+    updateCorner(selectedCorner, {
+      x: Math.max(0, Math.min(item.width - 1, point.x + delta.x * amount)),
+      y: Math.max(0, Math.min(item.height - 1, point.y + delta.y * amount)),
+    });
+    cornerPlacement = 4;
+    cornerPlacements.set(selected, cornerPlacement);
+    render();
+  });
+  byId("diagnostic-restart-corners").addEventListener("click", () => {
+    const draft = activeDraft();
+    const item = queue[selected];
+    if (!draft || !item) return;
+    draft.corners = imageEdgeCorners(item.width, item.height);
+    cornerPlacement = 0;
+    cornerPlacements.set(selected, cornerPlacement);
+    selectedCorner = 0;
+    invalidateReference();
+    syncCornerInputs(draft.corners);
+    status("Click the top-left inner-grid corner.");
+    render();
+  });
+  byId("diagnostic-use-image-edges").addEventListener("click", () => {
+    const draft = activeDraft();
+    const item = queue[selected];
+    if (!draft || !item) return;
+    draft.corners = imageEdgeCorners(item.width, item.height);
+    cornerPlacement = 4;
+    cornerPlacements.set(selected, cornerPlacement);
+    selectedCorner = 0;
+    invalidateReference();
+    syncCornerInputs(draft.corners);
+    status("Image edges selected as the inner grid. Drag a corner if needed.");
+    render();
+  });
+  byId<HTMLSelectElement>("diagnostic-reference-kind").addEventListener(
+    "change",
+    (event) => {
+      const draft = activeDraft();
+      if (!draft) return;
+      draft.kind = (event.target as HTMLSelectElement)
+        .value as Reference["kind"];
+      invalidateReference();
+      render();
+    },
+  );
+  byId<HTMLSelectElement>("diagnostic-orientation").addEventListener(
+    "change",
+    (event) => {
+      const draft = activeDraft();
+      if (!draft) return;
+      draft.orientation = (event.target as HTMLSelectElement)
+        .value as ReferenceDraft["orientation"];
+      invalidateReference();
+      render();
+    },
+  );
+  for (let index = 0; index < 64; index++)
+    byId<HTMLSelectElement>(`diagnostic-label-${index}`).addEventListener(
+      "change",
+      (event) => {
+        const draft = activeDraft();
+        if (!draft) return;
+        draft.labels[index] = (event.target as HTMLSelectElement)
+          .value as Label;
+        invalidateReference();
+        render();
+      },
+    );
+  for (let index = 0; index < 8; index++)
+    byId<HTMLInputElement>(`diagnostic-corner-${index}`).addEventListener(
+      "change",
+      (event) => {
+        const draft = activeDraft();
+        const item = queue[selected];
+        const value = Number((event.target as HTMLInputElement).value);
+        if (!draft || !item || !Number.isFinite(value)) return;
+        const corner = Math.floor(index / 2);
+        const point = { ...draft.corners[corner]! };
+        if (index % 2 === 0)
+          point.x = Math.max(0, Math.min(item.width - 1, value));
+        else point.y = Math.max(0, Math.min(item.height - 1, value));
+        updateCorner(corner, point);
+        cornerPlacement = 4;
+        cornerPlacements.set(selected, cornerPlacement);
+        render();
+      },
+    );
+
   byId<HTMLInputElement>("diagnostic-files").addEventListener(
     "change",
     (event) => {
@@ -418,9 +996,24 @@ export function mountDiagnostic(
             });
           }
           queue = prepared;
+          referenceDrafts = new Map(
+            prepared.map((item, index) => [
+              index,
+              {
+                kind: "board" as const,
+                corners: imageEdgeCorners(item.width, item.height),
+                orientation: "unknown" as const,
+                labels: Array<Label>(64).fill("empty"),
+              },
+            ]),
+          );
           releaseActiveBitmap();
           selected = 0;
+          cornerPlacements = new Map(prepared.map((_, index) => [index, 0]));
+          cornerPlacement = 0;
+          selectedCorner = 0;
           entries = [];
+          syncReferenceControls();
           status(
             "Queue prepared. Files stay only in this page memory; references must be saved before recognition.",
           );
@@ -436,11 +1029,17 @@ export function mountDiagnostic(
   byId("diagnostic-previous").addEventListener("click", () => {
     releaseActiveBitmap();
     selected = Math.max(0, selected - 1);
+    cornerPlacement = cornerPlacements.get(selected) ?? 0;
+    selectedCorner = 0;
+    syncReferenceControls();
     render();
   });
   byId("diagnostic-next").addEventListener("click", () => {
     releaseActiveBitmap();
     selected = Math.min(queue.length - 1, selected + 1);
+    cornerPlacement = cornerPlacements.get(selected) ?? 0;
+    selectedCorner = 0;
+    syncReferenceControls();
     render();
   });
   byId("diagnostic-save-reference").addEventListener("click", saveReference);
@@ -503,7 +1102,46 @@ export function mountDiagnostic(
         queue = items;
         releaseActiveBitmap();
         entries = imported.entries;
+        referenceDrafts = new Map(
+          items.map((item, index) => {
+            const restored = imported?.entries.find(
+              (entry) => entry.index === index,
+            )?.reference;
+            return [
+              index,
+              restored?.kind === "board"
+                ? {
+                    kind: restored.kind,
+                    corners: restored.corners.map((point) => ({
+                      ...point,
+                    })) as MutableCorners,
+                    orientation: restored.orientation,
+                    labels: [...restored.labels],
+                  }
+                : {
+                    kind: restored?.kind ?? ("board" as const),
+                    corners: imageEdgeCorners(item.width, item.height),
+                    orientation: "unknown" as const,
+                    labels: Array<Label>(64).fill("empty"),
+                  },
+            ];
+          }),
+        );
         selected = 0;
+        cornerPlacements = new Map(
+          items.map((_, index) => [
+            index,
+            imported?.entries.some(
+              (entry) =>
+                entry.index === index && entry.reference.kind === "board",
+            )
+              ? 4
+              : 0,
+          ]),
+        );
+        cornerPlacement = cornerPlacements.get(selected) ?? 0;
+        selectedCorner = 0;
+        syncReferenceControls();
         status(
           "Private evidence restored locally after matching-file verification.",
         );

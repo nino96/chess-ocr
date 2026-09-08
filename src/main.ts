@@ -75,6 +75,36 @@ function draw(): void {
     ctx.closePath();
     ctx.stroke();
   }
+  if (pointerPosition) {
+    const lineWidth = Math.max(2, canvas.width / 250);
+    ctx.save();
+    ctx.strokeStyle = "#096ccc";
+    ctx.lineWidth = lineWidth;
+    ctx.setLineDash([4 * lineWidth, 3 * lineWidth]);
+    ctx.beginPath();
+    ctx.moveTo(pointerPosition.x, 0);
+    ctx.lineTo(pointerPosition.x, canvas.height);
+    ctx.moveTo(0, pointerPosition.y);
+    ctx.lineTo(canvas.width, pointerPosition.y);
+    ctx.stroke();
+    if (anchor) {
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(9, 108, 204, 0.12)";
+      ctx.strokeRect(
+        anchor.x,
+        anchor.y,
+        pointerPosition.x - anchor.x,
+        pointerPosition.y - anchor.y,
+      );
+      ctx.fillRect(
+        anchor.x,
+        anchor.y,
+        pointerPosition.x - anchor.x,
+        pointerPosition.y - anchor.y,
+      );
+    }
+    ctx.restore();
+  }
 }
 function renderBoard(): void {
   const container = el("board");
@@ -222,6 +252,7 @@ el("select").addEventListener("click", () => {
   }
 });
 let anchor: { x: number; y: number } | null = null;
+let pointerPosition: { x: number; y: number } | null = null;
 function point(event: PointerEvent) {
   const r = canvas.getBoundingClientRect();
   return {
@@ -248,14 +279,25 @@ function point(event: PointerEvent) {
 canvas.addEventListener("pointerdown", (event) => {
   if (!bitmap) return;
   anchor = point(event);
+  pointerPosition = anchor;
   canvas.setPointerCapture(event.pointerId);
+  draw();
+});
+canvas.addEventListener("pointermove", (event) => {
+  if (!bitmap) return;
+  pointerPosition = point(event);
+  draw();
 });
 canvas.addEventListener("pointerup", (event) => {
   if (!anchor) return;
   const end = point(event),
     start = anchor;
   anchor = null;
-  if (end.x === start.x || end.y === start.y) return;
+  pointerPosition = null;
+  if (end.x === start.x || end.y === start.y) {
+    draw();
+    return;
+  }
   setSelection({
     x: Math.min(start.x, end.x),
     y: Math.min(start.y, end.y),
@@ -265,6 +307,13 @@ canvas.addEventListener("pointerup", (event) => {
 });
 canvas.addEventListener("pointercancel", () => {
   anchor = null;
+  pointerPosition = null;
+  draw();
+});
+canvas.addEventListener("pointerleave", () => {
+  if (anchor) return;
+  pointerPosition = null;
+  draw();
 });
 async function run(manual: boolean): Promise<void> {
   if (!bitmap) return;

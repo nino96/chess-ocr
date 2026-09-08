@@ -77,9 +77,12 @@ page selections.
 
 ### Manual four-corner mode
 
-The reviewer supplies the exact inner-grid corners. Both models receive the same
-rectified grid, so localization is removed from the comparison. This isolates
-classifier and domain-shift errors.
+The reviewer clicks the four inner-grid corners over the source image, then can
+drag each numbered handle or adjust it with the keyboard. The diagnostic draws
+the full 8-by-8 grid before the reference is saved; numeric coordinates are an
+optional fine-adjustment control. Both models receive the same rectified grid,
+so localization is removed from the comparison. This isolates classifier and
+domain-shift errors.
 
 Together the modes provide useful failure attribution:
 
@@ -106,6 +109,11 @@ latency.
 The diagnostic accepts at most 20 inputs and 100 MiB compressed, and keeps only
 the active image decoded — advancing releases it. There is no upload, telemetry,
 background network access, or browser persistence.
+
+After a paired run, the diagnostic shows the saved reference, both predicted
+piece grids, each returned grid over the source, and a board rectified from that
+returned geometry. Wrong squares are marked on the predicted grids. The private
+export remains the authoritative raw result; the visual views stay in memory.
 
 ## The two export formats
 

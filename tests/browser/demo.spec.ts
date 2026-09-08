@@ -1,9 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { LABELS } from "../../src/contract.ts";
-async function loadSynthetic(page: Page) {
+async function syntheticBytes(page: Page) {
   // Original procedural test raster, generated in memory; no downloaded art or files.
-  const bytes = await page.evaluate(() => {
+  return page.evaluate(() => {
     const c = document.createElement("canvas");
     c.width = 320;
     c.height = 320;
@@ -21,6 +21,9 @@ async function loadSynthetic(page: Page) {
       ),
     );
   });
+}
+async function loadSynthetic(page: Page) {
+  const bytes = await syntheticBytes(page);
   await page.locator("#file").setInputFiles({
     name: "original-synthetic.png",
     mimeType: "image/png",
@@ -128,6 +131,19 @@ test("blank page gives unsupported detection; pointer selection preserves source
   );
   await page.mouse.down();
   await page.mouse.move(
+    bounds!.x + bounds!.width * 0.7,
+    bounds!.y + bounds!.height * 0.75,
+  );
+  const hasBlueDragGuide = await c.evaluate((canvas: HTMLCanvasElement) => {
+    const pixels = canvas
+      .getContext("2d")!
+      .getImageData(0, 0, canvas.width, 20).data;
+    for (let index = 0; index < pixels.length; index += 4)
+      if (pixels[index + 2]! > pixels[index]! + 35) return true;
+    return false;
+  });
+  expect(hasBlueDragGuide).toBe(true);
+  await page.mouse.move(
     bounds!.x + bounds!.width * 0.9,
     bounds!.y + bounds!.height * 0.9,
   );
@@ -158,6 +174,53 @@ test("blank page gives unsupported detection; pointer selection preserves source
     "No supported board found",
   );
 });
+
+test("paired diagnostic uses visual four-corner selection and keeps numeric entry optional", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const bytes = await syntheticBytes(page);
+  await page.locator("#diagnostic-files").setInputFiles({
+    name: "diagnostic-synthetic.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(bytes),
+  });
+  await expect(page.locator("#diagnostic-current")).toContainText("320×320");
+  const canvas = page.locator("#diagnostic-source");
+  await expect(canvas).toBeVisible();
+  await expect(page.locator("#diagnostic-corner-details")).not.toHaveAttribute(
+    "open",
+    "",
+  );
+  await expect
+    .poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.width))
+    .toBe(320);
+  for (const [x, y] of [
+    [0.1, 0.1],
+    [0.9, 0.1],
+    [0.9, 0.9],
+    [0.1, 0.9],
+  ] satisfies Array<[number, number]>) {
+    const bounds = (await canvas.boundingBox())!;
+    await canvas.click({
+      position: { x: bounds.width * x, y: bounds.height * y },
+    });
+  }
+  await expect(page.locator("#diagnostic-corner-help")).toContainText(
+    "Grid ready",
+  );
+  await expect(page.locator("#diagnostic-corner-0")).toHaveValue("32");
+  await expect(page.locator("#diagnostic-corner-4")).toHaveValue("288");
+  await canvas.focus();
+  await page.keyboard.press("2");
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect(page.locator("#diagnostic-corner-2")).toHaveValue("298");
+  await page.locator("#diagnostic-label-0").selectOption("K");
+  await page.getByRole("button", { name: "Save reference" }).click();
+  await expect(page.locator("#diagnostic-status")).toContainText(
+    "Reference saved locally",
+  );
+});
 test("touch activation and touch-sized editor work in a narrow viewport", async ({
   browser,
 }) => {
@@ -178,6 +241,33 @@ test("touch activation and touch-sized editor work in a narrow viewport", async 
   await first.selectOption("N");
   await expect(first).toHaveValue("N");
   expect((await first.boundingBox())!.width).toBeGreaterThanOrEqual(44);
+  const bytes = await syntheticBytes(page);
+  await page.locator("#diagnostic-files").setInputFiles({
+    name: "touch-diagnostic.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(bytes),
+  });
+  const diagnostic = page.locator("#diagnostic-source");
+  await expect
+    .poll(() =>
+      diagnostic.evaluate((element: HTMLCanvasElement) => element.width),
+    )
+    .toBe(320);
+  await diagnostic.scrollIntoViewIfNeeded();
+  const diagnosticBounds = (await diagnostic.boundingBox())!;
+  for (const [x, y] of [
+    [0.1, 0.1],
+    [0.9, 0.1],
+    [0.9, 0.9],
+    [0.1, 0.9],
+  ] satisfies Array<[number, number]>)
+    await page.touchscreen.tap(
+      diagnosticBounds.x + diagnosticBounds.width * x,
+      diagnosticBounds.y + diagnosticBounds.height * y,
+    );
+  await expect(page.locator("#diagnostic-corner-help")).toContainText(
+    "Grid ready",
+  );
   await context.close();
 });
 
