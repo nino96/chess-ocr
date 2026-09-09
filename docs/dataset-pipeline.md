@@ -310,11 +310,15 @@ one page-level target file covering all annotated complete boards. Negative page
 have empty target files; partial/unsupported pages are represented in records but
 have no detector target/image pair.
 
-The 96-pixel tensor recipe is **proposed #3 preprocessing**, not the unchanged
-224-pixel native runtime probe and not yet a promoted browser preprocessing path.
-Actual native/browser parity must be checked in #3. Loose-selection augmentation,
-production preprocessing integration, calibrated degradation, approved synthesis,
-a qualification freeze/export protocol and the real training tranche remain open.
+Classifier exports use the same deterministic bilinear 768-pixel rectification,
+RGB image-row-major tile extraction and ImageNet normalization contract as the
+browser candidate. The export recipe binds the Python implementation hash. Before
+another classifier training freeze, run the private exact-tile audit in the
+[training runbook](training-runbook.md#exact-tile-classifier-audit) against an
+already human-confirmed manual grid. The 96-pixel recipe remains separate from the
+unchanged 224-pixel native runtime probe. Loose-selection augmentation, calibrated
+degradation, qualification freeze/export and the real training tranche have their
+own gates.
 
 Coverage reports counts by split, declared connected lineage components, artwork
 tags, page kind, class and checkerboard parity, plus missing class/parity cells.

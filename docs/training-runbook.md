@@ -145,6 +145,33 @@ reproducible from this repository. The ledger deduplicates inherited attempt
 histories across retained runs, because summing each run's charged seconds would
 count the same work twice.
 
+### Exact-tile classifier audit
+
+Before proposing another classifier run, compare one already human-confirmed
+manual-grid entry with the retained classifier checkpoint and export:
+
+```sh
+pnpm run classifier:audit -- \
+  --session work/evaluation/private-session.json \
+  --image work/evaluation/reselected-input.png \
+  --entry 0 \
+  --run work/training/<completed-detector-only-run> \
+  --output work/evidence/<new-classifier-audit-directory>
+```
+
+The session and reselected image must match by hash and must stay below ignored
+payload roots. The selected entry must be a human-confirmed `manual-grid` board.
+The completed detector-only run supplies the exact retained classifier checkpoint,
+exported ONNX, frozen container, native inputs and dependency overlay. The command
+uses Chromium only as the reference ONNX Runtime Web/WASM path; cross-browser and
+device qualification belongs to the consuming reader application.
+
+The command writes mode-`0600` decoded pixels, rectified RGB, tensors, logits and
+a hash-bound report below the new ignored output directory. Its console output
+contains only pass/fail, the first divergent stage and a generic report location.
+Do not attach or publish that directory: it contains private derived evidence.
+No network, GPU allocation, training, dataset mutation or model mutation occurs.
+
 ## Proposal threshold versus acceptance threshold
 
 A synthetic calibration can conclude that **no** nonzero-recall threshold meets

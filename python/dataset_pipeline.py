@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import array
 import base64
 import contextlib
 import datetime as dt
@@ -26,6 +25,11 @@ import time
 import urllib.parse
 import http.client
 import uuid
+
+try:
+    from python import classifier_preprocessing
+except ImportError:  # Direct script execution adds python/ rather than the repository root.
+    import classifier_preprocessing
 
 REPO = Path(__file__).resolve().parents[1]
 ROOT = REPO / "work" / "dataset"
@@ -1009,6 +1013,16 @@ def rectify(image, corners, size=768):
     return image.transform((size, size), Image.Transform.PERSPECTIVE, coeff, Image.Resampling.BICUBIC)
 
 
+def rectify_classifier_grid(image, corners):
+    """Use the production browser's exact RGB768 rectification convention."""
+    Image = pillow()
+    rgba = image.convert("RGBA")
+    data = classifier_preprocessing.rectify_rgba(
+        rgba.tobytes(), rgba.width, rgba.height, corners)
+    return Image.frombytes("RGB", (classifier_preprocessing.GRID_SIZE,
+                                    classifier_preprocessing.GRID_SIZE), data)
+
+
 def export_dataset(clear_stop=True):
     try:
         result = build_export(clear_stop=clear_stop)
@@ -1041,7 +1055,9 @@ def build_export(clear_stop=True):
         recipe = {"schema": SCHEMA, "pipeline_sha256": digest(__file__), "pillow": "11.1.0", "grid": 768,
                   "tile": 96, "tensor": "64x3x96x96 float32 little-endian ImageNet normalized",
                   "order": "image-relative row-major", "classes": list(LABELS),
-                  "production_parity": "pending issue #3; candidate preprocessing only",
+                  "classifier_preprocessing_sha256": digest(Path(__file__).with_name("classifier_preprocessing.py")),
+                  "rectification": "deterministic bilinear, output coordinates 0..767",
+                  "production_parity": "requires the private exact-tile audit before training",
                   "same_split_duplicate_audit": duplicate_audit,
                   "sources": {r["source"]: identity(json.loads(r["body"])) for r in selected},
                   "samples": [[r["id"], r["sha"], r["revision"], identity(json.loads(r["annotation"]))] for r in selected]}
@@ -1072,17 +1088,9 @@ def build_export(clear_stop=True):
             for number, board in enumerate(ann["boards"]):
                 require(time.monotonic() < deadline and not local_path("stop").exists(), "export interrupted; partial output retained")
                 name = f"{sample['id']}-{number}"
-                grid = rectify(image, board["corners"])
+                grid = rectify_classifier_grid(image, board["corners"])
                 grid.save(staging / f"{name}.png")
-                tensor = array.array("f")
-                for index in range(64):
-                    x, y = index % 8 * 96, index // 8 * 96
-                    tile = grid.crop((x, y, x+96, y+96))
-                    raw = tile.tobytes()
-                    for channel, (mean, std) in enumerate(zip((.485, .456, .406), (.229, .224, .225))):
-                        tensor.extend((raw[i] / 255 - mean) / std for i in range(channel, len(raw), 3))
-                if sys.byteorder != "little":
-                    tensor.byteswap()
+                tensor = classifier_preprocessing.classifier_tensor(grid.tobytes())
                 with (staging / f"{name}.f32").open("wb") as stream:
                     tensor.tofile(stream)
                 xs, ys = zip(*board["corners"])

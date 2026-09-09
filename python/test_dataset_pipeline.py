@@ -444,7 +444,7 @@ class PipelineTests(unittest.TestCase):
     def test_failed_export_resumes_without_promoting_partial_files(self):
         sample = self.sample()
         self.accept(sample)
-        with patch.object(p, "rectify", side_effect=RuntimeError("simulated process failure")):
+        with patch.object(p, "rectify_classifier_grid", side_effect=RuntimeError("simulated process failure")):
             with self.assertRaises(RuntimeError):
                 p.export_dataset()
         self.assertEqual(len(list(p.local_path("exports").glob(".partial-*"))), 1)

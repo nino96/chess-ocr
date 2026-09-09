@@ -24,7 +24,7 @@ class TrainingTest(unittest.TestCase):
             for column in range(8):
                 pixels[row * 96:(row + 1) * 96, column * 96:(column + 1) * 96] = (row, column, row * 8 + column)
         image = Image.fromarray(pixels, "RGB")
-        result = np.asarray(training.rectified_grid(image, [[0, 0], [768, 0], [768, 768], [0, 768]]))
+        result = np.asarray(training.rectified_grid(image, [[0, 0], [767, 0], [767, 767], [0, 767]]))
         self.assertEqual(result[48, 48].tolist(), [0, 0, 0])
         self.assertEqual(result[7 * 96 + 48, 7 * 96 + 48].tolist(), [7, 7, 63])
 

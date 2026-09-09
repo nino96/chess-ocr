@@ -21,6 +21,7 @@ REPO = Path(__file__).resolve().parents[1]
 DEFAULT_RECIPE = REPO / "recipes" / "synthetic-bootstrap-v1.json"
 DEFAULT_RUN = REPO / "work" / "training" / "synthetic-bootstrap-v1"
 HASHED_CODE = (
+    "python/classifier_preprocessing.py",
     "python/training.py",
     "python/training_job.py",
     "scripts/training.mjs",

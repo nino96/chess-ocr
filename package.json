@@ -25,6 +25,7 @@
     "candidate": "node scripts/candidate.mjs",
     "candidate:verify": "node --experimental-strip-types scripts/candidate-verify.mjs",
     "candidate:verify:browser": "node scripts/candidate-browser-verify.mjs",
+    "classifier:audit": "node --experimental-strip-types scripts/classifier-audit.mjs",
     "test:dataset-review": "node --test tests/dataset-review.browser.mjs tests/dataset-app.browser.mjs"
   },
   "dependencies": {
