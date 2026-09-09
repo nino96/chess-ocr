@@ -195,6 +195,9 @@ test("paired diagnostic uses visual four-corner selection and keeps numeric entr
   await expect
     .poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.width))
     .toBe(320);
+  const sourceBounds = (await canvas.boundingBox())!;
+  const labelBounds = (await page.locator("#diagnostic-labels").boundingBox())!;
+  expect(labelBounds.x).toBeGreaterThan(sourceBounds.x + sourceBounds.width);
   for (const [x, y] of [
     [0.1, 0.1],
     [0.9, 0.1],
@@ -215,7 +218,16 @@ test("paired diagnostic uses visual four-corner selection and keeps numeric entr
   await page.keyboard.press("2");
   await page.keyboard.press("Shift+ArrowRight");
   await expect(page.locator("#diagnostic-corner-2")).toHaveValue("298");
-  await page.locator("#diagnostic-label-0").selectOption("K");
+  const firstLabel = page.locator("#diagnostic-label-0");
+  await firstLabel.focus();
+  await page.keyboard.press("b");
+  await expect(firstLabel).toHaveValue("b");
+  await page.keyboard.press("Shift+B");
+  await expect(firstLabel).toHaveValue("B");
+  await page.keyboard.press(".");
+  await expect(firstLabel).toHaveValue("empty");
+  await page.keyboard.press("K");
+  await expect(firstLabel).toHaveValue("K");
   await page.getByRole("button", { name: "Save reference" }).click();
   await expect(page.locator("#diagnostic-status")).toContainText(
     "Reference saved locally",

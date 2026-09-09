@@ -284,7 +284,16 @@ footer {
   gap: 8px;
   margin: 10px 0;
 }
+.diagnostic-reference-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.85fr);
+  gap: 20px;
+  align-items: start;
+}
 .diagnostic-image-panel {
+  margin: 16px 0;
+}
+.diagnostic-reference-editor {
   margin: 16px 0;
 }
 .diagnostic-image-panel > p {
@@ -327,6 +336,7 @@ footer {
 .diagnostic-labels {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
+  width: 100%;
   max-width: 520px;
   border: 3px solid #284939;
 }
@@ -448,6 +458,9 @@ footer {
     flex-wrap: wrap;
   }
   .diagnostic-result-cards {
+    grid-template-columns: 1fr;
+  }
+  .diagnostic-reference-workspace {
     grid-template-columns: 1fr;
   }
   #diagnostic-source {

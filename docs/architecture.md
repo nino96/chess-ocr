@@ -84,6 +84,10 @@ optional fine-adjustment control. Both models receive the same rectified grid,
 so localization is removed from the comparison. This isolates classifier and
 domain-shift errors.
 
+On wider screens the source grid and reference piece editor remain side by side.
+Each square accepts the exact `.PNBRQKpnbrqk` character from the keyboard;
+Alt+arrow keys move between squares.
+
 Together the modes provide useful failure attribution:
 
 | Automatic result  | Manual-grid result | Likely failure area                                       |

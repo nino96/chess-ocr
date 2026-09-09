@@ -7,6 +7,7 @@ import {
 } from "./browser.ts";
 import type { RecognitionClient } from "./client.ts";
 import {
+  LABELS,
   VERSION,
   type Board,
   type Label,
@@ -943,18 +944,43 @@ export function mountDiagnostic(
       render();
     },
   );
-  for (let index = 0; index < 64; index++)
-    byId<HTMLSelectElement>(`diagnostic-label-${index}`).addEventListener(
-      "change",
-      (event) => {
-        const draft = activeDraft();
-        if (!draft) return;
-        draft.labels[index] = (event.target as HTMLSelectElement)
-          .value as Label;
-        invalidateReference();
-        render();
-      },
-    );
+  const setReferenceLabel = (index: number, label: Label): void => {
+    const draft = activeDraft();
+    if (!draft) return;
+    draft.labels[index] = label;
+    invalidateReference();
+    render();
+  };
+  for (let index = 0; index < 64; index++) {
+    const select = byId<HTMLSelectElement>(`diagnostic-label-${index}`);
+    select.addEventListener("change", (event) => {
+      setReferenceLabel(
+        index,
+        (event.target as HTMLSelectElement).value as Label,
+      );
+    });
+    select.addEventListener("keydown", (event) => {
+      if (event.altKey) {
+        const delta = {
+          ArrowLeft: -1,
+          ArrowRight: 1,
+          ArrowUp: -8,
+          ArrowDown: 8,
+        }[event.key];
+        if (delta === undefined) return;
+        event.preventDefault();
+        labelContainer
+          .querySelectorAll("select")
+          [Math.max(0, Math.min(63, index + delta))]?.focus();
+        return;
+      }
+      const label = event.key === "." ? "empty" : event.key;
+      if (!LABELS.includes(label as Label)) return;
+      event.preventDefault();
+      select.value = label;
+      setReferenceLabel(index, label as Label);
+    });
+  }
   for (let index = 0; index < 8; index++)
     byId<HTMLInputElement>(`diagnostic-corner-${index}`).addEventListener(
       "change",
