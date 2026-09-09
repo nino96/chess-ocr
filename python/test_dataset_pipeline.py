@@ -35,8 +35,8 @@ class PipelineTests(unittest.TestCase):
         image.save(path)
         return path
 
-    def source(self, sid="test", split="train", group="design"):
-        original = self.image(f"originals/{sid}.png")
+    def source(self, sid="test", split="train", group="design", color="white"):
+        original = self.image(f"originals/{sid}.png", color)
         evidence = p.local_path(f"rights/{sid}.evidence")
         p.atomic(evidence, b"original test evidence")
         body = {"schema": p.SCHEMA, "id": sid, "sha256": p.digest(original), "split": split,
@@ -53,9 +53,31 @@ class PipelineTests(unittest.TestCase):
             db.execute("INSERT INTO sources VALUES (?,?,?)", (sid, p.canonical(body), p.identity(body)))
         return body
 
-    def sample(self, sid="test", split="train", group="design"):
-        self.source(sid, split, group)
-        path = self.image(f"pages/{sid}-1.png")
+    def pdf_source(self, sid="book", pages=None, total_pages=80):
+        pages = pages or list(range(1, 13))
+        original = p.local_path(f"originals/{sid}.pdf")
+        p.atomic(original, b"%PDF- original synthetic test bytes")
+        evidence = p.local_path(f"rights/{sid}.evidence")
+        p.atomic(evidence, b"original test evidence")
+        body = {"schema": p.SCHEMA, "id": sid, "sha256": p.digest(original), "split": "train",
+                "format": "pdf", "max_bytes": 100000, "pages": pages, "total_pages": total_pages,
+                "revision": "1", "attribution": "Original procedural test", "edition": "1",
+                "selection_reason": "uniform test", "pretrained_overlap": "unknown", "private": False,
+                "real": True, "lineage_reviewed": True,
+                "lineage": {k: [sid] for k in ("document", "edition", "artwork", "parent")},
+                "conditions": ["procedural-test"], "url": f"https://example.invalid/{sid}.pdf",
+                "rights": {"reviewer": "test", "evidence_url": "https://example.invalid/rights",
+                           "license": "original-test", "exclusions": "none", "review_date": "2026-09-06",
+                           "evidence_sha256": p.digest(evidence), "acquisition": "approved",
+                           "training": "approved", "evaluation": "approved", "redistribution": "denied",
+                           "model_publication": "unknown"}}
+        with p.connect() as db:
+            db.execute("INSERT INTO sources VALUES (?,?,?)", (sid, p.canonical(body), p.identity(body)))
+        return body
+
+    def sample(self, sid="test", split="train", group="design", color="white"):
+        self.source(sid, split, group, color)
+        path = self.image(f"pages/{sid}-1.png", color)
         if sid == "reserved":
             from PIL import ImageDraw
             image = p.pillow().new("RGB", (160,160), "white")
@@ -70,6 +92,8 @@ class PipelineTests(unittest.TestCase):
                 body = json.loads(db.execute("SELECT body FROM sources WHERE id=?", (sid,)).fetchone()[0])
                 body["sha256"] = p.digest(original)
                 db.execute("UPDATE sources SET body=?,sha=? WHERE id=?", (p.canonical(body),p.identity(body),sid))
+                db.execute("UPDATE source_history SET body=?,sha=? WHERE source=? AND revision=0",
+                           (p.canonical(body), p.identity(body), sid))
         with p.connect() as db:
             db.execute("INSERT INTO samples(id,source,page,image,sha,width,height,phash) VALUES (?,?,?,?,?,?,?,?)",
                        (sid+"-1", sid, 1, f"pages/{sid}-1.png", p.digest(path), 160, 160, "0"*16))
@@ -101,6 +125,67 @@ class PipelineTests(unittest.TestCase):
         with p.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reviews").fetchone()[0], 1)
             self.assertEqual(db.execute("SELECT accepted FROM samples").fetchone()[0], 1)
+
+    def test_source_extension_is_append_only_historic_and_idempotent(self):
+        self.pdf_source()
+        pages = "13-24"
+        result = p.extend_source("book", pages)
+        self.assertEqual((result["added"], result["selected_pages"], result["history_revision"]),
+                         (12, 24, 1))
+        self.assertEqual(p.extend_source("book", pages)["state"], "already-selected")
+        with p.connect() as db:
+            body = json.loads(db.execute("SELECT body FROM sources WHERE id='book'").fetchone()[0])
+            history = db.execute("SELECT revision,action FROM source_history WHERE source='book' ORDER BY revision").fetchall()
+            jobs = db.execute("SELECT page,state FROM jobs WHERE source='book' ORDER BY page").fetchall()
+            self.assertEqual(body["pages"], list(range(1, 25)))
+            self.assertEqual([tuple(row) for row in history], [(0, "admitted"), (1, "extend:" + ",".join(map(str, range(13,25))))])
+            self.assertEqual([tuple(row) for row in jobs], [(page, "pending") for page in range(13,25)])
+
+    def test_source_extension_rejects_duplicates_bounds_and_mutated_history(self):
+        self.pdf_source()
+        for value, message in (("13-23", "exactly 12"), ("13,13,14-24", "duplicate"),
+                               ("70-81", "page count")):
+            with self.subTest(value=value), self.assertRaisesRegex(p.Invalid, message):
+                p.extend_source("book", value)
+        p.extend_source("book", "13-24")
+        p.extend_source("book", "25-36")
+        p.extend_source("book", "37-48")
+        with self.assertRaisesRegex(p.Invalid, "48"):
+            p.extend_source("book", "49-60")
+        with p.connect() as db:
+            db.execute("UPDATE source_history SET body='{}' WHERE source='book' AND revision=1")
+            self.assertIn("source-history-integrity", p.validate(db)["errors"])
+
+    def test_qualification_seal_binds_membership_truth_and_hides_edits(self):
+        samples = [self.sample(f"qual-{index}", "qualification", f"qual-art-{index}", color)
+                   for index, color in enumerate(("#f7f7f7", "#eeeeee", "#e5e5e5"), 1)]
+        board = {"corners": [[0,0],[160,0],[160,160],[0,160]],
+                 "labels": list("PNBRQKpnbrqk" + "."*52), "orientation": "unknown"}
+        with p.connect() as db:
+            for index, sample in enumerate(samples):
+                annotation = p.canonical({"kind": "boards", "complete_page": True,
+                                          "boards": [board] * (34 if index == 0 else 33)})
+                db.execute("UPDATE samples SET revision=1,annotation=?,accepted=1 WHERE id=?",
+                           (annotation, sample))
+                db.execute("""INSERT INTO reviews(sample,revision,content,reviewer,human,seconds,decision,at)
+                            VALUES (?,?,?,?,?,?,?,?)""",
+                           (sample,1,annotation,"human",1,30,"correction",1))
+            db.execute("INSERT INTO jobs(source,stage,page) VALUES (?,'render',1)", ("qual-1",))
+        with self.assertRaisesRegex(p.Invalid, "acquisition must be complete"):
+            p.seal_qualification()
+        with p.connect() as db:
+            db.execute("UPDATE jobs SET state='done'")
+        result = p.seal_qualification()
+        self.assertEqual((result["boards"], result["components"]), (100,3))
+        with self.assertRaisesRegex(p.Invalid, "sealed"):
+            p.review_payload(samples[0])
+        with p.connect() as db:
+            self.assertTrue(p.validate(db)["qualification_sealed"])
+            db.execute("UPDATE reviews SET reviewer='changed' WHERE sample=?", (samples[0],))
+            self.assertIn("qualification-seal-integrity", p.validate(db)["errors"])
+            db.execute("UPDATE reviews SET reviewer='human' WHERE sample=?", (samples[0],))
+            db.execute("UPDATE samples SET revision=2 WHERE id=?", (samples[0],))
+            self.assertIn("qualification-seal-integrity", p.validate(db)["errors"])
 
     def test_stale_corrupt_and_nonhuman_overwrite_are_rejected(self):
         sample = self.sample()
@@ -368,6 +453,34 @@ class PipelineTests(unittest.TestCase):
         with p.connect() as db:
             self.assertEqual(db.execute("SELECT attempts FROM jobs").fetchone()[0], 2)
 
+    def test_human_review_can_commit_while_acquisition_child_is_active(self):
+        sample = self.sample()
+        with p.connect() as db:
+            db.execute("INSERT INTO jobs(source,stage,page) VALUES ('test','render',1)")
+
+        class Process:
+            pid = 999999999
+            returncode = 0
+            reviewed = False
+
+            def poll(process):
+                if not process.reviewed:
+                    process.reviewed = True
+                    p.submit_review(self.review_data(sample))
+                return process.returncode
+
+        def launch(command, **_kwargs):
+            with patch.object(p.resource, "setrlimit"):
+                p.child(int(command[-1]))
+            return Process()
+
+        with patch.object(p.subprocess, "Popen", side_effect=launch):
+            result = p.run()
+        self.assertEqual(result["jobs"], {"done": 1})
+        with p.connect() as db:
+            self.assertEqual(db.execute("SELECT accepted FROM samples WHERE id=?",
+                                        (sample,)).fetchone()[0], 1)
+
     def test_timeout_quarantine_and_explicit_repair_preserve_attempts(self):
         self.source()
         with p.connect() as db:
@@ -459,6 +572,12 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(p.Invalid, "another writer"):
                 with p.writer():
                     pass
+
+    def test_source_exclusion_refuses_an_active_acquisition_worker(self):
+        self.source()
+        with p._worker_lock():
+            with self.assertRaisesRegex(p.Invalid, "worker is active"):
+                p.exclude_source("test", "unsuitable")
 
     def test_real_pdf_worker_process_and_resume(self):
         image = p.pillow().new("RGB", (160,160), "white")

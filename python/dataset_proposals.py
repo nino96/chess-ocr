@@ -30,15 +30,18 @@ MAX_PAGES = 100
 ATTEMPT_SECONDS = 45
 RUN_SECONDS = 2 * 60 * 60
 STOP = "proposal-stop"
+REREAD_SCHEMA = "chess-ocr-board-reread/1"
+REREAD_SECONDS = 45
 SUPPORTED_RUNTIMES = {
     "fenshot-localizer-v1": "localization",
     "fenshot-labeler-v1": "labels",
+    "fenshot-rectified-labeler-v1": "labels",
     "classical-grid-v1": "localization",
     "chess-ocr-onnx-localizer-v1": "localization",
     "chess-ocr-onnx-labeler-v1": "labels",
 }
 RUNNABLE_RUNTIMES = {
-    "fenshot-localizer-v1", "fenshot-labeler-v1", "classical-grid-v1",
+    "fenshot-localizer-v1", "fenshot-labeler-v1", "fenshot-rectified-labeler-v1", "classical-grid-v1",
     "chess-ocr-onnx-localizer-v1", "chess-ocr-onnx-labeler-v1",
 }
 # The first classical manifest accidentally hashed the whole shared provider
@@ -74,6 +77,9 @@ def _provider_tables(db):
           proposal_run TEXT, created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS review_metrics(
           review_id INTEGER PRIMARY KEY, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS board_rereads(
+          id TEXT PRIMARY KEY, state TEXT NOT NULL, body TEXT NOT NULL,
+          result TEXT, created REAL NOT NULL, heartbeat REAL NOT NULL, error TEXT);
     """)
 
 
@@ -109,6 +115,10 @@ def _builtin_manifests():
         {"schema": SCHEMA, "id": "fenshot-labeler-v1", "capability": "labels",
          "runtime": "fenshot-labeler-v1", "model": identity,
          "preprocessing": "fenshot-0.1.4/rgba-gray-bilinear-256/1",
+         "artifact": artifact, "limits": limits},
+        {"schema": SCHEMA, "id": "fenshot-rectified-labeler-v1", "capability": "labels",
+         "runtime": "fenshot-rectified-labeler-v1", "model": identity,
+         "preprocessing": "four-corner-rgba768-bilinear/fenshot-gray32-v1",
          "artifact": artifact, "limits": limits},
         {"schema": SCHEMA, "id": "classical-grid-v1", "capability": "localization",
          "runtime": "classical-grid-v1",
@@ -287,7 +297,249 @@ def providers():
                            "model": body["model"], "preprocessing": body["preprocessing"],
                            "limits": body["limits"]})
     return {"schema": "chess-ocr-provider-registry/1", "providers": values,
-            "defaults": {"localization": "fenshot-localizer-v1", "labels": "fenshot-labeler-v1"}}
+            "defaults": {"localization": "fenshot-localizer-v1", "labels": "fenshot-labeler-v1",
+                         "board_reread": "fenshot-rectified-labeler-v1"}}
+
+
+def _reread_input(db, data):
+    expected = {"sample_id", "revision", "image_sha256", "draft_version",
+                "board_index", "corners", "labeler"}
+    p.require(isinstance(data, dict) and set(data) == expected, "invalid board re-read request")
+    p.token(data["sample_id"])
+    p.token(data["labeler"])
+    p.require(type(data["revision"]) is int and data["revision"] >= 0
+              and type(data["draft_version"]) is int and data["draft_version"] > 0
+              and type(data["board_index"]) is int and 0 <= data["board_index"] < 64,
+              "invalid board re-read identity")
+    p.sha256(data["image_sha256"])
+    sample = db.execute("""SELECT s.*,json_extract(o.body,'$.split') AS split
+                         FROM samples s JOIN sources o ON o.id=s.source
+                         WHERE s.id=? AND s.source NOT IN (SELECT source FROM exclusions)""",
+                        (data["sample_id"],)).fetchone()
+    p.require(sample is not None and sample["split"] in {"train", "dev"},
+              "board re-read is limited to TRAIN and DEV")
+    p.require(sample["revision"] == data["revision"] and sample["sha"] == data["image_sha256"],
+              "page changed before board re-read")
+    draft = db.execute("SELECT * FROM web_drafts WHERE sample=?", (sample["id"],)).fetchone()
+    p.require(draft is not None and draft["revision"] == sample["revision"]
+              and draft["image_sha"] == sample["sha"] and draft["version"] == data["draft_version"],
+              "draft changed before board re-read")
+    draft_body = json.loads(draft["body"])
+    boards = draft_body.get("boards")
+    p.require(isinstance(boards, list) and data["board_index"] < len(boards), "draft board unavailable")
+    draft_board = boards[data["board_index"]]
+    p.annotation_validate({"kind": "boards", "complete_page": True, "boards": [draft_board]},
+                          sample["width"], sample["height"])
+    p.require(p.canonical(draft_board["corners"]) == p.canonical(data["corners"]),
+              "draft corners changed before board re-read")
+    provider = db.execute("SELECT * FROM provider_manifests WHERE id=? AND capability='labels'",
+                          (data["labeler"],)).fetchone()
+    p.require(provider is not None and provider["runtime"] in {
+              "fenshot-rectified-labeler-v1", "chess-ocr-onnx-labeler-v1"},
+              "select a registered exact-rectification labeler")
+    manifest = validate_manifest(json.loads(provider["body"]), allow_builtin=True)
+    return sample, draft, draft_board, manifest, provider["sha"]
+
+
+def create_board_reread(data):
+    with p.writer(), p.connect() as db:
+        _provider_tables(db)
+        sample, draft, board, manifest, manifest_sha = _reread_input(db, data)
+        accounting = p.cumulative_accounting(db)
+        p.require(accounting["reserved_compute_seconds"] + REREAD_SECONDS <= p.meta(db, "budget")["cpu_seconds"],
+                  "board re-read compute reservation exceeds dataset budget")
+        body = {"schema": REREAD_SCHEMA, "sample_id": sample["id"],
+                "revision": sample["revision"], "image_sha256": sample["sha"],
+                "draft_version": draft["version"], "board_index": data["board_index"],
+                "corners": board["corners"], "labeler": {"id": manifest["id"],
+                "sha256": manifest_sha, "manifest": manifest}, "nonce": uuid.uuid4().hex}
+        request_id = p.identity(body)
+        now = time.time()
+        db.execute("INSERT INTO board_rereads VALUES (?,?,?,?,?,?,NULL)",
+                   (request_id, "starting", p.canonical(body), None, now, now))
+        db.execute("INSERT INTO reservations(job,bytes,seconds,at) VALUES (0,0,?,?)",
+                   (REREAD_SECONDS, now))
+        p.local_path(f"proposals/reread-stop/{request_id}").unlink(missing_ok=True)
+    return _launch_board_reread(request_id)
+
+
+def _launch_board_reread(request_id):
+    process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "reread", request_id],
+                               cwd=p.REPO, start_new_session=True, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(100):
+        with p.connect() as db:
+            state = db.execute("SELECT state FROM board_rereads WHERE id=?", (request_id,)).fetchone()[0]
+        if state != "starting":
+            return {"schema": REREAD_SCHEMA, "request_id": request_id, "state": state,
+                    "pid": process.pid}
+        if process.poll() is not None:
+            raise p.Invalid("board re-read worker startup failed")
+        time.sleep(.02)
+    raise p.Invalid("board re-read startup not confirmed")
+
+
+def validate_reread_result(value, body, width, height):
+    expected = {"schema", "requestId", "sampleId", "revision", "imageSha256",
+                "draftVersion", "boardIndex", "corners", "labels", "probabilities",
+                "uncertain", "provider", "warnings", "timings"}
+    p.require(isinstance(value, dict) and set(value) == expected and value["schema"] == REREAD_SCHEMA
+              and value["requestId"] == p.identity(body) and value["sampleId"] == body["sample_id"]
+              and value["revision"] == body["revision"] and value["imageSha256"] == body["image_sha256"]
+              and value["draftVersion"] == body["draft_version"]
+              and value["boardIndex"] == body["board_index"]
+              and p.canonical(value["corners"]) == p.canonical(body["corners"]),
+              "invalid board re-read result identity")
+    p.annotation_validate({"kind": "boards", "complete_page": True,
+                           "boards": [{"corners": value["corners"], "labels": value["labels"],
+                                       "orientation": "unknown"}]}, width, height)
+    p.require(value["provider"] == body["labeler"]["manifest"], "board re-read provider changed")
+    p.require(isinstance(value["uncertain"], list) and len(value["uncertain"]) == 64
+              and all(type(item) is bool for item in value["uncertain"])
+              and isinstance(value["probabilities"], list) and len(value["probabilities"]) == 64
+              and all(probability is None or (isinstance(probability, list) and len(probability) == 13
+                      and all(type(item) in (int, float) and 0 <= item <= 1 for item in probability)
+                      and abs(sum(probability) - 1) <= 1e-4)
+                      for probability in value["probabilities"])
+              and all(probability is not None or value["uncertain"][index]
+                      for index, probability in enumerate(value["probabilities"]))
+              and isinstance(value["warnings"], list) and len(value["warnings"]) <= 30
+              and all(isinstance(item, str) and len(item) <= 300 for item in value["warnings"])
+              and isinstance(value["timings"], dict) and set(value["timings"]) == {"totalMs"}
+              and type(value["timings"]["totalMs"]) in (int, float)
+              and 0 <= value["timings"]["totalMs"] <= 120000,
+              "invalid board re-read evidence")
+    return value
+
+
+def run_board_reread(request_id):
+    p.sha256(request_id)
+    stop_path = p.local_path(f"proposals/reread-stop/{request_id}")
+    with p.writer(), p.connect() as db:
+        row = db.execute("SELECT * FROM board_rereads WHERE id=?", (request_id,)).fetchone()
+        p.require(row is not None and row["state"] == "starting", "board re-read is not starting")
+        db.execute("UPDATE board_rereads SET state='running',heartbeat=? WHERE id=?",
+                   (time.time(), request_id))
+        body = json.loads(row["body"])
+        sample = db.execute("SELECT * FROM samples WHERE id=?", (body["sample_id"],)).fetchone()
+    state, result, error = "failed", None, None
+    try:
+        p.require(sample is not None and sample["revision"] == body["revision"]
+                  and sample["sha"] == body["image_sha256"], "page changed during board re-read")
+        page = p.local_path(sample["image"])
+        p.require(p.digest(page) == sample["sha"], "board re-read source image changed")
+        staging = p.local_path(f"proposals/staging/rereads/{request_id}")
+        staging.mkdir(parents=True, exist_ok=True)
+        for path in staging.iterdir():
+            p.require(path.is_file() and not path.is_symlink(), "unsafe board re-read staging")
+            path.unlink()
+        image = p.load_image(page).convert("RGBA")
+        raw = staging / "image.rgba"
+        p.atomic(raw, image.tobytes())
+        request = {"schema": "chess-ocr-board-reread-request/1", "mode": "board-reread",
+                   "request_id": request_id, "sample_id": body["sample_id"],
+                   "revision": body["revision"], "image_sha256": body["image_sha256"],
+                   "draft_version": body["draft_version"], "board_index": body["board_index"],
+                   "corners": [{"x": point[0], "y": point[1]} for point in body["corners"]],
+                   "width": image.width, "height": image.height, "rgba_path": str(raw),
+                   "config_sha256": p.identity({"labeler": body["labeler"]["manifest"]}),
+                   "labeler": body["labeler"]["manifest"]}
+        request_path, output = staging / "request.json", staging / "result.json"
+        p.write_json(request_path, request)
+        testing = os.environ.get("CHESS_OCR_TESTING") == "1"
+        process = subprocess.Popen(["node", "--experimental-strip-types", "scripts/proposal-runner.ts",
+                                    str(request_path), str(output)], cwd=p.REPO,
+                                   start_new_session=True, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE if testing else subprocess.DEVNULL)
+        started = time.monotonic()
+        reason = None
+        while process.poll() is None:
+            if stop_path.exists() or time.monotonic() - started > REREAD_SECONDS:
+                reason = "cancelled" if stop_path.exists() else "timeout"
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+                break
+            time.sleep(.05)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        diagnostic = (process.stderr.read().decode(errors="replace")[:2000]
+                      if testing and process.stderr else "")
+        if process.stderr:
+            process.stderr.close()
+        p.require(process.returncode == 0 and output.is_file(),
+                  reason or diagnostic or "board re-read provider failed")
+        result = validate_reread_result(p.read_json(output), body, image.width, image.height)
+        with p.connect() as db:
+            current = db.execute("SELECT revision,sha FROM samples WHERE id=?", (body["sample_id"],)).fetchone()
+            draft = db.execute("SELECT * FROM web_drafts WHERE sample=?", (body["sample_id"],)).fetchone()
+        draft_body = json.loads(draft["body"]) if draft else {}
+        current_board = (draft_body.get("boards") or [None] * 64)[body["board_index"]] if draft_body.get("boards") and body["board_index"] < len(draft_body["boards"]) else None
+        state = ("complete" if current and draft and current["revision"] == body["revision"]
+                 and current["sha"] == body["image_sha256"] and draft["version"] == body["draft_version"]
+                 and current_board and p.canonical(current_board["corners"]) == p.canonical(body["corners"])
+                 else "stale")
+    except Exception as exc:
+        error = (str(exc) if os.environ.get("CHESS_OCR_TESTING") == "1"
+                 else "cancelled" if stop_path.exists() else "provider-failed")
+        state = "cancelled" if error == "cancelled" else "failed"
+    finally:
+        with p.writer(), p.connect() as db:
+            db.execute("UPDATE board_rereads SET state=?,result=?,heartbeat=?,error=? WHERE id=?",
+                       (state, p.canonical(result) if state == "complete" else None,
+                        time.time(), error, request_id))
+    return board_reread_status(request_id)
+
+
+def board_reread_status(request_id):
+    p.sha256(request_id)
+    with p.connect() as db:
+        row = db.execute("SELECT state,result,error,heartbeat FROM board_rereads WHERE id=?",
+                         (request_id,)).fetchone()
+    p.require(row is not None, "unknown board re-read")
+    state = row["state"]
+    if state in {"starting", "running"} and row["heartbeat"] < time.time() - 90:
+        state = "interrupted"
+    return {"schema": REREAD_SCHEMA, "request_id": request_id, "state": state,
+            "result": json.loads(row["result"]) if row["result"] else None,
+            "error": row["error"]}
+
+
+def cancel_board_reread(request_id):
+    p.sha256(request_id)
+    with p.connect() as db:
+        row = db.execute("SELECT state FROM board_rereads WHERE id=?", (request_id,)).fetchone()
+    p.require(row is not None and row["state"] in {"starting", "running"},
+              "board re-read is not active")
+    p.atomic(p.local_path(f"proposals/reread-stop/{request_id}"), b"stop\n")
+    return {"schema": REREAD_SCHEMA, "request_id": request_id, "state": "cancel-requested"}
+
+
+def apply_board_reread(data):
+    p.require(isinstance(data, dict) and set(data) == {"request_id", "sample_id", "revision",
+              "image_sha256", "draft_version", "board_index", "corners"},
+              "invalid board re-read apply request")
+    p.sha256(data["request_id"])
+    with p.connect() as db:
+        _provider_tables(db)
+        row = db.execute("SELECT * FROM board_rereads WHERE id=?", (data["request_id"],)).fetchone()
+        p.require(row is not None and row["state"] == "complete" and row["result"],
+                  "board re-read result is unavailable")
+        body = json.loads(row["body"])
+        p.require(all(data[request_key] == body[body_key] for request_key, body_key in (
+                    ("sample_id", "sample_id"), ("revision", "revision"),
+                    ("image_sha256", "image_sha256"), ("draft_version", "draft_version"),
+                    ("board_index", "board_index")))
+                and p.canonical(data["corners"]) == p.canonical(body["corners"]),
+                "board re-read result is stale for this draft")
+        _reread_input(db, {"sample_id": data["sample_id"], "revision": data["revision"],
+                      "image_sha256": data["image_sha256"], "draft_version": data["draft_version"],
+                      "board_index": data["board_index"], "corners": data["corners"],
+                      "labeler": body["labeler"]["id"]})
+        p.require(data["request_id"] == p.identity(body), "board re-read identity changed")
+        result = json.loads(row["result"])
+    return {"schema": REREAD_SCHEMA, "request_id": data["request_id"], "state": "applicable",
+            "result": result}
 
 
 def _selected_samples(db, scope, maximum):
@@ -692,6 +944,8 @@ def main():
     resume_parser.add_argument("--after-repair", action="store_true")
     run_parser = sub.add_parser("run")
     run_parser.add_argument("run_id")
+    reread_parser = sub.add_parser("reread")
+    reread_parser.add_argument("request_id")
     child_parser = sub.add_parser("_child")
     child_parser.add_argument("run_id")
     child_parser.add_argument("sample_id")
@@ -701,11 +955,12 @@ def main():
     if args.command == "_child":
         child(args.run_id,args.sample_id)
         return
-    if args.command not in {"init", "run"}:
+    if args.command not in {"init", "run", "reread"}:
         initialize()
     result = {"init": initialize, "providers": providers, "register": lambda: register_manifest(args.manifest),
               "start": lambda: create_run(args.localizer,args.labeler,args.scope,args.max_pages),
               "resume": lambda: resume(args.run_id,args.after_repair), "run": lambda: run(args.run_id),
+              "reread": lambda: run_board_reread(args.request_id),
               "status": status, "stop": stop}[args.command]()
     print(json.dumps(result, indent=2))
 

@@ -124,18 +124,30 @@ def connect():
 
 
 @contextlib.contextmanager
-def _writer_lock():
+def _writer_lock(blocking=False):
     ROOT.mkdir(parents=True, exist_ok=True)
     with local_path("writer.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
         except BlockingIOError:
             raise Invalid("another writer is active; status and stop remain available") from None
         yield lock
 
 
 @contextlib.contextmanager
-def writer():
+def _worker_lock():
+    """Keep one acquisition/export supervisor active without blocking reviews."""
+    ROOT.mkdir(parents=True, exist_ok=True)
+    with local_path("worker.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Invalid("another acquisition/export worker is active; use status or stop") from None
+        yield lock
+
+
+@contextlib.contextmanager
+def writer(blocking=False):
     # Recovery must finish before a normal writer obtains the lock; this avoids
     # a connection observing the generation between payload move and DB clear.
     if (ROOT / "reset.pending.json").exists():
@@ -144,7 +156,7 @@ def writer():
         else:
             from dataset_reset import recover_reset
         recover_reset()
-    with _writer_lock() as lock:
+    with _writer_lock(blocking=blocking) as lock:
         yield lock
 
 
@@ -156,6 +168,16 @@ def initialize():
         PRAGMA journal_mode=WAL;
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, body TEXT NOT NULL, sha TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS source_history(
+          source TEXT NOT NULL REFERENCES sources(id), revision INTEGER NOT NULL,
+          body TEXT NOT NULL, sha TEXT NOT NULL, action TEXT NOT NULL, at REAL NOT NULL,
+          PRIMARY KEY(source,revision));
+        CREATE TRIGGER IF NOT EXISTS source_history_admission
+        AFTER INSERT ON sources
+        BEGIN
+          INSERT OR IGNORE INTO source_history(source,revision,body,sha,action,at)
+          VALUES (NEW.id,0,NEW.body,NEW.sha,'admitted',unixepoch('subsec'));
+        END;
         CREATE TABLE IF NOT EXISTS exclusions(source TEXT PRIMARY KEY REFERENCES sources(id), reason TEXT NOT NULL, at REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS jobs(id INTEGER PRIMARY KEY, source TEXT NOT NULL REFERENCES sources(id),
           stage TEXT NOT NULL, page INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'pending',
@@ -187,6 +209,10 @@ def initialize():
         with db:
             for key, value in defaults.items():
                 db.execute("INSERT OR IGNORE INTO meta VALUES (?,?)", (key, canonical(value)))
+            for source in db.execute("SELECT id,body,sha FROM sources").fetchall():
+                db.execute("""INSERT OR IGNORE INTO source_history
+                            (source,revision,body,sha,action,at) VALUES (?,0,?,?,?,?)""",
+                           (source[0], source[1], source[2], "admitted", time.time()))
             _promote_legacy_single_human_reviews(db)
         db.close()
     return {"state": "initialized", "next_action": "set an authorized local budget, then add reviewed source manifests"}
@@ -271,6 +297,9 @@ def ingest(args):
             atomic(local_path(f"rights/{source_id}.evidence"), evidence_bytes)
             with db:
                 db.execute("INSERT INTO sources VALUES (?,?,?)", (source_id, canonical(body), identity(body)))
+                db.execute("""INSERT OR IGNORE INTO source_history(source,revision,body,sha,action,at)
+                            VALUES (?,0,?,?,?,?)""",
+                           (source_id, canonical(body), identity(body), "admitted-private", time.time()))
                 for page in pages:
                     db.execute("INSERT INTO jobs(source,stage,page) VALUES (?,'render',?)", (source_id, page))
             added += 1
@@ -366,8 +395,76 @@ def add_source(path):
         dest = local_path(f"rights/{body['id']}.evidence")
         atomic(dest, evidence.read_bytes())
         db.execute("INSERT INTO sources VALUES (?,?,?)", (body["id"], canonical(body), identity(body)))
+        db.execute("""INSERT OR IGNORE INTO source_history(source,revision,body,sha,action,at)
+                    VALUES (?,0,?,?,?,?)""",
+                   (body["id"], canonical(body), identity(body), "admitted-public", time.time()))
         db.execute("INSERT INTO jobs(source,stage) VALUES (?, 'acquire')", (body["id"],))
     return {"state": "queued", "sources_added": 1}
+
+
+def page_list(value):
+    """Parse a bounded comma/range list without accepting ambiguous syntax."""
+    require(isinstance(value, str) and 0 < len(value) <= 4000, "explicit page list required")
+    pages = []
+    for item in value.split(","):
+        require(re.fullmatch(r"[1-9][0-9]{0,4}(?:-[1-9][0-9]{0,4})?", item) is not None,
+                "invalid page list")
+        ends = [int(part) for part in item.split("-")]
+        start, finish = (ends[0], ends[0]) if len(ends) == 1 else ends
+        require(start <= finish <= 100000 and finish - start < 2000, "invalid page range")
+        pages.extend(range(start, finish + 1))
+        require(len(pages) <= 2000, "page list ceiling")
+    require(len(set(pages)) == len(pages), "duplicate page selection")
+    return sorted(pages)
+
+
+def extend_source(source_id, pages):
+    """Append one explicit 12-page selection increment to an admitted PDF."""
+    token(source_id)
+    selected = page_list(pages) if isinstance(pages, str) else pages
+    require(isinstance(selected, list) and all(type(page) is int for page in selected),
+            "invalid page selection")
+    with writer(), connect() as db:
+        row = db.execute("""SELECT * FROM sources WHERE id=?
+                          AND id NOT IN (SELECT source FROM exclusions)""", (source_id,)).fetchone()
+        require(row is not None, "unknown or excluded source")
+        body = json.loads(row["body"])
+        require(body["format"] == "pdf", "only PDF sources can be extended")
+        require(not (body["split"] == "qualification" and
+                    db.execute("SELECT 1 FROM meta WHERE key='qualification_seal'").fetchone()),
+                "qualification is sealed")
+        existing = set(body["pages"])
+        additions = [page for page in selected if page not in existing]
+        if not additions:
+            return {"state": "already-selected", "source": source_id,
+                    "selected_pages": len(existing), "added": 0}
+        require(len(additions) == 12 and len(selected) == 12,
+                "extensions must add exactly 12 explicit pages")
+        require(len(existing) + len(additions) <= 48, "source page ceiling is 48")
+        total_pages = body.get("total_pages")
+        if total_pages is not None:
+            require(type(total_pages) is int and max(additions) <= total_pages,
+                    "selected page exceeds source page count")
+        budget = meta(db, "budget")
+        current_pages = sum(len(json.loads(item[0])["pages"])
+                            for item in db.execute("SELECT body FROM sources"))
+        require(current_pages + len(additions) <= budget["pages"], "page budget exhausted")
+        before = dict(body)
+        body["pages"] = sorted(existing | set(additions))
+        before_sha, after_sha = row["sha"], identity(body)
+        revision = db.execute("SELECT COALESCE(MAX(revision),-1)+1 FROM source_history WHERE source=?",
+                              (source_id,)).fetchone()[0]
+        db.execute("UPDATE sources SET body=?,sha=? WHERE id=?",
+                   (canonical(body), after_sha, source_id))
+        db.execute("""INSERT INTO source_history(source,revision,body,sha,action,at)
+                    VALUES (?,?,?,?,?,?)""",
+                   (source_id, revision, canonical(body), after_sha,
+                    "extend:" + ",".join(map(str, additions)), time.time()))
+        for page in additions:
+            db.execute("INSERT INTO jobs(source,stage,page) VALUES (?,'render',?)", (source_id, page))
+        require(identity(before) == before_sha, "source changed during extension")
+    return {"state": "queued", "source": source_id, "added": len(additions),
+            "selected_pages": len(body["pages"]), "history_revision": revision}
 
 
 def size_on_disk():
@@ -530,6 +627,8 @@ def child(job_id):
 
 
 def finalize(db, job):
+    if db.execute("SELECT 1 FROM exclusions WHERE source=?", (job["source"],)).fetchone():
+        return
     if job["stage"] == "acquire":
         body = json.loads(db.execute("SELECT body FROM sources WHERE id=?", (job["source"],)).fetchone()[0])
         for page in body["pages"]:
@@ -554,26 +653,38 @@ def finalize(db, job):
 
 
 def run(clear_stop=True):
-    with writer() as lock, connect() as db:
+    # Finish reset recovery before acquiring the supervisor lock. A decoder
+    # inherits this separate lock, so review transactions remain available
+    # while a crashed supervisor's child is still bounded and alive.
+    if (ROOT / "reset.pending.json").exists():
+        with connect():
+            pass
+    with _worker_lock() as lock:
         if clear_stop:
             local_path("stop").unlink(missing_ok=True)
         # Full attempt reservations survive crashes; never refund uncertain work.
-        with db:
+        with writer(blocking=True), connect() as db:
             db.execute("UPDATE jobs SET state=CASE WHEN attempts>=max_attempts THEN 'quarantined' ELSE 'retry' END,error='interrupted' WHERE state='running'")
             set_meta(db, "worker", {"state": "running", "pid": os.getpid(), "heartbeat": time.time()})
         state = "idle"
         try:
             while not local_path("stop").exists():
-                job = db.execute("SELECT * FROM jobs WHERE state IN ('pending','retry') AND next_at<=? ORDER BY id LIMIT 1", (time.time(),)).fetchone()
-                if job is None:
-                    state = ("waiting-retry" if db.execute("SELECT 1 FROM jobs WHERE state='retry'").fetchone()
-                             else "needs-repair" if db.execute("SELECT 1 FROM jobs WHERE state='quarantined'").fetchone()
-                             else "needs-review" if db.execute("SELECT 1 FROM samples").fetchone()
-                             else "awaiting-sources")
-                    break
-                source = json.loads(db.execute("SELECT body FROM sources WHERE id=?", (job["source"],)).fetchone()[0])
+                with connect() as db:
+                    job = db.execute("SELECT * FROM jobs WHERE state IN ('pending','retry') AND next_at<=? ORDER BY id LIMIT 1", (time.time(),)).fetchone()
+                    if job is None:
+                        state = ("waiting-retry" if db.execute("SELECT 1 FROM jobs WHERE state='retry'").fetchone()
+                                 else "needs-repair" if db.execute("SELECT 1 FROM jobs WHERE state='quarantined'").fetchone()
+                                 else "needs-review" if db.execute("SELECT 1 FROM samples").fetchone()
+                                 else "awaiting-sources")
+                        break
                 try:
-                    with db:
+                    with writer(blocking=True), connect() as db:
+                        # A concurrent operator action may have changed this job
+                        # after selection; bind the reservation to its current row.
+                        job = db.execute("SELECT * FROM jobs WHERE id=? AND state IN ('pending','retry')", (job["id"],)).fetchone()
+                        require(job is not None and job["next_at"] <= time.time(),
+                                "selected acquisition job changed; resume")
+                        source = json.loads(db.execute("SELECT body FROM sources WHERE id=?", (job["source"],)).fetchone()[0])
                         ceiling = reserve(db, job, source)
                         db.execute("UPDATE jobs SET state='running',attempts=attempts+1 WHERE id=?", (job["id"],))
                 except Budget:
@@ -590,13 +701,13 @@ def run(clear_stop=True):
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
                         break
-                    with db:
+                    with connect() as db:
                         set_meta(db, "worker", {"state": "running", "pid": os.getpid(), "heartbeat": time.time(), "job": job["id"]})
                     time.sleep(0.5)
                 # A failed decoder must not leave grandchildren consuming resources.
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
-                with db:
+                with writer(blocking=True), connect() as db:
                     if process.returncode == 0:
                         finalize(db, job)
                     else:
@@ -610,7 +721,12 @@ def run(clear_stop=True):
                     state = "stopped"
                     break
                 # Waits belong to this bounded local worker, never to an AI turn.
-                while db.execute("SELECT 1 FROM jobs WHERE state='retry' AND next_at>?", (time.time(),)).fetchone() and not db.execute("SELECT 1 FROM jobs WHERE state='pending' OR (state='retry' AND next_at<=?)", (time.time(),)).fetchone():
+                while True:
+                    with connect() as db:
+                        waiting = (db.execute("SELECT 1 FROM jobs WHERE state='retry' AND next_at>?", (time.time(),)).fetchone()
+                                   and not db.execute("SELECT 1 FROM jobs WHERE state='pending' OR (state='retry' AND next_at<=?)", (time.time(),)).fetchone())
+                    if not waiting:
+                        break
                     if local_path("stop").exists():
                         break
                     time.sleep(0.5)
@@ -620,7 +736,7 @@ def run(clear_stop=True):
             state = "interrupted-resume-required"
             raise
         finally:
-            with db:
+            with writer(blocking=True), connect() as db:
                 set_meta(db, "worker", {"state": state, "heartbeat": time.time()})
     return status()
 
@@ -628,6 +744,9 @@ def run(clear_stop=True):
 def start(export=False):
     # Startup handshake avoids reporting a job started if lock acquisition failed.
     with writer(), connect() as db:
+        active = meta(db, "worker")
+        require(active.get("state") not in {"starting", "running", "exporting"},
+                "an acquisition/export worker is already active; inspect status")
         local_path("stop").unlink(missing_ok=True)
         set_meta(db, "worker", {"state": "starting", "heartbeat": time.time()})
     process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "_export" if export else "_run"],
@@ -681,6 +800,8 @@ def status():
                 "review_seconds": accounting["review_seconds"], "budget": meta(db, "budget"),
                 "reserved_download_bytes": accounting["reserved_download_bytes"], "reserved_compute_seconds": accounting["reserved_compute_seconds"],
                 "attempts": accounting["attempts"], "storage_bytes": size_on_disk(),
+                "qualification_sealed": bool(db.execute(
+                    "SELECT 1 FROM meta WHERE key='qualification_seal'").fetchone()),
                 "next_action": ("set authorized budget; ingest inbox or add reviewed public manifests" if not sources
                                 else "inspect queue and repair quarantined jobs" if counts.get("quarantined")
                                 else "resolve cross-split duplicate queue" if cross_split_blockers
@@ -752,6 +873,10 @@ def review_payload(sample_id):
     with connect() as db:
         sample = db.execute("SELECT * FROM samples WHERE id=?", (sample_id,)).fetchone()
         require(sample is not None, "unknown sample")
+        source = json.loads(db.execute("SELECT body FROM sources WHERE id=?", (sample["source"],)).fetchone()[0])
+        require(not (source.get("split") == "qualification" and
+                    db.execute("SELECT 1 FROM meta WHERE key='qualification_seal'").fetchone()),
+                "qualification is sealed")
         require(digest(local_path(sample["image"])) == sample["sha"], "stale/corrupt page")
         annotation = json.loads(sample["annotation"]) if sample["annotation"] else {"kind": "boards", "boards": []}
         return {"schema": "chess-ocr-dataset-review/1", "sample_id": sample_id,
@@ -786,6 +911,10 @@ def submit_review(data, *, check_current=None):
     with writer(), connect() as db:
         sample = db.execute("SELECT * FROM samples WHERE id=?", (data["sample_id"],)).fetchone()
         require(sample is not None, "unknown sample")
+        source = json.loads(db.execute("SELECT body FROM sources WHERE id=?", (sample["source"],)).fetchone()[0])
+        require(not (source.get("split") == "qualification" and
+                    db.execute("SELECT 1 FROM meta WHERE key='qualification_seal'").fetchone()),
+                "qualification is sealed")
         if check_current is not None:
             check_current(db)
         require(data.get("image_sha256") == sample["sha"] and digest(local_path(sample["image"])) == sample["sha"], "stale review/image")
@@ -864,9 +993,12 @@ def resolve_duplicate(a, b, decision):
 def exclude_source(source_id, reason):
     token(source_id)
     token(reason)
-    with writer(), connect() as db:
+    with _worker_lock(), writer(), connect() as db:
         sources = {r["id"]: json.loads(r["body"]) for r in db.execute("SELECT * FROM sources")}
         require(source_id in sources, "unknown source")
+        require(not (sources[source_id]["split"] == "qualification" and
+                    db.execute("SELECT 1 FROM meta WHERE key='qualification_seal'").fetchone()),
+                "qualification is sealed")
         selected, edges = {source_id}, lineage(sources[source_id])
         while True:
             related = {sid for sid,s in sources.items() if edges & lineage(s)}
@@ -913,6 +1045,25 @@ def validate(db):
     for row in db.execute("SELECT * FROM sources"):
         if identity(json.loads(row["body"])) != row["sha"]:
             errors.append("source-record-integrity")
+        history = db.execute("SELECT * FROM source_history WHERE source=? ORDER BY revision",
+                             (row["id"],)).fetchall()
+        if not history or history[0]["revision"] != 0 or history[-1]["sha"] != row["sha"]:
+            errors.append("source-history-integrity")
+            continue
+        previous = None
+        for revision, record in enumerate(history):
+            body = json.loads(record["body"])
+            if record["revision"] != revision or identity(body) != record["sha"]:
+                errors.append("source-history-integrity")
+                break
+            if previous is not None:
+                prior_pages, next_pages = set(previous["pages"]), set(body["pages"])
+                comparable_prior = {key: value for key, value in previous.items() if key != "pages"}
+                comparable_next = {key: value for key, value in body.items() if key != "pages"}
+                if not prior_pages < next_pages or comparable_prior != comparable_next:
+                    errors.append("source-history-integrity")
+                    break
+            previous = body
     source_list = [s for sid,s in sources.items() if sid not in excluded_sources]
     for i, source in enumerate(source_list):
         for other in source_list[:i]:
@@ -978,14 +1129,117 @@ def validate(db):
     jobs = dict(db.execute("SELECT state,COUNT(*) FROM jobs WHERE source NOT IN (SELECT source FROM exclusions) GROUP BY state"))
     if any(state != "done" and count for state, count in jobs.items()):
         errors.append("acquisition-incomplete")
+    sealed = db.execute("SELECT value FROM meta WHERE key='qualification_seal'").fetchone()
+    if sealed:
+        try:
+            seal = json.loads(sealed[0])
+            path = local_path(seal["path"])
+            manifest = read_json(path)
+            current = sorted([{"sample_id": sample["id"], "source_id": sample["source"],
+                        "image_sha256": sample["sha"],
+                        "revision": sample["revision"],
+                        "annotation_sha256": identity(json.loads(sample["annotation"])),
+                        "review_history_sha256": identity([dict(row) for row in db.execute(
+                            """SELECT revision,content,reviewer,human,seconds,decision,at
+                               FROM reviews WHERE sample=? ORDER BY id""", (sample["id"],))])}
+                       for sample in samples.values()
+                       if sources[sample["source"]]["split"] == "qualification"
+                       and sample["source"] not in excluded_sources], key=lambda item: item["sample_id"])
+            recorded = sorted([{key: sample[key] for key in ("sample_id", "source_id",
+                        "image_sha256", "revision", "annotation_sha256", "review_history_sha256")}
+                       for sample in manifest["samples"]], key=lambda item: item["sample_id"])
+            source_hashes = {sid: identity(body) for sid, body in sources.items()
+                             if body["split"] == "qualification" and sid not in excluded_sources}
+            require(identity(manifest) == seal["id"] and digest(path) == seal["file_sha256"]
+                    and current == recorded and source_hashes == manifest["source_record_sha256"],
+                    "qualification seal changed")
+        except (Invalid, KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
+            errors.append("qualification-seal-integrity")
     return {"schema": SCHEMA, "errors": sorted(set(errors)), "coverage": coverage,
             "unreviewed_pages": sum(not r["accepted"] for r in samples.values()),
             "excluded_duplicates": len(excluded), "recognition_qualified": False,
             "excluded_sources": len(excluded_sources),
             "same_split_duplicate_audit": same_split_duplicate_audit(db, excluded_sources),
             "unverified_lineage_sources": sum(not s["lineage_reviewed"] for s in sources.values()),
-            "dataset_delivery_ready": False,
+            "dataset_delivery_ready": False, "qualification_sealed": bool(sealed),
             "qualification_exported": False}
+
+
+def seal_qualification():
+    """Seal human-reviewed qualification truth without executing or recording providers."""
+    with _worker_lock(), writer(), connect() as db:
+        require(not db.execute("SELECT 1 FROM meta WHERE key='qualification_seal'").fetchone(),
+                "qualification is already sealed")
+        sources = {row["id"]: json.loads(row["body"]) for row in db.execute(
+            "SELECT * FROM sources WHERE id NOT IN (SELECT source FROM exclusions)")}
+        qualification_sources = {sid: body for sid, body in sources.items()
+                                 if body["split"] == "qualification"}
+        require(qualification_sources, "no qualification sources")
+        components = []
+        for source in qualification_sources.values():
+            edges = lineage(source) | {("original", source["sha256"])}
+            merged = [component for component in components if component & edges]
+            components = [component for component in components if not component & edges]
+            components.append(edges.union(*merged))
+        require(len(components) >= 3 and all(source["lineage_reviewed"]
+                                             for source in qualification_sources.values()),
+                "qualification needs three reviewed independent components")
+        placeholders = ",".join("?" for _ in qualification_sources)
+        require(not db.execute("SELECT 1 FROM jobs WHERE source IN (%s) AND state!='done'" %
+                               placeholders, tuple(qualification_sources)).fetchone(),
+                "qualification acquisition must be complete before sealing")
+        samples = db.execute("SELECT * FROM samples WHERE source IN (%s) ORDER BY id" %
+                             placeholders,
+                             tuple(qualification_sources)).fetchall()
+        rendered = {sid: {sample["page"] for sample in samples if sample["source"] == sid}
+                    for sid in qualification_sources}
+        require(all(rendered[sid] == set(source["pages"])
+                    for sid, source in qualification_sources.items()),
+                "every selected qualification page must be rendered before sealing")
+        require(samples and all(sample["accepted"] and sample["annotation"] for sample in samples),
+                "every qualification page must be human accepted before sealing")
+        boards = sum(len(json.loads(sample["annotation"])["boards"]) for sample in samples)
+        require(boards >= 100, "qualification needs at least 100 reviewed boards")
+        sample_ids = {sample["id"] for sample in samples}
+        sample_sources = dict(db.execute("SELECT id,source FROM samples"))
+        for pair in db.execute("SELECT * FROM duplicates"):
+            if sample_sources[pair["a"]] not in sources or sample_sources[pair["b"]] not in sources:
+                continue
+            if ((pair["a"] in sample_ids or pair["b"] in sample_ids)
+                    and sources[sample_sources[pair["a"]]]["split"]
+                    != sources[sample_sources[pair["b"]]]["split"]):
+                require(pair["decision"] is not None, "qualification duplicate decision unresolved")
+                require(pair["decision"] != "duplicate", "qualification duplicate crosses membership")
+        table_names = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "proposal_results" in table_names:
+            require(not db.execute("SELECT 1 FROM proposal_results WHERE sample IN (%s)" %
+                                   ",".join("?" for _ in sample_ids), tuple(sample_ids)).fetchone(),
+                    "qualification has provider results")
+        records = []
+        for sample in samples:
+            reviews = [dict(row) for row in db.execute("""SELECT revision,content,reviewer,human,seconds,
+                         decision,at FROM reviews WHERE sample=? ORDER BY id""", (sample["id"],))]
+            require(any(review["human"] and review["revision"] == sample["revision"]
+                        and review["content"] == sample["annotation"] for review in reviews),
+                    "qualification human review history missing")
+            records.append({"sample_id": sample["id"], "source_id": sample["source"],
+                            "image_sha256": sample["sha"], "revision": sample["revision"],
+                            "annotation_sha256": identity(json.loads(sample["annotation"])),
+                            "review_history_sha256": identity(reviews),
+                            "boards": len(json.loads(sample["annotation"])["boards"])})
+        manifest = {"schema": "chess-ocr-qualification-seal/1", "samples": records,
+                    "source_record_sha256": {sid: identity(body)
+                                             for sid, body in sorted(qualification_sources.items())},
+                    "independent_components": len(components), "boards": boards,
+                    "provider_execution": "forbidden", "qualification_exported": False}
+        seal_id = identity(manifest)
+        relative = f"evaluation/qualification-{seal_id}.json"
+        write_json(local_path(relative), manifest)
+        set_meta(db, "qualification_seal", {"id": seal_id, "path": relative,
+                                             "file_sha256": digest(local_path(relative)),
+                                             "sealed_at": time.time()})
+    return {"state": "qualification-sealed", "id": seal_id, "boards": boards,
+            "components": len(components), "qualification_exported": False}
 
 
 def solve(matrix, values):
@@ -1024,16 +1278,17 @@ def rectify_classifier_grid(image, corners):
 
 
 def export_dataset(clear_stop=True):
-    try:
-        result = build_export(clear_stop=clear_stop)
-    except Exception:
+    with _worker_lock():
+        try:
+            result = build_export(clear_stop=clear_stop)
+        except Exception:
+            with connect() as db:
+                current = meta(db, "worker")
+                if current.get("pid") == os.getpid() and current["state"] == "exporting":
+                    set_meta(db, "worker", {"state": "export-interrupted", "heartbeat": time.time()})
+            raise
         with connect() as db:
-            current = meta(db, "worker")
-            if current.get("pid") == os.getpid() and current["state"] == "exporting":
-                set_meta(db, "worker", {"state": "export-interrupted", "heartbeat": time.time()})
-        raise
-    with connect() as db:
-        set_meta(db, "worker", {"state": "exported", "heartbeat": time.time(), "export": result["export"]})
+            set_meta(db, "worker", {"state": "exported", "heartbeat": time.time(), "export": result["export"]})
     return result
 
 
@@ -1118,13 +1373,16 @@ def build_export(clear_stop=True):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("init", "start", "run", "_run", "stop", "status", "validate", "export", "export-start", "_export", "queue"):
+    for command in ("init", "start", "run", "_run", "stop", "status", "validate", "export", "export-start", "_export", "queue", "seal-qualification"):
         sub.add_parser(command)
     budget = sub.add_parser("budget")
     for key in ("sources", "pages", "download_bytes", "storage_bytes", "cpu_seconds", "review_limit"):
         budget.add_argument("--" + key.replace("_", "-"), type=int, required=True)
     for command in ("add", "import-review"):
         sub.add_parser(command).add_argument("file")
+    extend = sub.add_parser("extend")
+    extend.add_argument("source")
+    extend.add_argument("--pages", required=True)
     sub.add_parser("review").add_argument("sample")
     duplicate = sub.add_parser("duplicate")
     duplicate.add_argument("a")
@@ -1154,6 +1412,8 @@ def main():
             result = set_budget(args)
         elif args.command == "add":
             result = add_source(args.file)
+        elif args.command == "extend":
+            result = extend_source(args.source, args.pages)
         elif args.command == "ingest":
             result = ingest(args)
         elif args.command == "start":
@@ -1186,6 +1446,8 @@ def main():
                           "excluded_sources": [dict(r) for r in db.execute("SELECT * FROM exclusions")],
                           "duplicates": [dict(r) for r in db.execute("SELECT * FROM duplicates")],
                           "blocked_jobs": [dict(r) for r in db.execute("SELECT id,stage,state,error FROM jobs WHERE state='quarantined'")]}
+        elif args.command == "seal-qualification":
+            result = seal_qualification()
         else:
             with connect() as db:
                 result = validate(db)

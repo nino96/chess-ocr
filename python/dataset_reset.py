@@ -25,7 +25,8 @@ else:
 
 CONFIRMATION = "START OVER"
 MARKER = "reset.pending.json"
-PAYLOAD_DIRS = ("originals", "rights", "pages", "staging", "review", "exports", "proposals")
+PAYLOAD_DIRS = ("originals", "rights", "pages", "staging", "review", "exports",
+                "proposals", "evaluation")
 ARCHIVE_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}")
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
@@ -107,7 +108,7 @@ def _delete_archive(archive_id, version, confirmation):
     p.require(isinstance(version, str) and re.fullmatch(r"[0-9a-f]{64}", version), "invalid archive version")
     p.require(confirmation == "DELETE", "type DELETE exactly to delete this archive")
     # Unlike writer(), this does not start pending reset recovery as a side effect.
-    with p._writer_lock(), _reset_guard(blocking=False):
+    with p._worker_lock(), p._writer_lock(), _reset_guard(blocking=False):
         p.require(not _marker_path().exists(), "finish dataset reset recovery before deleting archives")
         root = p.local_path("archives")
         target = p.local_path("archives/" + archive_id)
@@ -244,13 +245,15 @@ def _clear_active(marker):
         db.execute("PRAGMA foreign_keys=ON")
         names = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         with db:
-            for name in ("review_metrics", "review_deferrals", "proposal_results", "proposal_attempts",
-                         "proposal_runs", "web_drafts", "board_signatures", "duplicates", "reviews",
-                         "samples", "exclusions", "jobs", "reservations", "sources"):
+            for name in ("review_metrics", "review_deferrals", "board_rereads",
+                         "proposal_results", "proposal_attempts", "proposal_runs", "web_drafts",
+                         "board_signatures", "duplicates", "reviews", "samples", "exclusions",
+                         "jobs", "reservations", "source_history", "sources"):
                 if name in names:
                     db.execute("DELETE FROM " + name)
             db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", ("carryover", p.canonical(marker["carryover"])))
             db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", ("worker", p.canonical({"state": "idle"})))
+            db.execute("DELETE FROM meta WHERE key='qualification_seal' OR key LIKE 'render:%'")
     finally:
         db.close()
     p.local_path("stop").unlink(missing_ok=True)
@@ -304,9 +307,9 @@ def reset_preview():
 def reset_dataset(confirmation, *, _interrupt_at=None):
     """Archive the active generation and empty it after an exact owner confirmation."""
     p.require(confirmation == CONFIRMATION, "type START OVER exactly to reset the dataset")
-    # writer is the worker's exclusive lock.  Taking it first is the active-worker
-    # refusal and prevents reset from racing ordinary writes.
-    with p.writer(), _reset_guard(blocking=False):
+    # Refuse an active acquisition/export supervisor, then prevent ordinary
+    # writes while the durable archive transition runs.
+    with p._worker_lock(), p.writer(), _reset_guard(blocking=False):
         p.require(not _marker_path().exists(), "dataset reset recovery is required before starting another reset")
         active = p.local_path("state.sqlite3")
         p.require(active.exists(), "run init first")

@@ -283,6 +283,25 @@
         <div id="pages"></div>
         <button id="more" hidden>Show more pages</button>
       </section>
+      <details class="panel">
+        <summary>Extend an admitted PDF by 12 pages</summary>
+        <p>
+          Add one explicit 12-page increment after inspecting diagram yield and
+          missing conditions. Existing source identity, split, annotations,
+          history, and completed pages are preserved. A source may contain at
+          most 48 selected pages.
+        </p>
+        <label
+          >Document
+          <select id="extend-source">
+            <option value="">Select a document</option>
+          </select></label
+        >
+        <label
+          >Pages <input id="extend-pages" maxlength="4000" placeholder="13-24"
+        /></label>
+        <button id="extend">Queue 12 more pages</button>
+      </details>
       <section id="editor-section" hidden>
         <div id="editor-nav" class="row">
           <button id="back">Back to pages</button>
@@ -413,8 +432,8 @@
       </details>
       <p>
         Private local workspace. Pages and annotations are served through your
-        SSH tunnel; no external service receives them. Automatic board and piece
-        proposals are not yet implemented.
+        SSH tunnel; no external service receives them. Machine output remains a
+        proposal until explicitly applied and independently checked by a human.
       </p>
     </main>
     <dialog id="reset-dialog" aria-labelledby="reset-title">

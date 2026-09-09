@@ -86,22 +86,22 @@ Equivalent CLI commands for local PDFs:
 For your own PDFs, place only one related family in `work/dataset/inbox/` and run:
 
 ```sh
-pnpm run dataset ingest --group family-a --reviewer owner --approve-local-use --pages-per-pdf 5
+pnpm run dataset ingest --group family-a --reviewer owner --approve-local-use --pages-per-pdf 12
 pnpm run dataset start
 ```
 
 The first command records your authorization for local training use, hashes the
-files, copies them into managed storage and queues up to five uniformly spaced
+files, copies them into managed storage and queues up to twelve uniformly spaced
 pages per PDF. Use `--split dev` only when that family's evaluation assignment
 has been chosen before ingestion. The same command handles every PDF currently
 in the inbox, so remove processed inbox copies before staging another family;
 the managed originals remain. Owning a PDF does not by itself establish use rights.
 
-The page count is an initial sampling choice, not a diagram count. Select it
-before admission: the current implementation cannot extend an admitted book's
-page selection. Larger collection from the same book needs an implemented and
-tested append-only page-extension workflow; changing IDs or editing SQLite to
-work around this would lose the intended provenance guarantees.
+The page count is an initial sampling choice, not a diagram count. If human review
+shows useful yield or a missing condition, the dashboard or
+`pnpm run dataset extend SOURCE_ID --pages LIST` adds exactly 12 explicit new
+pages, up to 48 for that source. The selection and source record histories remain
+append-only; never change IDs or edit SQLite to extend a source.
 
 For reviewed public inputs, the agent prepares the local pinned manifest and
 rights evidence, then uses `pnpm run dataset add LOCAL_MANIFEST_FILE`. You do not
@@ -168,9 +168,8 @@ that existing inbox. Under **Proposal run controls**, choose localization and
 label providers separately, select an
 authorized nonqualification train/dev scope, and start a bounded proposal run.
 Use **Stop proposals** independently of
-the acquisition **Stop job**; `Ctrl+C` stops only the web app. Rendering uses the
-same writer lock as draft saves, so stop the job
-and choose **Retry saving draft** if a save is temporarily blocked.
+the acquisition **Stop job**; `Ctrl+C` stops only the web app. Rendering and
+review can overlap; short transactions preserve draft and review consistency.
 
 **Start over** is a deliberate reset, not routine cleanup: it requires typing
 `START OVER`, archives managed state under ignored `work/dataset/archives/`, keeps
@@ -202,6 +201,14 @@ boards require confirmation and Undo remains available. Yellow squares have
 uncertain or missing provider evidence, not permission to skip confident squares.
 Use the optional five-minute session for a short correction batch, or defer with
 the closest bounded reason. Neither action auto-accepts a page.
+
+The selected-board workspace now mirrors the browser baseline conveniences: a
+full 8×8 grid overlay, numbered drag handles, corner keyboard nudging, Fit and
+image-edge actions, direct piece-key entry and collapsible numeric geometry.
+After correcting a valid grid, **Re-read this board** may generate a label-only
+proposal on that exact geometry. Applying it is explicit and undoable and clears
+the human declarations until all squares are inspected again. It is unavailable
+for qualification.
 
 The agent uses only a small classical/FENShot smoke screen to validate the
 diagnostic path. Once the issue #3 adapter is merged, the meaningful identical-input
@@ -250,11 +257,11 @@ qualification groups. These counts are hypotheses for useful learning, not proof
 of recognition quality. Dataset delivery also needs reviewed lineage, adequate
 coverage, sound geometry and independent truth checks.
 
-Continue acquisition/review in batches while tracking missing appearances. An
-expanded budget alone does not implement source extension, proposal-comparison
-evidence, verified per-board coverage or qualification freezing. Those outstanding
-features need implementation and validation as appropriate; proposal tooling and
-synthetic generation are already implemented but do not satisfy those outcomes.
+Continue acquisition/review in batches while tracking missing appearances.
+Append-only source extension, exact-grid label assistance and qualification
+sealing are implemented, but their existence does not provide reviewed sources,
+verified per-board coverage or the required human evidence. Synthetic generation
+also does not satisfy those outcomes.
 
 When the active tranche is reviewed and duplicate blockers are resolved:
 

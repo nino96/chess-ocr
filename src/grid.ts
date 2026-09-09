@@ -455,8 +455,8 @@ function validCorners(
         Number.isFinite(p.y) &&
         p.x >= 0 &&
         p.y >= 0 &&
-        p.x < width &&
-        p.y < height,
+        p.x <= width &&
+        p.y <= height,
     ) &&
     polygonArea(corners) > 1e-6
   );

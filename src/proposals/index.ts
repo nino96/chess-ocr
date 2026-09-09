@@ -117,6 +117,7 @@ export const providerManifestSchema = z
     runtime: z.enum([
       "fenshot-localizer-v1",
       "fenshot-labeler-v1",
+      "fenshot-rectified-labeler-v1",
       "classical-grid-v1",
       "chess-ocr-onnx-localizer-v1",
       "chess-ocr-onnx-labeler-v1",
@@ -433,6 +434,82 @@ export function createFENShotLabelProvider(
             squares: fenshotSquares(numeric),
             warnings: [
               "Uncalibrated FENShot confidence; inspect every square.",
+            ],
+          });
+        } finally {
+          for (const value of Object.values(output)) value.dispose();
+        }
+      } finally {
+        tensor.dispose();
+      }
+    },
+  };
+}
+
+/** FENShot labels over the exact shared four-corner RGB768 rectification contract. */
+export function createFENShotRectifiedLabelProvider(
+  session: InferenceSession,
+  model: z.infer<typeof identitySchema>,
+  supplied: ProviderManifest,
+): LabelProvider {
+  const manifest = providerManifestSchema.parse(supplied);
+  if (
+    manifest.runtime !== "fenshot-rectified-labeler-v1" ||
+    manifest.capability !== "labels" ||
+    manifest.model.sha256 !== model.sha256
+  )
+    throw new Error("Invalid rectified FENShot label manifest");
+  return {
+    manifest,
+    async label(input, candidate) {
+      assertRaster(input);
+      candidateSchema.parse(candidate);
+      const source = {
+        data: new Uint8Array(
+          input.rgba.buffer,
+          input.rgba.byteOffset,
+          input.rgba.byteLength,
+        ),
+        width: input.image.width,
+        height: input.image.height,
+      };
+      const rectified = rectifyGrid(
+        source,
+        candidate.corners as GridCorners,
+        4,
+        768,
+      );
+      const { extractTiles, rgbaToGray } = await loadFenshot();
+      const gray = rgbaToGray(
+        new Uint8ClampedArray(
+          rectified.data.buffer,
+          rectified.data.byteOffset,
+          rectified.data.byteLength,
+        ),
+        768,
+        768,
+      );
+      const tensor = new Tensor(
+        "float32",
+        extractTiles(gray, { x0: 0, y0: 0, x1: 768, y1: 768 }),
+        [64, 1024],
+      );
+      try {
+        const output = await session.run({ tiles: tensor });
+        try {
+          const probabilities = output.probs?.data;
+          if (!probabilities || probabilities.length !== 64 * 13)
+            throw new Error("Invalid FENShot output shape");
+          const numeric = Float32Array.from(probabilities as ArrayLike<number>);
+          return labelResultSchema.parse({
+            schema: PROPOSAL_VERSION,
+            requestId: input.requestId,
+            image: input.image,
+            provider: manifest,
+            candidateId: candidate.id,
+            squares: fenshotSquares(numeric),
+            warnings: [
+              "FENShot labels use the reviewer-supplied shared rectification; inspect every square.",
             ],
           });
         } finally {
@@ -985,6 +1062,7 @@ export function supportedManifest(manifest: unknown): ProviderManifest {
     "classical-grid-v1": "localization",
     "fenshot-localizer-v1": "localization",
     "fenshot-labeler-v1": "labels",
+    "fenshot-rectified-labeler-v1": "labels",
     "chess-ocr-onnx-localizer-v1": "localization",
     "chess-ocr-onnx-labeler-v1": "labels",
   };
@@ -1012,6 +1090,16 @@ export function builtInManifests(modelSha256: string): ProviderManifest[] {
       runtime: "fenshot-labeler-v1",
       model: { name: "@scoriiu/fenshot", version: "0.1.4", sha256 },
       preprocessing: "fenshot-0.1.4/rgba-gray-bilinear-256/1",
+      artifact: null,
+      limits: defaultLimits,
+    }),
+    providerManifestSchema.parse({
+      schema: PROVIDER_MANIFEST_VERSION,
+      id: "fenshot-rectified-labeler",
+      capability: "labels",
+      runtime: "fenshot-rectified-labeler-v1",
+      model: { name: "@scoriiu/fenshot", version: "0.1.4", sha256 },
+      preprocessing: "four-corner-rgba768-bilinear/fenshot-gray32-v1",
       artifact: null,
       limits: defaultLimits,
     }),
@@ -1052,7 +1140,10 @@ export function createBuiltInRegistry(options: {
   );
   const fenshotLabels = manifests.find(
     (manifest) => manifest.runtime === "fenshot-labeler-v1",
-  )!;
+  );
+  const rectifiedFenshotLabels = manifests.find(
+    (manifest) => manifest.runtime === "fenshot-rectified-labeler-v1",
+  );
   const fenshotSession = options.fenshotSession ?? options.session;
   const onnxLabels = manifests.find(
     (manifest) => manifest.runtime === "chess-ocr-onnx-labeler-v1",
@@ -1064,6 +1155,15 @@ export function createBuiltInRegistry(options: {
             fenshotSession,
             fenshotLabels.model,
             fenshotLabels,
+          ),
+        ]
+      : []),
+    ...(fenshotSession && rectifiedFenshotLabels
+      ? [
+          createFENShotRectifiedLabelProvider(
+            fenshotSession,
+            rectifiedFenshotLabels.model,
+            rectifiedFenshotLabels,
           ),
         ]
       : []),
@@ -1124,6 +1224,89 @@ const runProposalSchema = z
       });
   });
 export type ProposalRun = z.infer<typeof runProposalSchema>;
+
+const boardRereadRunSchema = z
+  .object({
+    sampleId: z.string().min(1).max(160),
+    revision: finite.int().nonnegative(),
+    imageSha256: sha256Schema,
+    draftVersion: finite.int().nonnegative(),
+    boardIndex: finite.int().nonnegative().max(63),
+    width: imageSchema.shape.width,
+    height: imageSchema.shape.height,
+    corners: cornersSchema,
+    labelerManifest: providerManifestSchema,
+    requestId: sha256Schema,
+    configSha256: sha256Schema,
+  })
+  .strict()
+  .superRefine((run, ctx) => {
+    if (run.width * run.height > 16_000_000)
+      ctx.addIssue({ code: "custom", message: "Image exceeds pixel limit" });
+    if (run.labelerManifest.capability !== "labels")
+      ctx.addIssue({
+        code: "custom",
+        message: "Labeler manifest has wrong capability",
+      });
+    validateCorners(run.corners, { width: run.width, height: run.height }, ctx);
+  });
+export type BoardRereadRun = z.infer<typeof boardRereadRunSchema>;
+
+/** Label one human-supplied quadrilateral without executing localization. */
+export async function runBoardReread(
+  run: BoardRereadRun & { rgba: Uint8ClampedArray },
+  registry: BuiltInRegistry,
+) {
+  const started = performance.now();
+  const parsed = boardRereadRunSchema.parse({
+    sampleId: run.sampleId,
+    revision: run.revision,
+    imageSha256: run.imageSha256,
+    draftVersion: run.draftVersion,
+    boardIndex: run.boardIndex,
+    width: run.width,
+    height: run.height,
+    corners: run.corners,
+    labelerManifest: run.labelerManifest,
+    requestId: run.requestId,
+    configSha256: run.configSha256,
+  });
+  if (run.rgba.length !== parsed.width * parsed.height * 4)
+    throw new Error("Invalid decoded RGBA length");
+  const input: DecodedInput = {
+    schema: PROPOSAL_VERSION,
+    requestId: parsed.requestId,
+    image: { width: parsed.width, height: parsed.height },
+    rgba: run.rgba,
+  };
+  const candidate: BoardCandidate = candidateSchema.parse({
+    id: `draft-board-${parsed.boardIndex}`,
+    corners: parsed.corners,
+    score: 1,
+    providerRuntimeId: parsed.labelerManifest.id,
+  });
+  const labeled = await registry
+    .labels(parsed.labelerManifest)
+    .label(input, candidate);
+  return {
+    schema: "chess-ocr-board-reread/1" as const,
+    requestId: parsed.requestId,
+    sampleId: parsed.sampleId,
+    revision: parsed.revision,
+    imageSha256: parsed.imageSha256,
+    draftVersion: parsed.draftVersion,
+    boardIndex: parsed.boardIndex,
+    corners: parsed.corners.map((point) => [point.x, point.y]),
+    labels: labeled.squares
+      .map((square) => square.label ?? "empty")
+      .map((label) => (label === "empty" ? "." : label)),
+    probabilities: labeled.squares.map((square) => square.probabilities),
+    uncertain: labeled.squares.map((square) => square.uncertain),
+    provider: labeled.provider,
+    warnings: labeled.warnings,
+    timings: { totalMs: performance.now() - started },
+  };
+}
 
 /** Pure Node-CLI-friendly composition: caller owns bytes, storage, and process lifecycle. */
 export async function runProposal(

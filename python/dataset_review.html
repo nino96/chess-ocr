@@ -41,7 +41,7 @@
       }
       .layout {
         display: grid;
-        grid-template-columns: minmax(360px, 1fr) minmax(350px, 1fr);
+        grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.85fr);
         gap: 1rem;
       }
       .card {
@@ -101,6 +101,9 @@
         width: 100%;
         height: 100%;
       }
+      #overlay.is-dragging {
+        cursor: grabbing;
+      }
       .boards {
         display: flex;
         flex-wrap: wrap;
@@ -109,8 +112,12 @@
       }
       .corners {
         display: grid;
-        grid-template-columns: repeat(2, max-content);
+        grid-template-columns: repeat(2, minmax(0, max-content));
         gap: 0.35rem 0.8rem;
+      }
+      #geometry summary {
+        cursor: pointer;
+        padding: 0.4rem 0;
       }
       .corner label {
         display: grid;
@@ -266,25 +273,28 @@
           <div id="page-wrap">
             <img id="page" alt="Source page under review" /><canvas
               id="overlay"
-              aria-label="Board geometry overlay. Drag a corner handle, or use arrow keys to move the selected corner."
+              aria-label="Board geometry overlay. Place or drag numbered corner handles. Press 1 through 4 to select a corner, then use arrow keys to move it."
               tabindex="0"
             ></canvas>
           </div>
           <div class="review-actions">
             <button type="button" id="zoom-out">Zoom out</button>
+            <button type="button" id="zoom-fit">Fit</button>
             <button type="button" id="zoom-in">Zoom in</button>
             <output id="zoom">100%</output>
           </div>
           <p id="click-help" class="muted">
-            Select a board, then use “place four corners” and click TL, TR, BR,
-            BL on the page.
+            Select a board, choose “Set four corners,” then click TL, TR, BR,
+            and BL. Drag numbered handles to refine them; press 1–4 then use
+            arrows (Shift for 10 px) for keyboard adjustment.
           </p>
           <div class="boards" id="board-buttons" aria-label="Boards"></div>
           <button type="button" id="add-board">Add board</button>
           <button type="button" id="delete-board">Delete selected board</button>
-          <button type="button" id="place-corners">Place four corners</button>
-          <fieldset id="geometry">
-            <legend>Selected board corners (image pixels)</legend>
+          <button type="button" id="place-corners">Set four corners</button>
+          <button type="button" id="use-image-edges">Use image edges</button>
+          <details id="geometry">
+            <summary>Optional numeric corner adjustment</summary>
             <div class="corners" id="corner-fields"></div>
             <label
               >Orientation
@@ -294,7 +304,7 @@
                 <option value="black-bottom">Black at bottom</option>
               </select></label
             >
-          </fieldset>
+          </details>
           <fieldset>
             <legend>Page classification</legend>
             <button type="button" id="mark-negative">
@@ -376,6 +386,26 @@
                 Mark correction
               </button>
               <label
+                >Board labeler
+                <select id="reread-labeler">
+                  <option value="">
+                    No exact-rectification labeler available
+                  </option>
+                </select></label
+              >
+              <button type="button" id="reread-board" disabled>
+                Re-read this board
+              </button>
+              <button type="button" id="cancel-reread" hidden>
+                Cancel re-read
+              </button>
+              <button type="button" id="apply-reread" hidden>
+                Apply re-read proposal
+              </button>
+              <output id="reread-status" class="proposal"
+                >Draw or correct a complete grid, then choose a labeler.</output
+              >
+              <label
                 >Proposal pair
                 <select id="proposal-choice">
                   <option value="">None available</option>
@@ -449,6 +479,7 @@
         let data,
           state,
           selected = -1,
+          selectedCorner = 0,
           placing = -1,
           activeSeconds = 0,
           lastActive = Date.now(),
@@ -460,6 +491,8 @@
           proposalStatus = "No proposal loaded.",
           availableProposals = [],
           activeProposalRun = null,
+          rereadRequest = null,
+          rereadResult = null,
           proposedEvidence = [],
           corrections = new Set(),
           touchedBoards = new Set(),
@@ -701,6 +734,96 @@
             if (event.data?.type === "proposal")
               applyProposal(event.data.proposal);
             if (event.data?.type === "review-extensions") extensionDraft = true;
+            if (
+              event.data?.type === "reread-providers" &&
+              Array.isArray(event.data.providers)
+            ) {
+              const select = $("reread-labeler"),
+                prior = select.value;
+              select.replaceChildren(
+                new Option("Select exact-rectification labeler", ""),
+                ...event.data.providers
+                  .filter(
+                    (provider) =>
+                      provider &&
+                      plainString(provider.id, 80) &&
+                      plainString(provider.label, 240),
+                  )
+                  .map((provider) => new Option(provider.label, provider.id)),
+              );
+              const preferred = plainString(event.data.default, 80)
+                ? event.data.default
+                : prior;
+              if (
+                [...select.options].some((option) => option.value === preferred)
+              )
+                select.value = preferred;
+              render();
+            }
+            if (
+              event.data?.type === "reread-started" &&
+              plainString(event.data.request_id, 64)
+            ) {
+              rereadRequest = event.data.request_id;
+              rereadResult = null;
+              $("reread-status").textContent =
+                "Re-reading this exact reviewer-supplied grid locally…";
+              render();
+            }
+            if (
+              event.data?.type === "reread-ready" &&
+              event.data.request_id === rereadRequest
+            ) {
+              rereadResult = { request_id: rereadRequest };
+              $("reread-status").textContent =
+                "A label-only proposal is ready. Apply it explicitly, or keep the current labels.";
+              render();
+            }
+            if (
+              event.data?.type === "reread-failed" &&
+              (!event.data.request_id ||
+                event.data.request_id === rereadRequest)
+            ) {
+              rereadRequest = null;
+              rereadResult = null;
+              $("reread-status").textContent = plainString(
+                event.data.message,
+                300,
+              )
+                ? event.data.message
+                : "Board re-read failed; current draft labels were preserved.";
+              render();
+            }
+            if (
+              event.data?.type === "reread-applied" &&
+              event.data.request_id === rereadRequest &&
+              event.data.result &&
+              Array.isArray(event.data.result.labels) &&
+              event.data.result.labels.length === 64 &&
+              event.data.result.labels.every(
+                (label) => typeof label === "string" && chars.includes(label),
+              ) &&
+              event.data.result.boardIndex === selected &&
+              JSON.stringify(event.data.result.corners) ===
+                JSON.stringify(board()?.corners)
+            ) {
+              remember();
+              board().labels = event.data.result.labels.slice();
+              proposedEvidence[selected] = {
+                probabilities: event.data.result.probabilities,
+                uncertain: event.data.result.uncertain,
+              };
+              restartReviewAfterProposalChange();
+              touchedBoards.add("reread:" + selected);
+              touched = true;
+              proposalStatus =
+                "Re-read labels applied explicitly; geometry and prior labels remain available through Undo.";
+              $("reread-status").textContent =
+                "Proposal applied. Human-review declarations and time were cleared; inspect every square.";
+              rereadRequest = null;
+              rereadResult = null;
+              changed();
+            }
           });
         }
         selected = state.boards.length ? 0 : -1;
@@ -776,6 +899,7 @@
           $("no-board").hidden = exists;
           $("delete-board").disabled = !exists;
           $("place-corners").disabled = !exists;
+          $("use-image-edges").disabled = !exists;
           $("add-board").disabled = state.boards.length >= 64;
           $("undo").disabled = !undoStack.length;
           $("redo").disabled = !redoStack.length;
@@ -784,6 +908,13 @@
             (corrections.size
               ? " · " + corrections.size + " marked correction(s)"
               : "");
+          const readable =
+            exists &&
+            validBoard(board(), data.width, data.height) &&
+            Boolean($("reread-labeler").value);
+          $("reread-board").disabled = !readable || Boolean(rereadRequest);
+          $("cancel-reread").hidden = !rereadRequest || Boolean(rereadResult);
+          $("apply-reread").hidden = !rereadResult;
           $("zoom").value = Math.round(zoom * 100) + "%";
           $("page-wrap").style.width = Math.round(zoom * 100) + "%";
           const sessionElapsed = Math.max(
@@ -810,6 +941,7 @@
             x.setAttribute("aria-pressed", String(i === selected));
             x.addEventListener("click", () => {
               selected = i;
+              selectedCorner = 0;
               placing = -1;
               active();
               render();
@@ -955,10 +1087,10 @@
           const host = $("corner-fields");
           host.replaceChildren();
           if (!board()) {
-            $("geometry").disabled = true;
+            $("geometry").hidden = true;
             return;
           }
-          $("geometry").disabled = false;
+          $("geometry").hidden = false;
           board().corners.forEach((p, i) => {
             const lab = document.createElement("label");
             lab.className = "corner";
@@ -1037,18 +1169,29 @@
               drawCrop();
             });
             select.addEventListener("keydown", (event) => {
-              if (!event.altKey) return;
-              const delta = {
-                ArrowLeft: -1,
-                ArrowRight: 1,
-                ArrowUp: -8,
-                ArrowDown: 8,
-              }[event.key];
-              if (delta === undefined) return;
+              if (event.altKey) {
+                const delta = {
+                  ArrowLeft: -1,
+                  ArrowRight: 1,
+                  ArrowUp: -8,
+                  ArrowDown: 8,
+                }[event.key];
+                if (delta === undefined) return;
+                event.preventDefault();
+                host
+                  .querySelectorAll("select")
+                  [Math.max(0, Math.min(63, i + delta))].focus();
+                return;
+              }
+              if (!chars.includes(event.key)) return;
               event.preventDefault();
-              host
-                .querySelectorAll("select")
-                [Math.max(0, Math.min(63, i + delta))].focus();
+              remember();
+              board().labels[i] = event.key;
+              touchedSquares.add(selected + ":" + i);
+              touched = true;
+              active();
+              renderLabels();
+              notifyDraft();
             });
             cell.append(text, select);
             host.append(cell);
@@ -1109,6 +1252,22 @@
           });
           ctx.closePath();
           ctx.stroke();
+          if (validBoard(board(), data.width, data.height)) {
+            ctx.lineWidth = 1;
+            for (let line = 1; line < 8; line++) {
+              const amount = line / 8,
+                top = gridPoint(amount, 0),
+                bottom = gridPoint(amount, 1),
+                left = gridPoint(0, amount),
+                right = gridPoint(1, amount);
+              ctx.beginPath();
+              ctx.moveTo(top[0] * sx, top[1] * sy);
+              ctx.lineTo(bottom[0] * sx, bottom[1] * sy);
+              ctx.moveTo(left[0] * sx, left[1] * sy);
+              ctx.lineTo(right[0] * sx, right[1] * sy);
+              ctx.stroke();
+            }
+          }
           if (
             proposedBoards[selected] &&
             validBoard(proposedBoards[selected], data.width, data.height)
@@ -1127,9 +1286,16 @@
             ctx.setLineDash([]);
           }
           board().corners.forEach((p, i) => {
-            ctx.fillStyle = "#e52020";
-            ctx.fillRect(p[0] * sx - 4, p[1] * sy - 4, 8, 8);
-            ctx.fillText(names[i], p[0] * sx + 6, p[1] * sy - 6);
+            const x = p[0] * sx,
+              y = p[1] * sy,
+              size = i === selectedCorner ? 22 : 18;
+            ctx.fillStyle = i === selectedCorner ? "#183c66" : "#e52020";
+            ctx.fillRect(x - size / 2, y - size / 2, size, size);
+            ctx.fillStyle = "white";
+            ctx.font = "bold 12px system-ui";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(String(i + 1), x, y);
           });
           drawCrop();
         }
@@ -1216,22 +1382,6 @@
           ];
         }
         window.addEventListener("resize", draw);
-        img.addEventListener("click", (e) => {
-          if (!board() || placing < 0) return;
-          const r = img.getBoundingClientRect();
-          remember();
-          board().corners[placing] = [
-            ((e.clientX - r.left) * data.width) / r.width,
-            ((e.clientY - r.top) * data.height) / r.height,
-          ];
-          touchedCorners.add(selected + ":" + placing);
-          placing = placing === 3 ? -1 : placing + 1;
-          $("click-help").textContent =
-            placing < 0
-              ? "Corners placed. You may refine their numeric values."
-              : "Click " + names[placing] + " corner.";
-          changed();
-        });
         function imagePoint(event) {
           const r = img.getBoundingClientRect();
           return [
@@ -1241,16 +1391,33 @@
         }
         $("overlay").addEventListener("pointerdown", (event) => {
           if (!board()) return;
-          const p = imagePoint(event),
-            distances = board().corners.map((c) =>
-              Math.hypot(c[0] - p[0], c[1] - p[1]),
+          const p = imagePoint(event);
+          if (placing >= 0) {
+            remember();
+            dragging = placing;
+            selectedCorner = placing;
+            board().corners[placing] = p;
+            touchedCorners.add(selected + ":" + placing);
+          } else {
+            const distances = board().corners.map((corner) =>
+              Math.hypot(corner[0] - p[0], corner[1] - p[1]),
             );
-          dragging = distances.indexOf(Math.min(...distances));
-          if (distances[dragging] > Math.max(data.width, data.height) * 0.08)
-            return (dragging = -1);
-          remember();
+            dragging = distances.indexOf(Math.min(...distances));
+            const bounds = $("overlay").getBoundingClientRect(),
+              threshold =
+                30 *
+                Math.max(
+                  data.width / bounds.width,
+                  data.height / bounds.height,
+                );
+            if (distances[dragging] > threshold) return (dragging = -1);
+            remember();
+            selectedCorner = dragging;
+          }
+          $("overlay").classList.add("is-dragging");
           $("overlay").setPointerCapture(event.pointerId);
           event.preventDefault();
+          draw();
         });
         $("overlay").addEventListener("pointermove", (event) => {
           if (dragging < 0 || !board()) return;
@@ -1264,13 +1431,28 @@
           render();
           notifyDraft();
         });
-        $("overlay").addEventListener("pointerup", () => {
+        function finishCornerDrag() {
           if (dragging >= 0) {
+            if (placing >= 0) placing = placing === 3 ? -1 : placing + 1;
             dragging = -1;
+            $("overlay").classList.remove("is-dragging");
+            $("click-help").textContent =
+              placing < 0
+                ? "Grid ready. Drag a numbered handle, or press 1–4 then use arrow keys, to refine it."
+                : "Now click the " + names[placing] + " corner.";
             changed();
           }
-        });
+        }
+        $("overlay").addEventListener("pointerup", finishCornerDrag);
+        $("overlay").addEventListener("pointercancel", finishCornerDrag);
         $("overlay").addEventListener("keydown", (event) => {
+          const numeric = Number(event.key);
+          if (numeric >= 1 && numeric <= 4) {
+            selectedCorner = numeric - 1;
+            placing = -1;
+            render();
+            return;
+          }
           if (
             !board() ||
             !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(
@@ -1279,7 +1461,7 @@
           )
             return;
           event.preventDefault();
-          const i = placing >= 0 ? placing : 0,
+          const i = selectedCorner,
             step = event.shiftKey ? 10 : 1;
           remember();
           board().corners[i][
@@ -1302,6 +1484,7 @@
           state.kind = "boards";
           state.boards.push(newBoard());
           selected = state.boards.length - 1;
+          selectedCorner = 0;
           touchedBoards.add("add:" + selected);
           changed();
         });
@@ -1311,15 +1494,37 @@
           touchedBoards.add("delete:" + selected);
           state.boards.splice(selected, 1);
           selected = Math.min(selected, state.boards.length - 1);
+          selectedCorner = 0;
           placing = -1;
           changed();
         });
         $("place-corners").addEventListener("click", () => {
           if (board()) {
             placing = 0;
-            $("click-help").textContent = "Click TL corner.";
+            selectedCorner = 0;
+            $("click-help").textContent = "Click the TL corner.";
             active();
+            $("overlay").focus();
+            render();
           }
+        });
+        $("use-image-edges").addEventListener("click", () => {
+          if (!board()) return;
+          remember();
+          board().corners = [
+            [0, 0],
+            [data.width, 0],
+            [data.width, data.height],
+            [0, data.height],
+          ];
+          selectedCorner = 0;
+          placing = -1;
+          [0, 1, 2, 3].forEach((corner) =>
+            touchedCorners.add(selected + ":" + corner),
+          );
+          $("click-help").textContent =
+            "Image edges selected as the inner grid. Drag a numbered handle if needed.";
+          changed();
         });
         $("orientation").addEventListener("change", () => {
           if (board()) {
@@ -1374,6 +1579,10 @@
           zoom = Math.max(0.5, zoom - 0.25);
           render();
         });
+        $("zoom-fit").addEventListener("click", () => {
+          zoom = 1;
+          render();
+        });
         $("session-toggle").addEventListener("click", () => {
           active();
           sessionRunning = !sessionRunning;
@@ -1405,6 +1614,37 @@
           active();
           render();
           notifyDraft();
+        });
+        $("reread-labeler").addEventListener("change", render);
+        $("reread-board").addEventListener("click", () => {
+          const current = board();
+          if (!current || !validBoard(current, data.width, data.height)) return;
+          rereadResult = null;
+          post("reread", {
+            image_sha256: data.image_sha256,
+            board_index: selected,
+            corners: current.corners.map((point) => point.slice()),
+            labeler: $("reread-labeler").value,
+          });
+          $("reread-status").textContent =
+            "Saving the exact draft before re-reading…";
+          $("reread-board").disabled = true;
+        });
+        $("cancel-reread").addEventListener("click", () => {
+          if (rereadRequest)
+            post("reread-cancel", { request_id: rereadRequest });
+        });
+        $("apply-reread").addEventListener("click", () => {
+          const current = board();
+          if (!rereadRequest || !rereadResult || !current) return;
+          post("reread-apply", {
+            request_id: rereadRequest,
+            image_sha256: data.image_sha256,
+            board_index: selected,
+            corners: current.corners.map((point) => point.slice()),
+          });
+          $("reread-status").textContent =
+            "Checking draft identity before applying…";
         });
         $("defer").addEventListener("click", () => {
           const bounded = $("defer-reason").value;

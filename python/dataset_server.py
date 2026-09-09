@@ -30,6 +30,7 @@ MAX_DUPLICATE_IMAGE_BYTES = p.MAX_PIXELS * 4
 
 
 def initialize():
+    p.initialize()
     with p.connect() as db:
         db.execute("""CREATE TABLE IF NOT EXISTS web_drafts(
             sample TEXT PRIMARY KEY REFERENCES samples(id), revision INTEGER NOT NULL,
@@ -47,6 +48,11 @@ def sample_row(db, sample_id):
     row = db.execute("SELECT * FROM samples WHERE id=? AND source NOT IN (SELECT source FROM exclusions)",
                      (sample_id,)).fetchone()
     p.require(row is not None, "page unavailable")
+    split = db.execute("SELECT json_extract(body,'$.split') FROM sources WHERE id=?",
+                       (row["source"],)).fetchone()[0]
+    p.require(not (split == "qualification" and
+                  db.execute("SELECT 1 FROM meta WHERE key='qualification_seal'").fetchone()),
+              "qualification is sealed")
     return row
 
 
@@ -156,9 +162,12 @@ def save_draft(data):
 
 def queue(candidate=None):
     with p.connect() as db:
+        sealed = bool(db.execute("SELECT 1 FROM meta WHERE key='qualification_seal'").fetchone())
         sources = []
         for number, row in enumerate(db.execute("SELECT id,body FROM sources WHERE id NOT IN (SELECT source FROM exclusions) ORDER BY id"), 1):
             body = json.loads(row["body"])
+            if sealed and body["split"] == "qualification":
+                continue
             sources.append({"id": row["id"], "label": f"Document {number}", "split": body["split"], "selected_pages": len(body["pages"])})
         pages = [dict(r) for r in db.execute("""SELECT s.id,s.source,s.page,s.revision,s.accepted,
                 CASE WHEN d.sample IS NULL THEN 0 ELSE 1 END AS draft,
@@ -168,7 +177,9 @@ def queue(candidate=None):
                  AND pr.sample_revision=s.revision AND pr.image_sha=s.sha) AS proposal_count,
                 COALESCE(json_extract(d.body,'$.kind'),json_extract(s.annotation,'$.kind')) AS review_state
                 FROM samples s LEFT JOIN web_drafts d ON s.id=d.sample AND s.revision=d.revision
-                WHERE s.source NOT IN (SELECT source FROM exclusions) ORDER BY s.source,s.page""")]
+                WHERE s.source NOT IN (SELECT source FROM exclusions)
+                AND (?=0 OR json_extract((SELECT body FROM sources WHERE id=s.source),'$.split')!='qualification')
+                ORDER BY s.source,s.page""", (int(sealed),))]
         # Same-split candidates are retained and reported by pipeline status/audits.
         # The dashboard queue is reserved for cross-split leakage investigation.
         duplicates = [dict(r) for r in db.execute("""SELECT d.* FROM duplicates d
@@ -178,6 +189,9 @@ def queue(candidate=None):
             AND a.source NOT IN (SELECT source FROM exclusions)
             AND b.source NOT IN (SELECT source FROM exclusions)
             ORDER BY d.a,d.b""")]
+        visible = {page["id"] for page in pages}
+        duplicates = [pair for pair in duplicates
+                      if pair["a"] in visible and pair["b"] in visible]
     return {"schema": "chess-ocr-dataset-app/1", "sources": sources, "pages": pages,
             "duplicates": duplicates, "status": p.status(),
             "proposal_status": proposals.status(),
@@ -190,6 +204,9 @@ def candidate_proposal(data, candidate):
               "invalid candidate request")
     with p.connect() as db:
         row = sample_row(db, data["sample_id"])
+        split = db.execute("SELECT json_extract(body,'$.split') FROM sources WHERE id=?",
+                           (row["source"],)).fetchone()[0]
+    p.require(split in {"train", "dev"}, "candidate proposals are forbidden on qualification")
     p.require(type(data["revision"]) is int and data["revision"] == row["revision"]
               and data["image_sha256"] == row["sha"], "page changed; reload before proposing")
     path = p.local_path(row["image"])
@@ -292,6 +309,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, proposals.providers())
             elif self.path == "/api/proposals/status":
                 self.reply(200, proposals.status())
+            elif route.path.startswith("/api/reread/"):
+                self.reply(200, proposals.board_reread_status(
+                    route.path.removeprefix("/api/reread/")))
             elif route.path.startswith("/api/proposals/"):
                 self.reply(200, proposals.sample_results(route.path.removeprefix("/api/proposals/")))
             elif route.path.startswith("/review/"):
@@ -379,6 +399,11 @@ class Handler(BaseHTTPRequestHandler):
                           and isinstance(data["reviewer"], str) and 0 < len(data["reviewer"].strip()) <= 80
                           and type(data["pages_per_pdf"]) is int and 1 <= data["pages_per_pdf"] <= 2000, "complete ingestion declarations")
                 result = p.ingest(argparse.Namespace(**data))
+            elif self.path == "/api/extend":
+                p.require(set(data) == {"source", "pages"}
+                          and isinstance(data["source"], str)
+                          and isinstance(data["pages"], str), "invalid extension request")
+                result = p.extend_source(data["source"], data["pages"])
             elif self.path == "/api/duplicate":
                 p.require(set(data) == {"a", "b", "decision"}, "invalid duplicate decision")
                 result = p.resolve_duplicate(data["a"], data["b"], data["decision"])
@@ -394,6 +419,13 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/proposals/stop":
                 p.require(not data, "proposal stop takes no fields")
                 result = proposals.stop()
+            elif self.path == "/api/reread/start":
+                result = proposals.create_board_reread(data)
+            elif self.path == "/api/reread/cancel":
+                p.require(set(data) == {"request_id"}, "invalid board re-read cancellation")
+                result = proposals.cancel_board_reread(data["request_id"])
+            elif self.path == "/api/reread/apply":
+                result = proposals.apply_board_reread(data)
             elif self.path == "/api/defer":
                 result = proposals.defer(data)
             else:

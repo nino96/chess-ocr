@@ -14,6 +14,8 @@ import {
   labelResultSchema,
   localizationResultSchema,
   providerManifestSchema,
+  runBoardReread,
+  type BuiltInRegistry,
   type LabelProvider,
   type LocalizationProvider,
 } from "../src/proposals/index.ts";
@@ -217,6 +219,75 @@ test("composition preserves localizer candidates and labels each candidate", asy
   )(input(raster(8, 8), 8, 8));
   assert.equal(result.localization.candidates[0]!.id, "board");
   assert.equal(result.labels[0]!.candidateId, "board");
+});
+
+test("board re-read labels one exact supplied quadrilateral without localization", async () => {
+  const labelManifest = providerManifestSchema.parse(
+    manifest("labels", "labels", "fenshot-labeler-v1"),
+  );
+  let observedCorners: unknown;
+  const labeler: LabelProvider = {
+    manifest: labelManifest,
+    async label(value, board) {
+      observedCorners = board.corners;
+      return labelResultSchema.parse({
+        schema: PROPOSAL_VERSION,
+        requestId: value.requestId,
+        image: value.image,
+        provider: labelManifest,
+        candidateId: board.id,
+        squares: Array.from({ length: 64 }, (_, index) => ({
+          label: index ? "empty" : "K",
+          probabilities: null,
+          uncertain: true,
+        })),
+        warnings: ["test proposal"],
+      });
+    },
+  };
+  const registry: BuiltInRegistry = {
+    manifests: [labelManifest],
+    localization() {
+      throw new Error("localization must not run");
+    },
+    labels(requested) {
+      assert.deepEqual(requested, labelManifest);
+      return labeler;
+    },
+  };
+  const corners = [
+    { x: 1, y: 2 },
+    { x: 78, y: 3 },
+    { x: 77, y: 79 },
+    { x: 2, y: 78 },
+  ] as [
+    { x: number; y: number },
+    { x: number; y: number },
+    { x: number; y: number },
+    { x: number; y: number },
+  ];
+  const result = await runBoardReread(
+    {
+      sampleId: "sample",
+      revision: 2,
+      imageSha256: hash,
+      draftVersion: 4,
+      boardIndex: 1,
+      width: 80,
+      height: 80,
+      corners,
+      labelerManifest: labelManifest,
+      requestId: hash,
+      configSha256: hash,
+      rgba: raster(80, 80),
+    },
+    registry,
+  );
+  assert.deepEqual(observedCorners, corners);
+  assert.equal(result.labels[0], "K");
+  assert.equal(result.labels[1], ".");
+  assert.equal(result.boardIndex, 1);
+  assert.deepEqual(result.provider, labelManifest);
 });
 
 const refinement = {

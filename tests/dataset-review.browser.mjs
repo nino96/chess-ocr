@@ -135,6 +135,27 @@ test("offline review edits image-relative labels, exports versioned decisions an
       await page.locator("#zoom").evaluate((el) => el.value),
       "125%",
     );
+    await page.getByRole("button", { name: "Fit", exact: true }).click();
+    assert.equal(
+      await page.locator("#zoom").evaluate((el) => el.value),
+      "100%",
+    );
+    await page
+      .getByRole("button", { name: "Use image edges", exact: true })
+      .click();
+    await page.locator("#overlay").focus();
+    await page.keyboard.press("1");
+    await page.keyboard.press("Shift+ArrowRight");
+    await page.locator("#geometry summary").click();
+    assert.equal(
+      await page.getByLabel("TL x coordinate", { exact: true }).inputValue(),
+      "10",
+    );
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    assert.equal(
+      await page.getByLabel("TL x coordinate", { exact: true }).inputValue(),
+      "0",
+    );
     await page.getByLabel("Square a8", { exact: true }).selectOption("K");
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     assert.equal(
@@ -146,6 +167,13 @@ test("offline review edits image-relative labels, exports versioned decisions an
       await page.getByLabel("Square a8", { exact: true }).inputValue(),
       "K",
     );
+    await page.getByLabel("Square a8", { exact: true }).focus();
+    await page.keyboard.press("q");
+    assert.equal(
+      await page.getByLabel("Square a8", { exact: true }).inputValue(),
+      "q",
+    );
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
     await page.locator("#proposal-choice").selectOption("1");
     assert.equal(
       await page.getByLabel("Square a8", { exact: true }).inputValue(),

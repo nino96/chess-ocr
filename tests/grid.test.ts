@@ -97,6 +97,22 @@ test("inverse homography sampling is deterministic and maps output corners to so
   assert.deepEqual([...a.data.slice(15 * 4, 64)], [120, 150, 7, 255]);
 });
 
+test("rectification accepts image-edge geometry used by manual review", () => {
+  const r = raster(4, 4);
+  const result = rectifyGrid(
+    r,
+    [
+      { x: 0, y: 0 },
+      { x: 4, y: 0 },
+      { x: 4, y: 4 },
+      { x: 0, y: 4 },
+    ],
+    4,
+    4,
+  );
+  assert.equal(result.data.length, 4 * 4 * 4);
+});
+
 test("refined-grid deduplication removes overlap but preserves separate boards", () => {
   const corners = (x: number): GridCorners => [
     { x, y: 10 },

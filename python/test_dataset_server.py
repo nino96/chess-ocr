@@ -182,6 +182,61 @@ class DatasetServerTests(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertIn("page changed while proposing", json.loads(body)["error"])
 
+    def test_qualification_forbids_direct_candidate_proposals(self):
+        qualification = self.make_second_sample("qualification", "qualification")
+
+        class Candidate:
+            public_identity = {"name": "test", "version": "1",
+                               "qualification": "synthetic-development-only"}
+
+            def recognize(self, _image):
+                raise AssertionError("qualification pixels reached the provider")
+
+        self.server.candidate = Candidate()
+        cookie = self.handshake()
+        request = {"sample_id": qualification, "revision": 0,
+                   "image_sha256": p.digest(p.local_path(f"pages/{qualification}.png"))}
+        status, _, body = self.post("/api/candidate", request, self.write_headers(cookie))
+        self.assertEqual(status, 409)
+        self.assertIn("forbidden on qualification", json.loads(body)["error"])
+
+    def test_extension_and_board_reread_routes_preserve_request_contracts(self):
+        cookie = self.handshake()
+        headers = self.write_headers(cookie)
+        with patch.object(p, "extend_source", return_value={"state": "extended"}) as extend:
+            status, _, body = self.post("/api/extend", {"source": "test", "pages": "2-13"}, headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["state"], "extended")
+        extend.assert_called_once_with("test", "2-13")
+
+        request_id = "a" * 64
+        start_result = {"schema": "chess-ocr-board-reread/1", "state": "starting",
+                        "request_id": request_id}
+        with patch.object(s.proposals, "create_board_reread", return_value=start_result) as start:
+            status, _, body = self.post("/api/reread/start", {"bound": "request"}, headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), start_result)
+        start.assert_called_once_with({"bound": "request"})
+
+        with patch.object(s.proposals, "board_reread_status",
+                          return_value={"state": "complete"}) as reread_status:
+            status, _, body = self.request("GET", f"/api/reread/{request_id}",
+                                           headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["state"], "complete")
+        reread_status.assert_called_once_with(request_id)
+
+        with patch.object(s.proposals, "cancel_board_reread",
+                          return_value={"state": "cancel-requested"}) as cancel:
+            self.assertEqual(self.post("/api/reread/cancel", {"request_id": request_id}, headers)[0], 200)
+        cancel.assert_called_once_with(request_id)
+
+        apply_request = {"request_id": request_id, "sample_id": self.sample}
+        with patch.object(s.proposals, "apply_board_reread",
+                          return_value={"state": "applicable"}) as apply:
+            self.assertEqual(self.post("/api/reread/apply", apply_request, headers)[0], 200)
+        apply.assert_called_once_with(apply_request)
+
     def test_queue_exposes_only_cross_split_duplicate_candidates(self):
         same_split = self.make_second_sample("same", "train")
         cross_split = self.make_second_sample("cross", "dev")

@@ -44,6 +44,7 @@ Built-in provider IDs are:
 | Localization | `fenshot-localizer-v1` | unchanged FENShot grid detector        |
 | Localization | `classical-grid-v1`    | deterministic multi-grid evidence      |
 | Labels       | `fenshot-labeler-v1`   | unchanged FENShot ONNX tile classifier |
+| Labels       | `fenshot-rectified-labeler-v1` | FENShot labels after exact reviewer-supplied quadrilateral rectification |
 
 `chess-ocr-onnx-localizer-v1` and `chess-ocr-onnx-labeler-v1` are executable fixed
 adapters. They accept only explicitly registered manifests under ignored `work/`
@@ -99,13 +100,18 @@ inspect uncertainty highlighting, switch proposal pairs without losing edits,
 mark corrections, and defer a page with a bounded reason. An optional five-minute
 session is a timebox only; it does not auto-submit or weaken complete-page review.
 
-A label-only **re-read after changing the grid** is intentionally not exposed in
-this increment. FENShot's unchanged tile preprocessor accepts an axis-aligned box,
-not an arbitrary reviewed quadrilateral; silently applying it after a perspective
-corner edit would misrepresent the pixels being classified. Add that action only
-with a reviewed rectification-capable label adapter and the same stale-request,
-budget and edit-preservation tests. Reviewers can still switch complete stored
-proposals and edit labels manually.
+After drawing or correcting a complete grid, **Re-read this board** can run a
+registered exact-rectification labeler on that reviewer-supplied quadrilateral.
+The request binds sample ID, revision, source-image hash, persisted draft version,
+board index, corners and immutable provider identity. FENShot uses the shared
+RGBA 768×768 quadrilateral rectification before its unchanged tile classifier;
+the retained v2 adapter uses its registered exact classifier preprocessing.
+
+The result remains a label-only proposal. **Apply re-read proposal** is explicit
+and undoable, preserves geometry, clears the human and complete-page declarations
+and restarts review timing. A page, draft or corner change makes the result stale.
+Cancellation and timeout preserve existing labels. Re-read is limited to TRAIN
+and DEV and no provider route accepts qualification.
 
 The accepted review stores no probability payload in the human annotation.
 Separate local assistance evidence records active time, the proposal run,

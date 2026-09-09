@@ -71,6 +71,20 @@ class DatasetResetTests(unittest.TestCase):
         self.assertNotEqual(again["archive"], result["archive"])
         self.assertEqual(p.status()["review_decisions"], 1)
 
+    def test_reset_archives_and_clears_qualification_seal(self):
+        evaluation = p.local_path("evaluation/qualification-test.json")
+        p.write_json(evaluation, {"schema": "chess-ocr-qualification-seal/1"})
+        with p.connect() as db:
+            p.set_meta(db, "qualification_seal",
+                       {"id": "test", "path": "evaluation/qualification-test.json"})
+        result = reset.reset_dataset("START OVER")
+        archived = p.local_path(result["archive"]) / "evaluation/qualification-test.json"
+        self.assertTrue(archived.is_file())
+        self.assertFalse(p.local_path("evaluation").exists())
+        with p.connect() as db:
+            self.assertIsNone(db.execute(
+                "SELECT 1 FROM meta WHERE key='qualification_seal'").fetchone())
+
     def test_reset_refuses_live_proposal_run(self):
         with p.connect() as db:
             db.execute("""CREATE TABLE proposal_runs(

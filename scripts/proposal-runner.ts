@@ -4,6 +4,7 @@ import { dirname, relative, resolve } from "node:path";
 import * as ort from "onnxruntime-web/wasm";
 import {
   createBuiltInRegistry,
+  runBoardReread,
   runProposal,
   validateManifest,
 } from "../src/proposals/index.ts";
@@ -64,12 +65,18 @@ const request: unknown = JSON.parse(requestBytes.toString("utf8"));
 if (!request || typeof request !== "object" || Array.isArray(request))
   throw new Error("invalid proposal request");
 const value = request as Record<string, unknown>;
-const localizer = validateManifest(value.localizer);
 const labeler = validateManifest(value.labeler);
-if (localizer.capability !== "localization" || labeler.capability !== "labels")
+const boardReread = value.mode === "board-reread";
+const localizer = boardReread ? null : validateManifest(value.localizer);
+if (
+  (!boardReread && localizer?.capability !== "localization") ||
+  labeler.capability !== "labels"
+)
   throw new Error("provider capability mismatch");
 const gridSource = await readFile(resolve(repository, "src/grid.ts"));
-for (const manifest of [localizer, labeler]) {
+for (const manifest of [localizer, labeler].filter(
+  (candidate): candidate is typeof labeler => candidate !== null,
+)) {
   const configuration = manifest.configuration;
   if (
     configuration &&
@@ -79,7 +86,9 @@ for (const manifest of [localizer, labeler]) {
 }
 if (
   typeof value.config_sha256 !== "string" ||
-  sha256(Buffer.from(canonical({ localizer, labeler }))) !== value.config_sha256
+  sha256(
+    Buffer.from(canonical(boardReread ? { labeler } : { localizer, labeler })),
+  ) !== value.config_sha256
 )
   throw new Error("provider configuration identity mismatch");
 if (
@@ -121,12 +130,14 @@ async function providerArtifact(manifest: typeof labeler) {
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.wasmPaths =
   resolve(repository, "node_modules/onnxruntime-web/dist") + "/";
-const fenshotModel =
-  labeler.runtime === "fenshot-labeler-v1"
-    ? await providerArtifact(labeler)
-    : null;
+const fenshotModel = [
+  "fenshot-labeler-v1",
+  "fenshot-rectified-labeler-v1",
+].includes(labeler.runtime)
+  ? await providerArtifact(labeler)
+  : null;
 const onnxLocalizerModel =
-  localizer.runtime === "chess-ocr-onnx-localizer-v1"
+  localizer?.runtime === "chess-ocr-onnx-localizer-v1"
     ? await providerArtifact(localizer)
     : null;
 const onnxLabelerModel =
@@ -150,31 +161,51 @@ try {
     onnxLabelerSession = await ort.InferenceSession.create(onnxLabelerModel, {
       executionProviders: ["wasm"],
     });
-  const result = await runProposal(
-    {
-      sampleId: String(value.sample_id),
-      revision: Number(value.revision),
-      imageSha256: String(value.image_sha256),
-      width: value.width,
-      height: value.height,
-      localizerManifest: localizer,
-      labelerManifest: labeler,
-      runId: String(value.run_id),
-      configSha256: String(value.config_sha256),
-      rgba: new Uint8ClampedArray(
-        rgbaBytes.buffer,
-        rgbaBytes.byteOffset,
-        rgbaBytes.byteLength,
-      ),
-    },
-    createBuiltInRegistry({
-      fenshotSession: fenshotSession ?? undefined,
-      onnxLocalizerSession: onnxLocalizerSession ?? undefined,
-      onnxLabelerSession: onnxLabelerSession ?? undefined,
-      modelSha256: labeler.model.sha256,
-      manifests: [localizer, labeler],
-    }),
+  const registry = createBuiltInRegistry({
+    fenshotSession: fenshotSession ?? undefined,
+    onnxLocalizerSession: onnxLocalizerSession ?? undefined,
+    onnxLabelerSession: onnxLabelerSession ?? undefined,
+    modelSha256: labeler.model.sha256,
+    manifests: [...(localizer ? [localizer] : []), labeler],
+  });
+  const rgba = new Uint8ClampedArray(
+    rgbaBytes.buffer,
+    rgbaBytes.byteOffset,
+    rgbaBytes.byteLength,
   );
+  const result = boardReread
+    ? await runBoardReread(
+        {
+          sampleId: String(value.sample_id),
+          revision: Number(value.revision),
+          imageSha256: String(value.image_sha256),
+          draftVersion: Number(value.draft_version),
+          boardIndex: Number(value.board_index),
+          width: value.width,
+          height: value.height,
+          corners: value.corners,
+          labelerManifest: labeler,
+          requestId: String(value.request_id),
+          configSha256: String(value.config_sha256),
+          rgba,
+        },
+        registry,
+      )
+    : await runProposal(
+        {
+          sampleId: String(value.sample_id),
+          revision: Number(value.revision),
+          imageSha256: String(value.image_sha256),
+          width: value.width,
+          height: value.height,
+          localizerManifest: localizer!,
+          labelerManifest: labeler,
+          runId: String(value.run_id),
+          configSha256: String(value.config_sha256),
+          rgba,
+        },
+        registry,
+      );
   const output = resolve(outputPath);
   if (
     !inside(output, stagingRoot) ||

@@ -68,6 +68,9 @@ let duplicateIndex = 0;
 let duplicateZoom: "fit" | "100" | "200" = "fit";
 let duplicateUrls: string[] = [];
 let duplicateLoad = 0;
+let rereadProviders: Array<{ id: string; label: string }> = [];
+let rereadDefault = "";
+let activeReread: { requestId: string; session: number } | undefined;
 const note = (message: string) => {
   el("message").textContent = message;
 };
@@ -382,6 +385,20 @@ async function refresh(): Promise<void> {
   input("document").value = data.sources.some((s) => s.id === selected)
     ? selected
     : "";
+  const extended = input("extend-source").value;
+  el<HTMLSelectElement>("extend-source").replaceChildren(
+    new Option("Select a document", ""),
+    ...data.sources.map(
+      (source) =>
+        new Option(
+          `${source.label} · ${source.split} · ${source.selected_pages} pages`,
+          source.id,
+        ),
+    ),
+  );
+  input("extend-source").value = data.sources.some((s) => s.id === extended)
+    ? extended
+    : "";
   const s = data.status;
   const worker = object(s.worker) ? s.worker.state : "unknown";
   const jobs = object(s.jobs)
@@ -419,6 +436,20 @@ async function refreshProposalControls(): Promise<void> {
     const labelers = providers.filter(
       (p) => object(p) && p.capability === "labels",
     );
+    rereadProviders = labelers.flatMap((provider) =>
+      object(provider) &&
+      typeof provider.id === "string" &&
+      ["fenshot-rectified-labeler-v1", "chess-ocr-onnx-labeler-v1"].includes(
+        String(provider.runtime),
+      )
+        ? [
+            {
+              id: provider.id,
+              label: `${String(object(provider.model) ? provider.model.name : provider.id)} · ${String(provider.preprocessing)}`,
+            },
+          ]
+        : [],
+    );
     const selectedLocalizer = el<HTMLSelectElement>("proposal-localizer").value;
     const selectedLabeler = el<HTMLSelectElement>("proposal-labeler").value;
     proposalOptions("proposal-localizer", localizers);
@@ -430,7 +461,19 @@ async function refreshProposalControls(): Promise<void> {
         el<HTMLSelectElement>("proposal-localizer").value = localizer;
       if (!selectedLabeler && typeof labeler === "string")
         el<HTMLSelectElement>("proposal-labeler").value = labeler;
+      rereadDefault =
+        typeof result.defaults.board_reread === "string"
+          ? result.defaults.board_reread
+          : "";
     }
+    frame.contentWindow?.postMessage(
+      {
+        type: "reread-providers",
+        providers: rereadProviders,
+        default: rereadDefault,
+      },
+      location.origin,
+    );
     const status = await api("/api/proposals/status");
     const latest =
       Array.isArray(status.runs) && object(status.runs[0])
@@ -566,6 +609,7 @@ function closeEditor(): void {
   draft = undefined;
   ready = false;
   currentImageSha = "";
+  activeReread = undefined;
   editorSession++;
   el("editor-section").hidden = true;
   el("queue").hidden = false;
@@ -616,6 +660,14 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
         { type: "profile", ...profile },
         location.origin,
       );
+    frame.contentWindow?.postMessage(
+      {
+        type: "reread-providers",
+        providers: rereadProviders,
+        default: rereadDefault,
+      },
+      location.origin,
+    );
     // Older servers deliberately have no proposal route. Keep review usable.
     void api(`/api/proposals/${encodeURIComponent(current.id)}`)
       .then((proposal) => {
@@ -660,6 +712,129 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
         note(e instanceof Error ? e.message : "Save failed");
       });
     }, 400);
+  } else if (
+    message.type === "reread" &&
+    message.revision === current.revision &&
+    message.image_sha256 === currentImageSha &&
+    Number.isInteger(message.board_index) &&
+    Array.isArray(message.corners) &&
+    typeof message.labeler === "string" &&
+    rereadProviders.some((provider) => provider.id === message.labeler)
+  ) {
+    const session = editorSession;
+    void run(async () => {
+      try {
+        await flush();
+        if (!current || session !== editorSession)
+          throw new Error("The page changed before board re-read started.");
+        const response = await api("/api/reread/start", {
+          sample_id: current.id,
+          revision: current.revision,
+          image_sha256: currentImageSha,
+          draft_version: draftVersion,
+          board_index: message.board_index,
+          corners: message.corners,
+          labeler: message.labeler,
+        });
+        if (
+          response.schema !== "chess-ocr-board-reread/1" ||
+          typeof response.request_id !== "string"
+        )
+          throw new Error("Invalid board re-read response.");
+        activeReread = { requestId: response.request_id, session };
+        frame.contentWindow?.postMessage(
+          { type: "reread-started", request_id: response.request_id },
+          location.origin,
+        );
+        void pollBoardReread(response.request_id, session);
+      } catch (error) {
+        frame.contentWindow?.postMessage(
+          {
+            type: "reread-failed",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Board re-read could not start.",
+          },
+          location.origin,
+        );
+        throw error;
+      }
+    });
+  } else if (
+    message.type === "reread-cancel" &&
+    typeof message.request_id === "string" &&
+    activeReread?.requestId === message.request_id
+  ) {
+    void run(async () => {
+      await api("/api/reread/cancel", { request_id: message.request_id });
+      frame.contentWindow?.postMessage(
+        {
+          type: "reread-failed",
+          request_id: message.request_id,
+          message:
+            "Board re-read cancellation requested; current labels were preserved.",
+        },
+        location.origin,
+      );
+      activeReread = undefined;
+    });
+  } else if (
+    message.type === "reread-apply" &&
+    typeof message.request_id === "string" &&
+    activeReread?.requestId === message.request_id &&
+    message.revision === current.revision &&
+    message.image_sha256 === currentImageSha &&
+    Number.isInteger(message.board_index) &&
+    Array.isArray(message.corners)
+  ) {
+    const session = editorSession;
+    void run(async () => {
+      try {
+        await flush();
+        if (!current || session !== editorSession)
+          throw new Error(
+            "The page changed before the proposal could be applied.",
+          );
+        const response = await api("/api/reread/apply", {
+          request_id: message.request_id,
+          sample_id: current.id,
+          revision: current.revision,
+          image_sha256: currentImageSha,
+          draft_version: draftVersion,
+          board_index: message.board_index,
+          corners: message.corners,
+        });
+        if (
+          response.schema !== "chess-ocr-board-reread/1" ||
+          response.state !== "applicable" ||
+          !object(response.result)
+        )
+          throw new Error("Invalid board re-read apply response.");
+        frame.contentWindow?.postMessage(
+          {
+            type: "reread-applied",
+            request_id: message.request_id,
+            result: response.result,
+          },
+          location.origin,
+        );
+        activeReread = undefined;
+      } catch (error) {
+        frame.contentWindow?.postMessage(
+          {
+            type: "reread-failed",
+            request_id: message.request_id,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Board re-read became stale; current labels were preserved.",
+          },
+          location.origin,
+        );
+        throw error;
+      }
+    });
   } else if (
     message.type === "submit" &&
     message.revision === current.revision &&
@@ -746,6 +921,67 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
     });
   }
 });
+
+async function pollBoardReread(
+  requestId: string,
+  session: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 180; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (
+      activeReread?.requestId !== requestId ||
+      activeReread.session !== session ||
+      editorSession !== session
+    )
+      return;
+    try {
+      const response = await api(
+        `/api/reread/${encodeURIComponent(requestId)}`,
+      );
+      if (["starting", "running"].includes(String(response.state))) continue;
+      if (response.state === "complete") {
+        frame.contentWindow?.postMessage(
+          { type: "reread-ready", request_id: requestId },
+          location.origin,
+        );
+        return;
+      }
+      frame.contentWindow?.postMessage(
+        {
+          type: "reread-failed",
+          request_id: requestId,
+          message: `Board re-read ${String(response.state)}; current labels were preserved.`,
+        },
+        location.origin,
+      );
+      activeReread = undefined;
+      return;
+    } catch (error) {
+      frame.contentWindow?.postMessage(
+        {
+          type: "reread-failed",
+          request_id: requestId,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Board re-read status failed.",
+        },
+        location.origin,
+      );
+      activeReread = undefined;
+      return;
+    }
+  }
+  frame.contentWindow?.postMessage(
+    {
+      type: "reread-failed",
+      request_id: requestId,
+      message: "Board re-read status timed out; current labels were preserved.",
+    },
+    location.origin,
+  );
+  activeReread = undefined;
+}
 window.addEventListener("beforeunload", (event) => {
   releaseDuplicateImages();
   if (generation !== persisted || submitting) {
@@ -923,6 +1159,20 @@ el("ingest").addEventListener("click", () => {
     });
     note(
       `Inbox processed (${String(result.state ?? "ready")}). Choose Start / resume rendering to render the selected pages.`,
+    );
+    await refresh();
+  });
+});
+el("extend").addEventListener("click", () => {
+  void run(async () => {
+    await flush();
+    const source = input("extend-source").value;
+    const pages = input("extend-pages").value.trim();
+    if (!source || !pages)
+      throw new Error("Choose a document and enter exactly 12 explicit pages.");
+    const result = await api("/api/extend", { source, pages });
+    note(
+      `${String(result.added)} page(s) added. Choose Start / resume rendering to process the new immutable selection.`,
     );
     await refresh();
   });

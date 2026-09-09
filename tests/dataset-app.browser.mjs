@@ -223,6 +223,78 @@ finally:
       await editor.getByLabel("Square a8", { exact: true }).inputValue(),
       "K",
     );
+    const rereadId = "d".repeat(64);
+    await page.route("**/api/reread/start", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema: "chess-ocr-board-reread/1",
+          state: "starting",
+          request_id: rereadId,
+        }),
+      }),
+    );
+    await page.route(`**/api/reread/${rereadId}`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ state: "complete" }),
+      }),
+    );
+    await page.route("**/api/reread/apply", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schema: "chess-ocr-board-reread/1",
+          state: "applicable",
+          result: {
+            boardIndex: 0,
+            corners: [
+              [10, 10],
+              [150, 10],
+              [150, 150],
+              [10, 150],
+            ],
+            labels: Array(64).fill("N"),
+            probabilities: Array(64).fill(null),
+            uncertain: Array(64).fill(true),
+          },
+        }),
+      }),
+    );
+    await editor
+      .locator("#reread-labeler option")
+      .nth(1)
+      .waitFor({ state: "attached" });
+    await editor
+      .getByRole("button", { name: "Re-read this board", exact: true })
+      .click();
+    await editor
+      .getByText(/label-only proposal is ready/i, { exact: false })
+      .waitFor();
+    await editor
+      .getByRole("button", { name: "Apply re-read proposal", exact: true })
+      .click();
+    assert.equal(
+      await editor.getByLabel("Square a8", { exact: true }).inputValue(),
+      "N",
+    );
+    assert.equal(
+      await editor
+        .getByLabel("I am a human reviewer", { exact: true })
+        .isChecked(),
+      false,
+    );
+    await editor.getByRole("button", { name: "Undo", exact: true }).click();
+    assert.equal(
+      await editor.getByLabel("Square a8", { exact: true }).inputValue(),
+      "K",
+    );
+    await page.unroute("**/api/reread/start");
+    await page.unroute(`**/api/reread/${rereadId}`);
+    await page.unroute("**/api/reread/apply");
     assert.equal(
       await editor
         .getByLabel("I am a human reviewer", { exact: true })

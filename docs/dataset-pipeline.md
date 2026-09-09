@@ -110,11 +110,21 @@ same group even in later invocations. Unknown groups are explicitly unverified
 and cannot be ingested directly as qualification. Human artwork review is still
 needed before reporting verified independence.
 
-By default, this selects up to 40 uniformly spaced pages across each PDF, without
-consulting any detector. Use `--pages-per-pdf` to choose a larger bounded initial
-sample. Source records and page selections are immutable; extending an already
-admitted book's selection is not yet supported. Plan the selection before ingest.
-This is a page sample, not automatic discovery of all diagrams in a book.
+By default, ingestion selects uniformly spaced pages across each PDF without
+consulting any detector. For the diversified tranche, start a component with 12
+pages. When human review shows useful diagram yield or a missing condition, add
+one explicit 12-page increment, up to 48 pages for that source:
+
+```sh
+pnpm run dataset extend SOURCE_ID --pages 13-24
+pnpm run dataset start
+```
+
+Extension is append-only and idempotent. It retains source identity, split and
+provenance, records the prior and new record hashes in source history, rejects
+duplicate or out-of-range selections, and queues only newly selected pages. The
+same action is available in the dashboard. This remains a page sample, not
+automatic discovery of all diagrams in a book.
 
 The worker renders only selected pages (maximum dimension 2400), preserving the
 PDF original locally. Original image sources retain their encoded raster
@@ -134,11 +144,13 @@ pnpm run dataset retry 7 --after-repair  # one additional attempt after addressi
 pnpm run dataset start
 ```
 
-`run` is the foreground equivalent of `start`. One writer lock covers acquisition,
-ingestion, review imports and export. Status/stop remain available. Decoder child
-processes inherit the lock, so a crashed supervisor cannot start an overlapping
-attempt while its child still runs. Attempts have CPU/memory/file-size/wall-time
-limits; failed descendants are killed. Downloads are atomic and hash-checked,
+`run` is the foreground equivalent of `start`. A dedicated supervisor lock keeps
+acquisition/export workers exclusive, while short writer transactions allow
+dashboard draft saves and human review decisions during rendering. Decoder child
+processes inherit the supervisor lock, so a crashed supervisor cannot start an
+overlapping attempt while its child still runs. Reset and export still require an
+exclusive boundary. Attempts have CPU/memory/file-size/wall-time limits; failed
+descendants are killed. Downloads are atomic and hash-checked,
 with bounded retries/backoff (three initial attempts). Partial downloads restart
 from byte zero under a new reservation; HTTP range resumption is not assumed.
 
@@ -179,6 +191,14 @@ configured local candidate can create an editable on-demand proposal, but cannot
 accept a page or set either human declaration; see
 [local candidate testing](local-candidate.md).
 
+The geometry workspace includes a full 8×8 overlay, numbered draggable handles,
+**Set four corners**, **Use image edges**, and **Fit**. Press `1`–`4` to select a
+corner, use the arrow keys to move it one image pixel, and hold Shift for ten
+pixels. Piece characters can be typed directly into a focused square; numeric
+corner fields remain available under the optional adjustment section. These are
+editing conveniences only: every board and all 64 squares still require human
+inspection.
+
 ### Assisted proposals
 
 The dashboard has separate localizer and labeler selectors, and the same providers
@@ -187,10 +207,10 @@ prefill and draft-preservation rules, manifests, schemas, the issue #3 integrati
 boundary and the metric definitions are all specified once in
 [assisted dataset review](assisted-review.md); the commands live there too.
 
-One pipeline-specific consequence: the web app and the acquisition/export worker
-share a single writer lock, so active rendering can temporarily block a draft
-save. Use **Stop job** for the worker — `Ctrl+C` stops only the web app — then
-choose **Retry saving draft**; your browser draft remains available for that retry.
+Rendering and review use separate supervisor/short-transaction locks, so autosave
+can proceed while acquisition is active. Use **Stop job** only to stop acquisition;
+`Ctrl+C` stops only the web app. A rare failed save remains in the browser and can
+be retried with **Retry saving draft**.
 
 ## Optional standalone HTML fallback
 
@@ -284,6 +304,19 @@ but leave the active review/export set. This decision is recorded permanently;
 there is no automatic reassignment into another split. Inspect any other sources
 with potentially shared artwork before claiming the remaining splits independent.
 
+After at least 100 qualification boards from three reviewed independent components
+have been accepted without provider results, seal their membership, page hashes,
+annotations and review-history hashes locally:
+
+```sh
+pnpm run dataset seal-qualification
+```
+
+The ignored seal is integrity-checked by validation. Sealed qualification pages
+disappear from review/proposal queues and remain excluded from export. Do not seal
+until the assigned human qualification review is complete; the action is a freeze,
+not a repair tool.
+
 ## Validation and export
 
 ```sh
@@ -331,6 +364,7 @@ not an aggregate tile score or source count alone.
 
 ```sh
 work/dataset-venv/bin/python -m unittest python/test_dataset_pipeline.py python/test_dataset_reset.py python/test_dataset_server.py python/test_dataset_proposals.py
+work/dataset-venv/bin/python python/dataset_scale_gate.py  # requires loopback sockets
 pnpm run check
 pnpm test
 pnpm run build
