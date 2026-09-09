@@ -2,6 +2,9 @@ import { z } from "zod";
 import { LABELS, identitySchema } from "./contract.ts";
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
+export const CANDIDATE_MANIFEST_MAX_BYTES = 64 * 1024;
+export const CANDIDATE_CLASSIFIER_MAX_BYTES = 32 * 1024 * 1024;
+export const CANDIDATE_DETECTOR_MAX_BYTES = 64 * 1024 * 1024;
 export const LEGACY_DETECTOR_PREPROCESSING = "legacy-bgr-div255-v1";
 export const V2_DETECTOR_PREPROCESSING = "yolox-rgb-imagenet-v2";
 export const detectorPreprocessingSchema = z.enum([
@@ -79,9 +82,9 @@ export const candidateManifestSchema = z
         code: "custom",
         message: "Candidate classifier label order does not match the contract",
       });
-    if (value.classifier.bytes > 32 * 1024 * 1024)
+    if (value.classifier.bytes > CANDIDATE_CLASSIFIER_MAX_BYTES)
       context.addIssue({ code: "custom", message: "Classifier is too large" });
-    if (value.detector.bytes > 64 * 1024 * 1024)
+    if (value.detector.bytes > CANDIDATE_DETECTOR_MAX_BYTES)
       context.addIssue({ code: "custom", message: "Detector is too large" });
     if (
       value.detector.proposalScoreThreshold >
@@ -114,12 +117,14 @@ async function readBounded(file: File, maximum: number): Promise<Uint8Array> {
   return new Uint8Array(await file.arrayBuffer());
 }
 
-export async function loadCandidateFiles(
-  manifestFile: File,
-  classifierFile: File,
-  detectorFile: File,
-): Promise<CandidateConfig> {
-  const manifestBytes = await readBounded(manifestFile, 64 * 1024);
+export function parseCandidateManifestBytes(
+  manifestBytes: Uint8Array,
+): CandidateManifest {
+  if (
+    manifestBytes.byteLength <= 0 ||
+    manifestBytes.byteLength > CANDIDATE_MANIFEST_MAX_BYTES
+  )
+    throw new Error("Candidate file is outside its size bound");
   let value: unknown;
   try {
     value = JSON.parse(
@@ -138,11 +143,22 @@ export async function loadCandidateFiles(
     throw new Error(
       `Candidate bundle schema ${value.schema.endsWith("/1") ? "1" : "2"} lacks the shared refinement contract; regenerate it as schema 3`,
     );
-  const manifest = candidateManifestSchema.parse(value);
-  const [classifier, detector] = await Promise.all([
-    readBounded(classifierFile, 32 * 1024 * 1024),
-    readBounded(detectorFile, 64 * 1024 * 1024),
-  ]);
+  return candidateManifestSchema.parse(value);
+}
+
+export async function loadCandidateBytes(
+  manifestBytes: Uint8Array,
+  classifier: Uint8Array,
+  detector: Uint8Array,
+): Promise<CandidateConfig> {
+  const manifest = parseCandidateManifestBytes(manifestBytes);
+  if (
+    classifier.byteLength <= 0 ||
+    classifier.byteLength > CANDIDATE_CLASSIFIER_MAX_BYTES ||
+    detector.byteLength <= 0 ||
+    detector.byteLength > CANDIDATE_DETECTOR_MAX_BYTES
+  )
+    throw new Error("Candidate file is outside its size bound");
   if (
     classifier.byteLength !== manifest.classifier.bytes ||
     (await digest(classifier)) !== manifest.classifier.sha256
@@ -163,4 +179,21 @@ export async function loadCandidateFiles(
     classifier,
     detector,
   };
+}
+
+export async function loadCandidateFiles(
+  manifestFile: File,
+  classifierFile: File,
+  detectorFile: File,
+): Promise<CandidateConfig> {
+  const manifestBytes = await readBounded(
+    manifestFile,
+    CANDIDATE_MANIFEST_MAX_BYTES,
+  );
+  parseCandidateManifestBytes(manifestBytes);
+  const [classifier, detector] = await Promise.all([
+    readBounded(classifierFile, CANDIDATE_CLASSIFIER_MAX_BYTES),
+    readBounded(detectorFile, CANDIDATE_DETECTOR_MAX_BYTES),
+  ]);
+  return loadCandidateBytes(manifestBytes, classifier, detector);
 }
