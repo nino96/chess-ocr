@@ -70,6 +70,12 @@ image decoded, hides results until the reference is saved, and supports automati
 and manual four-corner modes. Its private export is sensitive local evidence;
 only the aggregate summary is publication-safe.
 
+In either mode, select the four reference corners directly on the displayed
+source image in top-left, top-right, bottom-right, bottom-left order. Drag a
+numbered handle to refine it, or focus the image and use number keys 1–4 followed
+by arrow keys. The coordinate fields are optional. A completed run shows both
+returned grids and piece predictions beside the saved reference.
+
 ### Load through a remote SSH tunnel
 
 When the repository and candidate artifacts are on an SSH host but the demo is

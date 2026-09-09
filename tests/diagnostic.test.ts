@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { matchingImportFiles, sha256 } from "../src/diagnostic.ts";
+import {
+  closestBoard,
+  gridSegments,
+  imageEdgeCorners,
+  matchingImportFiles,
+  sha256,
+} from "../src/diagnostic.ts";
 import {
   prepareManualGridInput,
   restoreManualGridResult,
@@ -132,4 +138,56 @@ test("manual-grid pairing rectifies identical RGBA and restores source geometry"
   assert.deepEqual(restored.boards[0]!.corners, corners);
   assert.equal(restored.boards[0]!.geometrySource, "manual");
   assert.match(restored.preprocessing, /manual-grid/);
+});
+
+test("visual corner helpers cover the image and draw a complete 8 by 8 grid", () => {
+  const corners = imageEdgeCorners(320, 240);
+  assert.deepEqual(corners, [
+    { x: 0, y: 0 },
+    { x: 319, y: 0 },
+    { x: 319, y: 239 },
+    { x: 0, y: 239 },
+  ]);
+  const segments = gridSegments(corners);
+  assert.equal(segments.length, 18);
+  assert.deepEqual(segments[0], [corners[0], corners[1]]);
+  assert.deepEqual(segments.at(-1), [corners[1], corners[2]]);
+});
+
+test("visual comparison selects the returned board nearest the saved reference", () => {
+  const corners = imageEdgeCorners(80, 80);
+  const board = (offset: number) => ({
+    id: String(offset),
+    corners: corners.map((point) => ({
+      x: point.x + offset,
+      y: point.y + offset,
+    })) as typeof corners,
+    geometrySource: "detected" as const,
+    squares: Array.from({ length: 64 }, () => ({
+      label: "empty" as const,
+      probabilities: null,
+      uncertain: true,
+    })),
+    orientation: "unknown" as const,
+    orientationEvidence: "unknown" as const,
+    warnings: [],
+  });
+  const result: Result = {
+    schema: "chess-ocr/1",
+    requestId: "visual",
+    image: { width: 100, height: 100 },
+    status: "ok",
+    boards: [board(10), board(1)],
+    warnings: [],
+    model: identity,
+    preprocessing: "test",
+    timings: { totalMs: 1 },
+  };
+  const reference = {
+    kind: "board" as const,
+    corners,
+    orientation: "unknown" as const,
+    labels: Array.from({ length: 64 }, () => "empty" as const),
+  };
+  assert.equal(closestBoard(result, reference)?.id, "1");
 });
