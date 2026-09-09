@@ -284,7 +284,16 @@ footer {
   gap: 8px;
   margin: 10px 0;
 }
+.diagnostic-reference-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.85fr);
+  gap: 20px;
+  align-items: start;
+}
 .diagnostic-image-panel {
+  margin: 16px 0;
+}
+.diagnostic-reference-editor {
   margin: 16px 0;
 }
 .diagnostic-image-panel > p {
@@ -327,6 +336,7 @@ footer {
 .diagnostic-labels {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
+  width: 100%;
   max-width: 520px;
   border: 3px solid #284939;
 }
@@ -387,11 +397,26 @@ footer {
 .diagnostic-result-card h4 {
   margin: 0 0 8px;
 }
+.diagnostic-result-card h5 {
+  margin: 14px 0 6px;
+  font-size: 0.9rem;
+}
 .diagnostic-result-card p {
   min-height: 0;
   margin: 7px 0;
   font-size: 0.76rem;
   color: #58675c;
+}
+.diagnostic-result-card .diagnostic-warning {
+  padding: 8px;
+  border-left: 4px solid #b4512d;
+  background: #fff0e8;
+  color: #71311f;
+}
+.diagnostic-returned-board + .diagnostic-returned-board {
+  margin-top: 16px;
+  padding-top: 2px;
+  border-top: 2px solid #ccd5ca;
 }
 .diagnostic-overlay,
 .diagnostic-rectified {
@@ -448,6 +473,9 @@ footer {
     flex-wrap: wrap;
   }
   .diagnostic-result-cards {
+    grid-template-columns: 1fr;
+  }
+  .diagnostic-reference-workspace {
     grid-template-columns: 1fr;
   }
   #diagnostic-source {

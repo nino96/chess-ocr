@@ -172,101 +172,107 @@
             <option value="manual-grid">Manual four-corner grid</option>
           </select></label
         >
-        <div id="diagnostic-image-panel" class="diagnostic-image-panel" hidden>
-          <p id="diagnostic-corner-help">
-            Click the four inner-grid corners in order: top-left, top-right,
-            bottom-right, bottom-left.
-          </p>
-          <div class="diagnostic-image-wrap">
-            <canvas
-              id="diagnostic-source"
-              width="640"
-              height="480"
-              tabindex="0"
-              aria-label="Diagnostic source image with editable four-corner grid"
-            ></canvas>
-          </div>
-          <div class="diagnostic-corner-actions">
-            <button id="diagnostic-restart-corners" type="button">
-              Set four corners
-            </button>
-            <button id="diagnostic-use-image-edges" type="button">
-              Use image edges
-            </button>
-          </div>
-        </div>
-        <fieldset>
-          <legend>Reference first</legend>
-          <label
-            >Reference<select id="diagnostic-reference-kind">
-              <option value="board">Board</option>
-              <option value="partial">Partial board</option>
-              <option value="no-board">No board</option>
-            </select></label
-          >
-          <label
-            >Orientation<select id="diagnostic-orientation">
-              <option value="unknown">Unknown</option>
-              <option value="white-bottom">White at bottom</option>
-              <option value="black-bottom">Black at bottom</option>
-            </select></label
-          >
-          <details id="diagnostic-corner-details">
-            <summary>Optional numeric corner adjustment</summary>
-            <div
-              class="diagnostic-corners"
-              aria-label="Board corners in original image pixels, clockwise top-left through bottom-left"
-            >
-              <label
-                >TL x<input
-                  id="diagnostic-corner-0"
-                  type="number"
-                  min="0" /></label
-              ><label
-                >TL y<input
-                  id="diagnostic-corner-1"
-                  type="number"
-                  min="0" /></label
-              ><label
-                >TR x<input
-                  id="diagnostic-corner-2"
-                  type="number"
-                  min="0" /></label
-              ><label
-                >TR y<input
-                  id="diagnostic-corner-3"
-                  type="number"
-                  min="0" /></label
-              ><label
-                >BR x<input
-                  id="diagnostic-corner-4"
-                  type="number"
-                  min="0" /></label
-              ><label
-                >BR y<input
-                  id="diagnostic-corner-5"
-                  type="number"
-                  min="0" /></label
-              ><label
-                >BL x<input
-                  id="diagnostic-corner-6"
-                  type="number"
-                  min="0" /></label
-              ><label
-                >BL y<input id="diagnostic-corner-7" type="number" min="0"
-              /></label>
-            </div>
-          </details>
+        <div class="diagnostic-reference-workspace">
           <div
-            id="diagnostic-labels"
-            class="diagnostic-labels"
-            role="group"
-            aria-label="64 visible reference labels"
-          ></div>
-          <button id="diagnostic-save-reference" type="button" disabled>
-            Save reference
-          </button>
-        </fieldset>
+            id="diagnostic-image-panel"
+            class="diagnostic-image-panel"
+            hidden
+          >
+            <p id="diagnostic-corner-help">
+              Click the four inner-grid corners in order: top-left, top-right,
+              bottom-right, bottom-left.
+            </p>
+            <div class="diagnostic-image-wrap">
+              <canvas
+                id="diagnostic-source"
+                width="640"
+                height="480"
+                tabindex="0"
+                aria-label="Diagnostic source image with editable four-corner grid"
+              ></canvas>
+            </div>
+            <div class="diagnostic-corner-actions">
+              <button id="diagnostic-restart-corners" type="button">
+                Set four corners
+              </button>
+              <button id="diagnostic-use-image-edges" type="button">
+                Use image edges
+              </button>
+            </div>
+          </div>
+          <fieldset class="diagnostic-reference-editor">
+            <legend>Reference first</legend>
+            <label
+              >Reference<select id="diagnostic-reference-kind">
+                <option value="board">Board</option>
+                <option value="partial">Partial board</option>
+                <option value="no-board">No board</option>
+              </select></label
+            >
+            <label
+              >Orientation<select id="diagnostic-orientation">
+                <option value="unknown">Unknown</option>
+                <option value="white-bottom">White at bottom</option>
+                <option value="black-bottom">Black at bottom</option>
+              </select></label
+            >
+            <details id="diagnostic-corner-details">
+              <summary>Optional numeric corner adjustment</summary>
+              <div
+                class="diagnostic-corners"
+                aria-label="Board corners in original image pixels, clockwise top-left through bottom-left"
+              >
+                <label
+                  >TL x<input
+                    id="diagnostic-corner-0"
+                    type="number"
+                    min="0" /></label
+                ><label
+                  >TL y<input
+                    id="diagnostic-corner-1"
+                    type="number"
+                    min="0" /></label
+                ><label
+                  >TR x<input
+                    id="diagnostic-corner-2"
+                    type="number"
+                    min="0" /></label
+                ><label
+                  >TR y<input
+                    id="diagnostic-corner-3"
+                    type="number"
+                    min="0" /></label
+                ><label
+                  >BR x<input
+                    id="diagnostic-corner-4"
+                    type="number"
+                    min="0" /></label
+                ><label
+                  >BR y<input
+                    id="diagnostic-corner-5"
+                    type="number"
+                    min="0" /></label
+                ><label
+                  >BL x<input
+                    id="diagnostic-corner-6"
+                    type="number"
+                    min="0" /></label
+                ><label
+                  >BL y<input id="diagnostic-corner-7" type="number" min="0"
+                /></label>
+              </div>
+            </details>
+            <div
+              id="diagnostic-labels"
+              class="diagnostic-labels"
+              role="group"
+              aria-label="64 visible reference labels"
+            ></div>
+            <button id="diagnostic-save-reference" type="button" disabled>
+              Save reference
+            </button>
+          </fieldset>
+        </div>
         <p class="diagnostic-note">
           Manual-grid mode perspective-rectifies the saved clockwise corners
           once, feeds the identical local raster to both unchanged classifiers,
@@ -362,19 +368,19 @@
       ><label
         ><span></span
         ><select>
-          <option value="empty">·</option>
-          <option value="P">♙ P</option>
-          <option value="N">♘ N</option>
-          <option value="B">♗ B</option>
-          <option value="R">♖ R</option>
-          <option value="Q">♕ Q</option>
-          <option value="K">♔ K</option>
-          <option value="p">♟ p</option>
-          <option value="n">♞ n</option>
-          <option value="b">♝ b</option>
-          <option value="r">♜ r</option>
-          <option value="q">♛ q</option>
-          <option value="k">♚ k</option>
+          <option value="empty">.</option>
+          <option value="P">P</option>
+          <option value="N">N</option>
+          <option value="B">B</option>
+          <option value="R">R</option>
+          <option value="Q">Q</option>
+          <option value="K">K</option>
+          <option value="p">p</option>
+          <option value="n">n</option>
+          <option value="b">b</option>
+          <option value="r">r</option>
+          <option value="q">q</option>
+          <option value="k">k</option>
         </select></label
       ></template
     >

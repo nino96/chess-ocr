@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   closestBoard,
+  displayBoards,
   gridSegments,
   imageEdgeCorners,
   matchingImportFiles,
@@ -190,4 +191,18 @@ test("visual comparison selects the returned board nearest the saved reference",
     labels: Array.from({ length: 64 }, () => "empty" as const),
   };
   assert.equal(closestBoard(result, reference)?.id, "1");
+  assert.deepEqual(
+    displayBoards(result, reference).map(({ board: item, role }) => ({
+      id: item.id,
+      role,
+    })),
+    [
+      { id: "10", role: "additional" },
+      { id: "1", role: "scored" },
+    ],
+  );
+  assert.deepEqual(
+    displayBoards(result, { kind: "no-board" }).map(({ role }) => role),
+    ["false-return", "false-return"],
+  );
 });

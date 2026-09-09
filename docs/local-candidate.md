@@ -76,6 +76,10 @@ numbered handle to refine it, or focus the image and use number keys 1–4 follo
 by arrow keys. The coordinate fields are optional. A completed run shows both
 returned grids and piece predictions beside the saved reference.
 
+The source board and piece editor are side by side on a wide screen. Focus a
+square and type `.PNBRQKpnbrqk` to set it directly; use Alt+arrow keys to move
+between squares.
+
 ### Load through a remote SSH tunnel
 
 When the repository and candidate artifacts are on an SSH host but the demo is

@@ -84,6 +84,10 @@ optional fine-adjustment control. Both models receive the same rectified grid,
 so localization is removed from the comparison. This isolates classifier and
 domain-shift errors.
 
+On wider screens the source grid and reference piece editor remain side by side.
+Each square accepts the exact `.PNBRQKpnbrqk` character from the keyboard;
+Alt+arrow keys move between squares.
+
 Together the modes provide useful failure attribution:
 
 | Automatic result  | Manual-grid result | Likely failure area                                       |
@@ -110,10 +114,12 @@ The diagnostic accepts at most 20 inputs and 100 MiB compressed, and keeps only
 the active image decoded — advancing releases it. There is no upload, telemetry,
 background network access, or browser persistence.
 
-After a paired run, the diagnostic shows the saved reference, both predicted
-piece grids, each returned grid over the source, and a board rectified from that
-returned geometry. Wrong squares are marked on the predicted grids. The private
-export remains the authoritative raw result; the visual views stay in memory.
+After a paired run, the diagnostic shows the saved reference and every returned
+grid over the source. The grid scored against the reference is blue; additional
+false returns are orange. Every return has its own rectified view and predicted
+piece grid, and model warnings are visible beside them. Wrong squares are marked
+on the scored grid. The private export remains the authoritative raw result; the
+visual views stay in memory.
 
 ## The two export formats
 
