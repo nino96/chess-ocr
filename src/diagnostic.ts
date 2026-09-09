@@ -148,6 +148,31 @@ export function closestBoard(
   );
 }
 
+export type DisplayBoard = {
+  board: Board;
+  index: number;
+  role: "scored" | "additional" | "false-return";
+};
+
+/** Keep every returned board visible while identifying the one used for scoring. */
+export function displayBoards(
+  result: Result,
+  reference: Reference,
+): DisplayBoard[] {
+  const scored =
+    reference.kind === "board" ? closestBoard(result, reference) : null;
+  return result.boards.map((board, index) => ({
+    board,
+    index,
+    role:
+      board === scored
+        ? "scored"
+        : reference.kind === "board"
+          ? "additional"
+          : "false-return",
+  }));
+}
+
 const byId = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
 const download = (name: string, value: unknown): void => {
@@ -257,10 +282,12 @@ export function mountDiagnostic(
     scaleX: number,
     scaleY: number,
     handles: boolean,
+    color = "#096ccc",
+    label?: string,
   ): void => {
     context.save();
-    context.strokeStyle = "#096ccc";
-    context.fillStyle = "#096ccc";
+    context.strokeStyle = color;
+    context.fillStyle = color;
     context.lineWidth = Math.max(2, context.canvas.width / 320);
     for (const [from, to] of gridSegments(corners)) {
       const start = scalePoint(from, scaleX, scaleY);
@@ -282,8 +309,19 @@ export function mountDiagnostic(
         context.textAlign = "center";
         context.textBaseline = "middle";
         context.fillText(String(index + 1), scaled.x, scaled.y);
-        context.fillStyle = "#096ccc";
+        context.fillStyle = color;
       });
+    if (label) {
+      const anchor = scalePoint(corners[0], scaleX, scaleY);
+      const size = Math.max(18, context.canvas.width / 24);
+      context.fillStyle = color;
+      context.fillRect(anchor.x, anchor.y, size, size);
+      context.fillStyle = "white";
+      context.font = `bold ${Math.max(12, size * 0.65)}px sans-serif`;
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(label, anchor.x + size / 2, anchor.y + size / 2);
+    }
     context.restore();
   };
   const drawDiagnosticSource = (bitmap: ImageBitmap): void => {
@@ -325,20 +363,22 @@ export function mountDiagnostic(
   const drawOverlay = (
     canvas: HTMLCanvasElement,
     bitmap: ImageBitmap,
-    corners: GridCorners | null,
+    boards: readonly DisplayBoard[],
   ): void => {
     const scale = Math.min(1, 480 / bitmap.width, 360 / bitmap.height);
     canvas.width = Math.max(1, Math.round(bitmap.width * scale));
     canvas.height = Math.max(1, Math.round(bitmap.height * scale));
     const context = canvas.getContext("2d")!;
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    if (corners)
+    for (const display of boards)
       strokeGrid(
         context,
-        corners,
+        display.board.corners,
         canvas.width / bitmap.width,
         canvas.height / bitmap.height,
         false,
+        display.role === "scored" ? "#096ccc" : "#b4512d",
+        String(display.index + 1),
       );
   };
   const drawRectified = (
@@ -410,44 +450,78 @@ export function mountDiagnostic(
     const heading = document.createElement("h4");
     heading.textContent = title;
     card.append(heading);
-    const board = closestBoard(result, reference);
+    const boards = displayBoards(result, reference);
     const state = document.createElement("p");
-    state.textContent = board
+    state.textContent = boards.length
       ? `${result.status}; ${result.boards.length} board${result.boards.length === 1 ? "" : "s"} returned`
       : `${result.status}; no board returned`;
     card.append(state);
+    if (result.warnings.length) {
+      const warnings = document.createElement("p");
+      warnings.className = "diagnostic-warning";
+      warnings.textContent = result.warnings.join(" ");
+      card.append(warnings);
+    }
     const overlayCaption = document.createElement("p");
-    overlayCaption.textContent = board
-      ? "Returned grid over the source"
-      : "Source image; no grid returned";
+    overlayCaption.textContent =
+      boards.length > 1
+        ? reference.kind === "board"
+          ? "All returned grids: blue is scored; orange grids are additional false returns"
+          : "All orange grids are false returns"
+        : boards.length === 1
+          ? reference.kind === "board"
+            ? "Returned grid over the source"
+            : "False return over the source"
+          : "Source image; no grid returned";
     card.append(overlayCaption);
     const overlay = document.createElement("canvas");
     overlay.className = "diagnostic-overlay";
     overlay.setAttribute("aria-label", `${title} grid over source image`);
-    drawOverlay(overlay, bitmap, board?.corners ?? null);
+    drawOverlay(overlay, bitmap, boards);
     card.append(overlay);
-    if (board) {
+    for (const display of boards) {
+      const returned = document.createElement("section");
+      returned.className = "diagnostic-returned-board";
+      const returnedHeading = document.createElement("h5");
+      returnedHeading.textContent =
+        display.role === "scored"
+          ? `Board ${display.index + 1} · scored against your reference`
+          : display.role === "additional"
+            ? `Board ${display.index + 1} · additional false return`
+            : `Board ${display.index + 1} · false return`;
+      returned.append(returnedHeading);
       const rectifiedCaption = document.createElement("p");
       rectifiedCaption.textContent = "Rectified view from the returned grid";
-      card.append(rectifiedCaption);
+      returned.append(rectifiedCaption);
       const rectified = document.createElement("canvas");
       rectified.className = "diagnostic-rectified";
       rectified.setAttribute(
         "aria-label",
-        `${title} board rectified from returned grid`,
+        `${title} board ${display.index + 1} rectified from returned grid`,
       );
-      drawRectified(rectified, raster, board.corners);
-      card.append(rectified);
+      drawRectified(rectified, raster, display.board.corners);
+      returned.append(rectified);
       const piecesCaption = document.createElement("p");
       piecesCaption.textContent =
         "Predicted pieces; red cells disagree with you";
-      card.append(piecesCaption);
-      card.append(
+      returned.append(piecesCaption);
+      const expected =
+        display.role === "scored" && reference.kind === "board"
+          ? reference.labels
+          : undefined;
+      returned.append(
         boardView(
-          board.squares.map((square) => square.label),
-          reference.kind === "board" ? reference.labels : undefined,
+          display.board.squares.map((square) => square.label),
+          expected,
         ),
       );
+      if (display.board.warnings.length) {
+        const warnings = document.createElement("p");
+        warnings.className = "diagnostic-warning";
+        warnings.textContent = display.board.warnings.join(" ");
+        returned.append(warnings);
+      }
+      card.append(returned);
     }
     return card;
   };

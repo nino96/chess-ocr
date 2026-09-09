@@ -397,11 +397,26 @@ footer {
 .diagnostic-result-card h4 {
   margin: 0 0 8px;
 }
+.diagnostic-result-card h5 {
+  margin: 14px 0 6px;
+  font-size: 0.9rem;
+}
 .diagnostic-result-card p {
   min-height: 0;
   margin: 7px 0;
   font-size: 0.76rem;
   color: #58675c;
+}
+.diagnostic-result-card .diagnostic-warning {
+  padding: 8px;
+  border-left: 4px solid #b4512d;
+  background: #fff0e8;
+  color: #71311f;
+}
+.diagnostic-returned-board + .diagnostic-returned-board {
+  margin-top: 16px;
+  padding-top: 2px;
+  border-top: 2px solid #ccd5ca;
 }
 .diagnostic-overlay,
 .diagnostic-rectified {
