@@ -5,9 +5,7 @@ real human-reviewed records remain separate from generated truth.
 """
 from __future__ import annotations
 
-import array
 from pathlib import Path
-import sys
 
 if __package__:
     from . import dataset_pipeline as d
@@ -25,18 +23,12 @@ def load_board(image_path, record, board_number):
     board = recipe["boards"][board_number]
     labels = board["labels"]
     d.require(len(labels) == 64 and all(x in d.LABELS and len(x) == 1 for x in labels), "labels")
-    grid = d.rectify(image, board["corners"])
-    tensor = array.array("f")
-    for index in range(64):
-        x, y = index % 8 * 96, index // 8 * 96
-        raw = grid.crop((x, y, x+96, y+96)).tobytes()
-        for channel, (mean, std) in enumerate(zip((.485, .456, .406), (.229, .224, .225))):
-            tensor.extend((raw[i]/255-mean)/std for i in range(channel, len(raw), 3))
-    if sys.byteorder != "little":
-        tensor.byteswap()
+    grid = d.rectify_classifier_grid(image, board["corners"])
+    tensor = d.classifier_preprocessing.classifier_tensor(grid.tobytes())
     return {"grid": grid, "tensor": tensor, "labels": [d.LABELS.index(x) for x in labels],
             "shape": [64, 3, 96, 96], "order": "image-relative row-major",
-            "split": "train", "truth": "recipe-derived; caller must verify corpus fidelity gate", "browser_parity": "pending"}
+            "split": "train", "truth": "recipe-derived; caller must verify corpus fidelity gate",
+            "browser_contract": "deterministic-bilinear-rgb96-v1"}
 
 
 def detector_targets(record):

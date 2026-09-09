@@ -29,6 +29,11 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+try:
+    from python import classifier_preprocessing
+except ImportError:  # The pinned container exposes /repo/python on PYTHONPATH.
+    import classifier_preprocessing
+
 
 LABELS = ".PNBRQKpnbrqk"
 LEGACY_DETECTOR_PREPROCESSING = "legacy-bgr-div255-v1"
@@ -148,13 +153,11 @@ def solve(matrix: list[list[float]], values: list[float]) -> list[float]:
 
 
 def rectified_grid(image: Image.Image, corners: list[list[float]]) -> Image.Image:
-    require(len(corners) == 4 and all(len(point) == 2 for point in corners), "board corners")
-    matrix, values = [], []
-    for (u, v), (x, y) in zip(((0, 0), (768, 0), (768, 768), (0, 768)), corners):
-        matrix.extend(((u, v, 1, 0, 0, 0, -x * u, -x * v),
-                       (0, 0, 0, u, v, 1, -y * u, -y * v)))
-        values.extend((x, y))
-    return image.transform((768, 768), Image.Transform.PERSPECTIVE, solve(matrix, values), Image.Resampling.BICUBIC)
+    rgba = image.convert("RGBA")
+    data = classifier_preprocessing.rectify_rgba(
+        rgba.tobytes(), rgba.width, rgba.height, corners)
+    return Image.frombytes("RGB", (classifier_preprocessing.GRID_SIZE,
+                                   classifier_preprocessing.GRID_SIZE), data)
 
 
 class ClassifierBoards:
@@ -180,9 +183,9 @@ class ClassifierBoards:
         board = page["boards"][board_index]
         require(len(board.get("labels", [])) == 64 and all(label in LABELS for label in board["labels"]), "classifier labels")
         grid = rectified_grid(image, board["corners"])
-        array = np.asarray(grid, dtype=np.float32) / 255.0
-        tiles = array.reshape(8, 96, 8, 96, 3).transpose(0, 2, 4, 1, 3).reshape(64, 3, 96, 96)
-        tiles = (tiles - np.array([.485, .456, .406], dtype=np.float32)[None, :, None, None]) / np.array([.229, .224, .225], dtype=np.float32)[None, :, None, None]
+        tiles = np.frombuffer(
+            classifier_preprocessing.classifier_tensor(grid.tobytes()), dtype="<f4"
+        ).reshape(64, 3, 96, 96)
         labels = torch.tensor([LABELS.index(label) for label in board["labels"]], dtype=torch.long)
         metadata = {"page": page_index, "board": board_index, "set": board["set"],
                     "effect": page["condition"]["degradation"]["variant"], "layout": page["layout"],

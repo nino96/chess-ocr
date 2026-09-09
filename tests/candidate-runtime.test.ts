@@ -5,6 +5,7 @@ import {
   classProbabilities,
   detectorRasterFromRgba,
 } from "../src/candidate-runtime.ts";
+import { LABELS } from "../src/contract.ts";
 
 test("detector preprocessing preserves colored channels and top-left non-square letterbox", () => {
   const rgba = new Uint8ClampedArray([
@@ -27,6 +28,21 @@ test("detector preprocessing preserves colored channels and top-left non-square 
 });
 
 test("classifier tiling is image-row-major NCHW with ImageNet normalization", () => {
+  assert.deepEqual(LABELS, [
+    "empty",
+    "P",
+    "N",
+    "B",
+    "R",
+    "Q",
+    "K",
+    "p",
+    "n",
+    "b",
+    "r",
+    "q",
+    "k",
+  ]);
   const rgb = new Uint8Array(768 * 768 * 3);
   for (let row = 0; row < 8; row++)
     for (let column = 0; column < 8; column++)
@@ -44,6 +60,7 @@ test("classifier tiling is image-row-major NCHW with ImageNet normalization", ()
     Math.abs(tiles[63 * 3 * plane]! - (63 / 255 - 0.485) / 0.229) < 1e-6,
   );
   assert.ok(Math.abs(tiles[plane]! - (128 / 255 - 0.456) / 0.224) < 1e-6);
+  assert.throws(() => classifierTiles(rgb.subarray(1)), /Invalid rectified/);
 });
 
 test("classifier probability conversion is stable and rejects corrupt outputs", () => {
