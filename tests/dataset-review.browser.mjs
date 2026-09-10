@@ -123,6 +123,20 @@ test("offline review edits image-relative labels, exports versioned decisions an
       ),
     );
     await page.locator("#app").waitFor({ state: "visible" });
+    const orientation = page.getByLabel("Orientation", { exact: true });
+    const orientationLayout = await orientation.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return {
+        box: [box.left, box.top, box.width, box.height],
+        details: Boolean(element.closest("details")),
+        display: getComputedStyle(element).display,
+      };
+    });
+    assert.equal(
+      await orientation.isVisible(),
+      true,
+      JSON.stringify(orientationLayout),
+    );
     const displayedBoxes = await page.evaluate(() => {
       const image = document.querySelector("#page").getBoundingClientRect();
       const overlay = document

@@ -311,17 +311,15 @@
           <button type="button" id="delete-board">Delete selected board</button>
           <button type="button" id="place-corners">Set four corners</button>
           <button type="button" id="use-image-edges">Use image edges</button>
+          <label for="orientation">Orientation</label>
+          <select id="orientation">
+            <option value="unknown">Unknown</option>
+            <option value="white-bottom">White at bottom</option>
+            <option value="black-bottom">Black at bottom</option>
+          </select>
           <details id="geometry">
             <summary>Optional numeric corner adjustment</summary>
             <div class="corners" id="corner-fields"></div>
-            <label
-              >Orientation
-              <select id="orientation">
-                <option value="unknown">Unknown</option>
-                <option value="white-bottom">White at bottom</option>
-                <option value="black-bottom">Black at bottom</option>
-              </select></label
-            >
           </details>
           <fieldset>
             <legend>Page classification</legend>
