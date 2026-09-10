@@ -277,6 +277,13 @@ finally:
     await editor
       .getByRole("button", { name: "Apply re-read proposal", exact: true })
       .click();
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector("#editor")
+          ?.contentDocument?.querySelector('[aria-label="Square a8"]')
+          ?.value === "N",
+    );
     assert.equal(
       await editor.getByLabel("Square a8", { exact: true }).inputValue(),
       "N",

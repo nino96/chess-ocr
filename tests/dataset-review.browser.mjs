@@ -161,6 +161,13 @@ test("offline review edits image-relative labels, exports versioned decisions an
     });
     assert.ok(unicodeBounds.width <= 322);
     assert.equal(unicodeBounds.contained, true);
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForFunction(() => window.scrollY > 0);
+    const stickyGeometry = await page.locator(".geometry-card").boundingBox();
+    assert.ok(stickyGeometry);
+    assert.ok(stickyGeometry.y >= 15 && stickyGeometry.y < 18);
+    assert.ok(stickyGeometry.y + stickyGeometry.height > 100);
+    await page.evaluate(() => window.scrollTo(0, 0));
     assert.equal(await page.locator("#labels select").count(), 64);
     assert.match(
       await page.locator("#proposal-status").textContent(),
