@@ -248,6 +248,16 @@ test("offline review edits image-relative labels, exports versioned decisions an
       await page.getByLabel("Square a8", { exact: true }).inputValue(),
       "q",
     );
+    assert.equal(
+      await page.locator(":focus").getAttribute("aria-label"),
+      "Square a8",
+    );
+    await page.keyboard.press("Tab");
+    assert.equal(
+      await page.locator(":focus").getAttribute("aria-label"),
+      "Square b8",
+    );
+    await page.keyboard.press("Shift+Tab");
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     await page.locator("#proposal-choice").selectOption("1");
     assert.equal(

@@ -1221,6 +1221,7 @@
               touched = true;
               active();
               renderLabels();
+              host.querySelectorAll("select")[i].focus();
               notifyDraft();
             });
             cell.append(text, select);
