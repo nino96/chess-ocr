@@ -21,10 +21,17 @@ test("offline review edits image-relative labels, exports versioned decisions an
       const canvas = document.createElement("canvas");
       canvas.width = canvas.height = 160;
       const ctx = canvas.getContext("2d");
-      for (let i = 0; i < 64; i++) {
-        ctx.fillStyle = `rgb(${i * 3},${255 - i * 3},${i})`;
-        ctx.fillRect((i % 8) * 20, Math.floor(i / 8) * 20, 20, 20);
+      const pixels = ctx.createImageData(160, 160);
+      for (let y = 0; y < 160; y++) {
+        for (let x = 0; x < 160; x++) {
+          const offset = (y * 160 + x) * 4;
+          pixels.data[offset] = x;
+          pixels.data[offset + 1] = y;
+          pixels.data[offset + 2] = (x + y) % 256;
+          pixels.data[offset + 3] = 255;
+        }
       }
+      ctx.putImageData(pixels, 0, 0);
       return canvas.toDataURL("image/png");
     });
     const payload = {
@@ -132,6 +139,28 @@ test("offline review edits image-relative labels, exports versioned decisions an
         `overlay box differs from image at coordinate ${index}`,
       ),
     );
+    const unicodeBounds = await page.evaluate(() => {
+      const board = document
+          .querySelector("#unicode-board")
+          .getBoundingClientRect(),
+        pieces = [...document.querySelectorAll("#unicode-board .piece")];
+      return {
+        width: board.width,
+        contained: pieces.every((piece) => {
+          const box = piece.getBoundingClientRect(),
+            fontSize = Number.parseFloat(getComputedStyle(piece).fontSize);
+          return (
+            box.left >= board.left - 0.5 &&
+            box.right <= board.right + 0.5 &&
+            box.top >= board.top - 0.5 &&
+            box.bottom <= board.bottom + 0.5 &&
+            fontSize <= box.width
+          );
+        }),
+      };
+    });
+    assert.ok(unicodeBounds.width <= 322);
+    assert.equal(unicodeBounds.contained, true);
     assert.equal(await page.locator("#labels select").count(), 64);
     assert.match(
       await page.locator("#proposal-status").textContent(),
@@ -259,6 +288,37 @@ test("offline review edits image-relative labels, exports versioned decisions an
     );
     await page.getByLabel("I am a human reviewer", { exact: true }).uncheck();
     await page.locator("#complete-page").uncheck();
+    for (const [label, value] of [
+      ["TL x coordinate", "70"],
+      ["TL y coordinate", "40"],
+      ["TR x coordinate", "90"],
+      ["TR y coordinate", "40"],
+      ["BR y coordinate", "120"],
+      ["BL y coordinate", "120"],
+    ]) {
+      await page.getByLabel(label, { exact: true }).fill(value);
+      await page.getByLabel(label, { exact: true }).press("Tab");
+    }
+    await page.getByLabel("Square b1", { exact: true }).focus();
+    const perspectiveColor = await page
+      .locator("#square-crop")
+      .evaluate((canvas) =>
+        Array.from(canvas.getContext("2d").getImageData(80, 80, 1, 1).data),
+      );
+    [45, 92, 137, 255].forEach((expected, index) =>
+      assert.ok(Math.abs(perspectiveColor[index] - expected) <= 2),
+    );
+    const sourceCropAlpha = await page.locator("#crop").evaluate((canvas) => {
+      const context = canvas.getContext("2d");
+      return [
+        context.getImageData(160, 20, 1, 1).data[3],
+        context.getImageData(160, 160, 1, 1).data[3],
+      ];
+    });
+    assert.deepEqual(sourceCropAlpha, [0, 255]);
+    await page
+      .getByRole("button", { name: "Use image edges", exact: true })
+      .click();
     await page.getByLabel("Square a8", { exact: true }).focus();
     await page.keyboard.press("Alt+ArrowRight");
     assert.equal(
@@ -274,7 +334,9 @@ test("offline review edits image-relative labels, exports versioned decisions an
       .evaluate((canvas) =>
         Array.from(canvas.getContext("2d").getImageData(80, 80, 1, 1).data),
       );
-    assert.deepEqual(color, [3, 252, 1, 255]);
+    [30, 10, 40, 255].forEach((expected, index) =>
+      assert.ok(Math.abs(color[index] - expected) <= 2),
+    );
     await page
       .getByLabel("Reviewer identity", { exact: true })
       .fill("test-reviewer");

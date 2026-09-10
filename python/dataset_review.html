@@ -209,13 +209,20 @@
         display: grid;
         grid-template-columns: repeat(8, 1fr);
         width: 100%;
+        max-width: 320px;
+        box-sizing: border-box;
+        container-type: inline-size;
+        overflow: hidden;
         border: 1px solid #555;
       }
       .piece {
         aspect-ratio: 1;
         display: grid;
         place-items: center;
-        font-size: 2rem;
+        min-width: 0;
+        overflow: hidden;
+        font-size: clamp(0.75rem, 8cqi, 2rem);
+        line-height: 1;
         font-family: "DejaVu Sans", "Segoe UI Symbol", serif;
       }
       .piece:nth-child(16n + 1),
@@ -359,8 +366,9 @@
               </div>
             </div>
             <p class="muted">
-              Crops retain page perspective. Focus a square control to inspect
-              its source pixels; red lines show the proposed grid.
+              The source crop preserves page aspect and perspective; red lines
+              show the proposed grid. Focus a square control to inspect an exact
+              rectification of its source pixels.
             </p>
             <canvas
               id="square-crop"
@@ -503,7 +511,8 @@
           redoStack = [],
           touched = false,
           sessionRunning = false,
-          sessionStartSeconds = 0;
+          sessionStartSeconds = 0,
+          sourceRaster = null;
         function fail(message) {
           $("error").textContent = "Cannot open review payload: " + message;
           $("error").hidden = false;
@@ -852,6 +861,16 @@
         img.addEventListener("error", () => fail("image cannot be decoded."));
         function board() {
           return state.boards[selected];
+        }
+        function raster() {
+          if (sourceRaster) return sourceRaster;
+          const source = document.createElement("canvas");
+          source.width = data.width;
+          source.height = data.height;
+          const context = source.getContext("2d", { willReadFrequently: true });
+          context.drawImage(img, 0, 0);
+          sourceRaster = context.getImageData(0, 0, data.width, data.height);
+          return sourceRaster;
         }
         function newBoard() {
           const m = Math.min(
@@ -1316,16 +1335,32 @@
             h = Math.min(data.height - y, Math.ceil(Math.max(...ys)) - y);
           const ctx = cv.getContext("2d");
           ctx.clearRect(0, 0, cv.width, cv.height);
-          if (w && h) ctx.drawImage(img, x, y, w, h, 0, 0, cv.width, cv.height);
+          const scale = w && h ? Math.min(cv.width / w, cv.height / h) : 0,
+            drawWidth = w * scale,
+            drawHeight = h * scale,
+            offsetX = (cv.width - drawWidth) / 2,
+            offsetY = (cv.height - drawHeight) / 2;
+          if (w && h)
+            ctx.drawImage(
+              img,
+              x,
+              y,
+              w,
+              h,
+              offsetX,
+              offsetY,
+              drawWidth,
+              drawHeight,
+            );
           if (!w || !h || !validBoard(b, data.width, data.height)) return;
           const line = (from, to) => {
             ctx.moveTo(
-              ((from[0] - x) * cv.width) / w,
-              ((from[1] - y) * cv.height) / h,
+              offsetX + (from[0] - x) * scale,
+              offsetY + (from[1] - y) * scale,
             );
             ctx.lineTo(
-              ((to[0] - x) * cv.width) / w,
-              ((to[1] - y) * cv.height) / h,
+              offsetX + (to[0] - x) * scale,
+              offsetY + (to[1] - y) * scale,
             );
           };
           ctx.strokeStyle = "#e52020";
@@ -1336,33 +1371,50 @@
             line(gridPoint(0, i / 8), gridPoint(1, i / 8));
           }
           ctx.stroke();
-          const u = (activeSquare % 8) / 8,
-            v = Math.floor(activeSquare / 8) / 8;
-          const points = [
-            gridPoint(u, v),
-            gridPoint(u + 1 / 8, v),
-            gridPoint(u + 1 / 8, v + 1 / 8),
-            gridPoint(u, v + 1 / 8),
-          ];
-          const left = Math.max(0, Math.min(...points.map((p) => p[0]))),
-            top = Math.max(0, Math.min(...points.map((p) => p[1])));
-          const width = Math.min(
-              data.width - left,
-              Math.max(...points.map((p) => p[0])) - left,
-            ),
-            height = Math.min(
-              data.height - top,
-              Math.max(...points.map((p) => p[1])) - top,
-            );
-          const square = $("square-crop").getContext("2d");
-          square.clearRect(0, 0, 160, 160);
-          if (width > 0 && height > 0)
-            square.drawImage(img, left, top, width, height, 0, 0, 160, 160);
+          drawFocusedSquare();
           $("square-name").value =
             "Image row " +
             (Math.floor(activeSquare / 8) + 1) +
             ", column " +
             ((activeSquare % 8) + 1);
+        }
+        function drawFocusedSquare() {
+          const canvas = $("square-crop"),
+            context = canvas.getContext("2d"),
+            source = raster(),
+            output = context.createImageData(canvas.width, canvas.height),
+            column = activeSquare % 8,
+            row = Math.floor(activeSquare / 8);
+          for (let y = 0; y < canvas.height; y++) {
+            const v = (row + (y + 0.5) / canvas.height) / 8;
+            for (let x = 0; x < canvas.width; x++) {
+              const u = (column + (x + 0.5) / canvas.width) / 8,
+                point = gridPoint(u, v),
+                sx = Math.max(0, Math.min(data.width - 1, point[0])),
+                sy = Math.max(0, Math.min(data.height - 1, point[1])),
+                x0 = Math.floor(sx),
+                y0 = Math.floor(sy),
+                x1 = Math.min(data.width - 1, x0 + 1),
+                y1 = Math.min(data.height - 1, y0 + 1),
+                tx = sx - x0,
+                ty = sy - y0,
+                destination = (y * canvas.width + x) * 4;
+              for (let channel = 0; channel < 4; channel++) {
+                const top =
+                    source.data[(y0 * data.width + x0) * 4 + channel] *
+                      (1 - tx) +
+                    source.data[(y0 * data.width + x1) * 4 + channel] * tx,
+                  bottom =
+                    source.data[(y1 * data.width + x0) * 4 + channel] *
+                      (1 - tx) +
+                    source.data[(y1 * data.width + x1) * 4 + channel] * tx;
+                output.data[destination + channel] = Math.round(
+                  top * (1 - ty) + bottom * ty,
+                );
+              }
+            }
+          }
+          context.putImageData(output, 0, 0);
         }
         function gridPoint(u, v) {
           const [p0, p1, p2, p3] = board().corners;
