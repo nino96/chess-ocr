@@ -94,12 +94,12 @@
       }
       #overlay {
         position: absolute;
-        inset: 0;
+        left: 0;
+        top: 0;
+        border: 0;
         pointer-events: auto;
         touch-action: none;
         cursor: crosshair;
-        width: 100%;
-        height: 100%;
       }
       #overlay.is-dragging {
         cursor: grabbing;
@@ -1233,8 +1233,13 @@
         }
         function draw() {
           const cv = $("overlay"),
-            r = img.getBoundingClientRect();
+            r = img.getBoundingClientRect(),
+            host = $("page-wrap").getBoundingClientRect();
           if (!r.width || !r.height) return;
+          cv.style.left = r.left - host.left + "px";
+          cv.style.top = r.top - host.top + "px";
+          cv.style.width = r.width + "px";
+          cv.style.height = r.height + "px";
           cv.width = Math.round(r.width);
           cv.height = Math.round(r.height);
           const ctx = cv.getContext("2d");

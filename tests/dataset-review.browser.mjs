@@ -116,6 +116,22 @@ test("offline review edits image-relative labels, exports versioned decisions an
       ),
     );
     await page.locator("#app").waitFor({ state: "visible" });
+    const displayedBoxes = await page.evaluate(() => {
+      const image = document.querySelector("#page").getBoundingClientRect();
+      const overlay = document
+        .querySelector("#overlay")
+        .getBoundingClientRect();
+      return {
+        image: [image.left, image.top, image.width, image.height],
+        overlay: [overlay.left, overlay.top, overlay.width, overlay.height],
+      };
+    });
+    displayedBoxes.image.forEach((value, index) =>
+      assert.ok(
+        Math.abs(value - displayedBoxes.overlay[index]) < 0.5,
+        `overlay box differs from image at coordinate ${index}`,
+      ),
+    );
     assert.equal(await page.locator("#labels select").count(), 64);
     assert.match(
       await page.locator("#proposal-status").textContent(),
@@ -143,10 +159,33 @@ test("offline review edits image-relative labels, exports versioned decisions an
     await page
       .getByRole("button", { name: "Use image edges", exact: true })
       .click();
+    const overlayBox = await page.locator("#overlay").boundingBox();
+    assert.ok(overlayBox);
+    await page.mouse.move(
+      overlayBox.x + overlayBox.width - 2,
+      overlayBox.y + 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      overlayBox.x + overlayBox.width - 12,
+      overlayBox.y + 12,
+    );
+    await page.mouse.up();
+    await page.locator("#geometry summary").click();
+    assert.ok(
+      Number(
+        await page.getByLabel("TR x coordinate", { exact: true }).inputValue(),
+      ) < 160,
+    );
+    assert.ok(
+      Number(
+        await page.getByLabel("TR y coordinate", { exact: true }).inputValue(),
+      ) > 0,
+    );
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
     await page.locator("#overlay").focus();
     await page.keyboard.press("1");
     await page.keyboard.press("Shift+ArrowRight");
-    await page.locator("#geometry summary").click();
     assert.equal(
       await page.getByLabel("TL x coordinate", { exact: true }).inputValue(),
       "10",
